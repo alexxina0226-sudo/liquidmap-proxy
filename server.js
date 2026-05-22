@@ -16,10 +16,10 @@ app.use(express.json());
 
 // ── MAPAS HTML ───────────────────────────────────
 app.get('/', (req, res) => {
- res.sendFile(path.join(__dirname, 'LiquidityMap_BOLSA_v4.html'));
+ res.sendFile(path.join(__dirname, 'LiquidityMap_BOLSA_v5.html'));
 });
 app.get('/bolsa', (req, res) => {
-  res.sendFile(path.join(__dirname, 'LiquidityMap_BOLSA_v4.html'));
+  res.sendFile(path.join(__dirname, 'LiquidityMap_BOLSA_v5.html'));
 });
 app.get('/crypto', (req, res) => {
   res.sendFile(path.join(__dirname, 'LiquidityMap_CRYPTO_v5.html'));
