@@ -973,7 +973,7 @@ async function sendTelegram(signal, ticker, price, score, extra){
 function evalQuality(score){
   if(score >= 5) return { ok:true, label:'🔥 FUERTE' };
   if(score >= 3) return { ok:true, label:'✅ VÁLIDA' };
-  if(score >= 2) return { ok:false, label:'⚠️ DÉBIL' };
+  if(score >= 1) return { ok:true, label:'⚡ MODERADA' };
   return { ok:false, label:'❌ RUIDO' };
 }
 
@@ -998,22 +998,39 @@ function checkAlerts(price){
     triggerAlert('ZONA_LIQ', '💧 ZONA LIQUIDEZ TOCADA: $' + price.toFixed(2), null, { note: 'Zona de liquidez alcanzada — verificar dirección antes de entrar' });
   }
   const sig = computeSignal(price);
-  if(sig.type === 'BUY' && lastSigType !== 'BUY' && alertCfg.buy && sig.score >= 3){
+  if(sig.type === 'BUY' && lastSigType !== 'BUY' && alertCfg.buy && sig.score >= 1){
     lastSigType = 'BUY';
     triggerAlert('BUY', '🟢 BUY — Score ' + sig.score + '/5', sig.score);
-  } else if(sig.type === 'SELL' && lastSigType !== 'SELL' && alertCfg.sell && sig.score >= 3){
+  } else if(sig.type === 'SELL' && lastSigType !== 'SELL' && alertCfg.sell && sig.score >= 1){
     lastSigType = 'SELL';
     triggerAlert('SELL', '🔴 SELL — Score ' + sig.score + '/5', sig.score);
   } else if(sig.type === 'NEUTRAL') lastSigType = '';
-  // Stop Hunt detection
-  if(candles.length > 3){
+  // Stop Hunt detection — mejorado con peso por temporalidad
+  if(candles.length > 3 && alertCfg.sh){
     const last = candles[candles.length-1];
-    const prev = candles[candles.length-2];
-    const isLongWick = (last.h - Math.max(last.o, last.c)) > (Math.abs(last.c - last.o) * 2.5);
-    const isShortWick = (Math.min(last.o, last.c) - last.l) > (Math.abs(last.c - last.o) * 2.5);
-    if((isLongWick || isShortWick) && alertCfg.sh && Date.now() - lastSHAlert > 60000){
-      lastSHAlert = Date.now();
-      triggerAlert(isLongWick ? 'SH_SELL' : 'SH_BUY', `⚡ STOP HUNT ${isLongWick ? '▲ BARRIDA ARRIBA' : '▼ BARRIDA ABAJO'}`, 3, { note: 'Trampa institucional detectada — esperar vela de confirmación' });
+    const body = Math.abs(last.c - last.o);
+    const totalRange = last.h - last.l;
+    // Requiere cuerpo mínimo para evitar dojis falsos
+    if(body > 0 && totalRange > 0){
+      const upperWick = last.h - Math.max(last.o, last.c);
+      const lowerWick = Math.min(last.o, last.c) - last.l;
+      // Mecha >= 2x el cuerpo Y mecha >= 40% del rango total
+      const isLongWick  = upperWick > body * 2 && upperWick / totalRange >= 0.40;
+      const isShortWick = lowerWick > body * 2 && lowerWick / totalRange >= 0.40;
+      if((isLongWick || isShortWick) && Date.now() - lastSHAlert > 60000){
+        lastSHAlert = Date.now();
+        // Peso por temporalidad: mayor TF = más peso = score más alto
+        const tfWeights = {'1m':'⚡ SH 1m','5m':'⚡ SH 5m','15m':'🔶 SH 15m — peso medio','1h':'🔴 SH 1H — ALTO PESO','4h':'🔴 SH 4H — MUY ALTO PESO','1d':'🔴 SH DIARIO — MÁXIMO PESO'};
+        const tfScores  = {'1m':1,'5m':1,'15m':2,'1h':3,'4h':4,'1d':5};
+        const curTF = tf || '15m';
+        const tfLabel = tfWeights[curTF] || '🔶 SH';
+        const shScore = tfScores[curTF] || 2;
+        const dir = isLongWick ? '▲ BARRIDA ARRIBA (SH Bajista)' : '▼ BARRIDA ABAJO (SH Alcista)';
+        triggerAlert(isLongWick ? 'SH_SELL' : 'SH_BUY',
+          `${tfLabel} ${dir}`,
+          shScore,
+          { note: `Stop Hunt en ${curTF} — cuerpo: ${(body/last.c*100).toFixed(2)}% | mecha: ${isLongWick ? (upperWick/totalRange*100).toFixed(0) : (lowerWick/totalRange*100).toFixed(0)}% del rango` });
+      }
     }
   }
 }
