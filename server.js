@@ -25,18 +25,35 @@ app.get('/crypto', (req, res) => {
   res.sendFile(path.join(__dirname, 'LiquidityMap_CRYPTO_v5.html'));
 });
 
-// ── PROXY FINNHUB ────────────────────────────────
+// ── PROXY BINANCE + FINNHUB ──────────────────────
 app.get('/proxy', async (req, res) => {
   try {
-    const url = req.query.url;
-    if (!url) return res.status(400).json({ error: 'Missing url param' });
-    if (!url.startsWith('https://finnhub.io/') &&
-        !url.startsWith('https://query1.finance.yahoo.com/') &&
-        !url.startsWith('https://api.binance.com/') &&
-        !url.startsWith('https://api.coingecko.com/')) {
-      return res.status(403).json({ error: 'Domain not allowed' });
+    const apiPath = req.query.path;
+    const futures = req.query.futures === '1';
+
+    if (!apiPath) return res.status(400).json({ error: 'Missing path param' });
+
+    // Build query string — exclude 'path' and 'futures' params
+    const params = Object.entries(req.query)
+      .filter(([k]) => k !== 'path' && k !== 'futures')
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join('&');
+
+    let baseUrl;
+    if (futures) {
+      baseUrl = `https://fapi.binance.com${apiPath}`;
+    } else if (apiPath.startsWith('/fapi')) {
+      baseUrl = `https://fapi.binance.com${apiPath}`;
+    } else if (apiPath.startsWith('/api')) {
+      baseUrl = `https://api.binance.com${apiPath}`;
+    } else if (apiPath.startsWith('/finnhub') || req.query.token) {
+      baseUrl = `https://finnhub.io${apiPath}`;
+    } else {
+      baseUrl = `https://api.binance.com${apiPath}`;
     }
-    const r = await fetch(url, { headers: { 'Accept': 'application/json' } });
+
+    const fullUrl = params ? `${baseUrl}?${params}` : baseUrl;
+    const r = await fetch(fullUrl, { headers: { 'Accept': 'application/json' } });
     const data = await r.json();
     res.json(data);
   } catch (e) {
