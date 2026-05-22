@@ -597,10 +597,11 @@ function getATR(ticker, price) {
 // Evalúa confluencias institucionales antes de enviar
 function evalSignalQuality(score, signal) {
   // Regla institucional: mínimo 3 factores de confluencia
-  if (score >= 4) return { ok: true,  label: '🔥 FUERTE',  note: 'Maxima confluencia — entrada de alta conviccion' };
-  if (score >= 3) return { ok: true,  label: '✅ VALIDA',  note: 'Confluencia suficiente — gestionar riesgo normal' };
+  if (score >= 4) return { ok: true,  label: '🔥 FUERTE',   note: 'Maxima confluencia — entrada de alta conviccion' };
+  if (score >= 3) return { ok: true,  label: '✅ VALIDA',   note: 'Confluencia suficiente — gestionar riesgo normal' };
   if (score >= 2) return { ok: true,  label: '⚠️ VALIDA',  note: 'Confluencia mínima — gestionar con stop ajustado' };
-  return             { ok: false, label: '❌ RUIDO',   note: 'Sin confluencia institucional' };
+  if (score >= 1) return { ok: true,  label: '⚡ MODERADA', note: 'Señal leve — confirmar con TF mayor antes de entrar' };
+  return             { ok: false, label: '❌ RUIDO',    note: 'Sin confluencia institucional' };
 }
 
 // ── FUNCIÓN PRINCIPAL DE ALERTA ──────────────────────────────────────────
@@ -685,29 +686,56 @@ async function sendTelegram(signal, ticker, price, score, extra) {
 
 // ── DISPARADORES DE ALERTAS INSTITUCIONALES ──────────────────────────────
 
-// BUY — Solo con score >= 2 (mínimo 2 confluencias)
+// BUY — Solo con score >= 1 (dispara con cualquier confluencia)
 function alertBuy(){
   if(!alertCfg.buy) return;
-  if(!sig || sig.score < 2) return; // Filtro institucional
-  showAlertPopup('🟢 SEÑAL BUY — Score ' + sig.score + '/4');
-  sendTelegram('BUY', sym, (quote.c||0).toFixed(2), sig.score);
+  if(!sig || sig.score < 1) return; // Filtro institucional
 }
 
-// SELL — Solo con score >= 2
+// SELL — Solo con score >= 1
 function alertSell(){
   if(!alertCfg.sell) return;
-  if(!sig || sig.score < 2) return; // Filtro institucional
+  if(!sig || sig.score < 1) return; // Filtro institucional
   showAlertPopup('🔴 SEÑAL SELL — Score ' + sig.score + '/4');
   sendTelegram('SELL', sym, (quote.c||0).toFixed(2), sig.score);
 }
 
-// STOP HUNT — MUY PODEROSO en temporalidades mayores
-// El precio barre liquidez y revierte — entrada institucional clásica
-function alertZone(p){
+// STOP HUNT — Detección con peso por temporalidad
+// Mayor TF = mayor peso institucional = señal más relevante
+function detectStopHunt(candle){
+  if(!candle) return null;
+  const open = candle.o, high = candle.h, low = candle.l, close = candle.c;
+  const body = Math.abs(close - open);
+  const range = high - low;
+  if(range === 0) return null;
+
+  const upperWick = high - Math.max(open, close);
+  const lowerWick = Math.min(open, close) - low;
+
+  const isBearSH = upperWick >= body * 2 && upperWick >= range * 0.4;
+  const isBullSH = lowerWick >= body * 2 && lowerWick >= range * 0.4;
+
+  // Peso por TF del mapa actual
+  const tfWeights = { '5':1, '15':2, '60':3, '240':4, 'D':5 };
+  const tfLabels  = { '5':'5m ⚡', '15':'15m 🔶', '60':'1H 🔴', '240':'4H 🔴', 'D':'1D 🔴' };
+  const tfNotes   = { '5':'Aviso leve', '15':'Peso medio', '60':'ALTO PESO', '240':'MUY ALTO PESO', 'D':'MÁXIMO PESO' };
+
+  const shScore = tfWeights[tf] || 1;
+  const shLabel = tfLabels[tf]  || tf;
+  const shNote  = tfNotes[tf]   || '';
+
+  if(isBullSH) return { type:'SH_BUY',  score: shScore, label: shLabel, note: shNote };
+  if(isBearSH) return { type:'SH_SELL', score: shScore, label: shLabel, note: shNote };
+  return null;
+}
+
+function alertStopHunt(sh, price){
   if(!alertCfg.zone) return;
-  showAlertPopup('💧 ZONA DE LIQUIDEZ TOCADA');
-  sendTelegram('SH_BUY', sym, p.toFixed(2), sig ? sig.score : 0,
-    { note: 'Stop Hunt detectado — esperar vela de confirmacion para entrar' });
+  const dir = sh.type === 'SH_BUY' ? '🟢' : '🔴';
+  const arrow = sh.type === 'SH_BUY' ? 'ALCISTA' : 'BAJISTA';
+  showAlertPopup(`${dir} STOP HUNT ${arrow} [${sh.label}]`);
+  sendTelegram(sh.type, sym, price.toFixed(2), sh.score,
+    { note: `Stop Hunt ${sh.label} — ${sh.note} — esperar confirmacion` });
 }
 
 // MAX PAIN — Clave para opciones (el precio tiende a volver aquí)
@@ -1162,6 +1190,16 @@ function startWS(){
 let lastZoneAlert = 0, lastSignalAlert = '', lastMPAlert = 0, gexWasPos = null, lastDPAlert = 0;
 
 function checkAlerts(p){
+  // Stop Hunt — detectar en la última vela cargada
+  if(candles.length > 0){
+    const lastCandle = candles[candles.length - 1];
+    const sh = detectStopHunt(lastCandle);
+    if(sh && Date.now() - lastZoneAlert > 30000){
+      alertStopHunt(sh, p);
+      lastZoneAlert = Date.now();
+    }
+  }
+
   // Zone touch
   const nearZone = zones.find(z => Math.abs(z.price-p)/p < 0.0015 && z.strength > 0.65);
   if(nearZone && Date.now()-lastZoneAlert>30000){ alertZone(p); lastZoneAlert=Date.now(); }
