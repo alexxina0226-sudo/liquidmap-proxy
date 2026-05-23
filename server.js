@@ -73,7 +73,7 @@ app.listen(PORT, () => console.log(`LiquidMap PRO running on port ${PORT}`));
 // ── MONITOR 24/7 ──────────────────────────────────────────────
 // Arranca el job de detección automática sin navegador
 try {
-  require('./monitor_v3');
+  require('./monitor_v4');
   console.log('✅ Monitor 24/7 arrancado');
 } catch(e) {
   console.error('❌ Monitor no pudo arrancar:', e.message);
