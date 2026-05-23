@@ -30,27 +30,20 @@ app.get('/proxy', async (req, res) => {
   try {
     const apiPath = req.query.path;
     const futures = req.query.futures === '1';
-
     if (!apiPath) return res.status(400).json({ error: 'Missing path param' });
 
-    // Build query string — exclude 'path' and 'futures' params
     const params = Object.entries(req.query)
       .filter(([k]) => k !== 'path' && k !== 'futures')
       .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
       .join('&');
 
     let baseUrl;
-    if (futures) {
-      baseUrl = `https://fapi.binance.com${apiPath}`;
-    } else if (apiPath.startsWith('/fapi')) {
-      baseUrl = `https://fapi.binance.com${apiPath}`;
-    } else if (apiPath.startsWith('/api')) {
-      baseUrl = `https://api.binance.com${apiPath}`;
-    } else if (apiPath.startsWith('/finnhub') || req.query.token) {
-      baseUrl = `https://finnhub.io${apiPath}`;
-    } else {
-      baseUrl = `https://api.binance.com${apiPath}`;
-    }
+    if (futures)                              baseUrl = `https://fapi.binance.com${apiPath}`;
+    else if (apiPath.startsWith('/fapi'))     baseUrl = `https://fapi.binance.com${apiPath}`;
+    else if (apiPath.startsWith('/api'))      baseUrl = `https://api.binance.com${apiPath}`;
+    else if (apiPath.startsWith('/finnhub') || req.query.token)
+                                              baseUrl = `https://finnhub.io${apiPath}`;
+    else                                      baseUrl = `https://api.binance.com${apiPath}`;
 
     const fullUrl = params ? `${baseUrl}?${params}` : baseUrl;
     const r = await fetch(fullUrl, { headers: { 'Accept': 'application/json' } });
@@ -63,18 +56,25 @@ app.get('/proxy', async (req, res) => {
 
 // ── HEALTH CHECK ─────────────────────────────────
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', time: new Date().toISOString(), service: 'LiquidMap PRO' });
+  res.json({ status: 'ok', time: new Date().toISOString(), service: 'LiquidMap PRO v2' });
 });
 
 // ── START ─────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`LiquidMap PRO running on port ${PORT}`));
 
-// ── MONITOR 24/7 ──────────────────────────────────────────────
-// Arranca el job de detección automática sin navegador
+// ── MONITOR CRYPTO 24/7 ───────────────────────────
 try {
   require('./monitor_v4');
-  console.log('✅ Monitor 24/7 arrancado');
+  console.log('✅ Monitor CRYPTO arrancado — @liquidmappro_bot');
 } catch(e) {
-  console.error('❌ Monitor no pudo arrancar:', e.message);
+  console.error('❌ Monitor crypto no pudo arrancar:', e.message);
+}
+
+// ── MONITOR BOLSA (solo sesión NY) ────────────────
+try {
+  require('./monitor_bolsa_v1');
+  console.log('✅ Monitor BOLSA arrancado — @liquidmapbolsa_bot');
+} catch(e) {
+  console.error('❌ Monitor bolsa no pudo arrancar:', e.message);
 }
