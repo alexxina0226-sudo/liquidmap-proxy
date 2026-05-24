@@ -22,7 +22,7 @@ app.get('/bolsa', (req, res) => {
   res.sendFile(path.join(__dirname, 'LiquidityMap_BOLSA_v5.html'));
 });
 app.get('/crypto', (req, res) => {
-  res.sendFile(path.join(__dirname, 'LiquidityMap_CRYPTO_v5.html'));
+  res.sendFile(path.join(__dirname, '''LiquidityMap_CRYPTO_v6_2.html'));
 });
 
 // ── PROXY BINANCE + FINNHUB ──────────────────────
