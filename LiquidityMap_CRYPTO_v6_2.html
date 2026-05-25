@@ -578,6 +578,11 @@ function playTone(freq, dur, type='sine', vol=0.25){
 // INIT
 // ═══════════════════════════════════════════════════════════
 async function initApp(){
+  // Initialize canvas here so DOM is guaranteed ready after lock screen hides
+  cv    = document.getElementById('chart-canvas');
+  ctx   = cv.getContext('2d');
+  ofc   = document.getElementById('of-canvas');
+  ofctx = ofc.getContext('2d');
   initAudio();
   setBar(10);
   // Force canvas size immediately using window dimensions
@@ -1815,13 +1820,14 @@ function buildZones(mid){
   for(let i = 2; i < bars.length-2; i++){
     const b = bars[i], age = (bars.length-i)/bars.length;
     const st = Math.min(1, 0.4 + (1-age)*0.5 + (b.v/mv)*0.2);
-    if(b.h >= bars[i-1].h && b.h >= bars[i-2].h && b.h >= bars[i+1].h && b.h >= bars[i+2].h)
+    if(b.h >= bars[i-1].h && b.h >= bars[i-2].h && b.h >= bars[i+1].h && b.h >= bars[i+2].h){
       // TF basado en posición en el historial: velas viejas = TF mayor
       const agePct = i / bars.length;
       const zTF = agePct < 0.25 ? '1D' : agePct < 0.50 ? '4h' : agePct < 0.75 ? '1h' : '15m';
       // Tipo basado en la fuerza: fuerte=OB, medio=STOP, bajo=FVG
       const zType = st > 0.75 ? 'OB' : st > 0.55 ? 'STOP' : 'FVG';
       z.push({ price:b.h, strength:st, tf:zTF, type:zType, side:b.h>mid?'above':'below', width:4+st*40 });
+    }
     if(b.l <= bars[i-1].l && b.l <= bars[i-2].l && b.l <= bars[i+1].l && b.l <= bars[i+2].l){
       const agePct2 = i / bars.length;
       const zTF2 = agePct2 < 0.25 ? '1D' : agePct2 < 0.50 ? '4h' : agePct2 < 0.75 ? '1h' : '15m';
@@ -1859,8 +1865,7 @@ function getVA(v){
 // ═══════════════════════════════════════════════════════════
 // CANVAS CHART
 // ═══════════════════════════════════════════════════════════
-const cv = document.getElementById('chart-canvas'), ctx = cv.getContext('2d');
-const ofc = document.getElementById('of-canvas'), ofctx = ofc.getContext('2d');
+let cv, ctx, ofc, ofctx;
 let pMin, pMax, pRng;
 
 function resizeCanvas(){
