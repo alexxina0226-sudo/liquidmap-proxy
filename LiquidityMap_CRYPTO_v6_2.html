@@ -635,9 +635,15 @@ async function initApp(){
   setInterval(loadLiquidationsCoinglass, 120000); // cada 2 min
   setInterval(loadWhales, 15000); // ballenas cada 15s
   loadFearGreed();
-  loadOIHistory();
-  loadLSRatio();
-  loadLiquidationsCoinglass();
+  // Cargar datos extra y actualizar panel cuando lleguen
+  Promise.all([loadOIHistory(), loadLSRatio()]).then(() => {
+    updateOIPanel();
+    updatePanels();
+  });
+  loadLiquidationsCoinglass().then(() => {
+    updateLiquidationPanel(quote.c || 0);
+    updatePanels();
+  });
   loadWhales();
   setBar(0);
 }
@@ -917,41 +923,28 @@ function updateOIPanel(){
 let liquidationsReal = null;
 
 async function loadLiquidationsCoinglass(){
-  // Coinglass endpoint público (sin key para datos 12h)
-  const cgSym = sym.replace('USDT','').toLowerCase();
+  // Usamos Binance forced orders via proxy (Coinglass bloquea CORS desde browser)
   try{
-    const r = await fetch(`https://open-api.coinglass.com/public/v2/liquidation_order/chart?symbol=${cgSym.toUpperCase()}&interval=12h`, {
-      headers: { 'accept': 'application/json' }
-    });
-    if(!r.ok) throw new Error('cg ' + r.status);
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/fapi/v1/allForceOrders&symbol=${sym}&limit=100&futures=1`);
+    if(!r.ok) throw new Error('liq ' + r.status);
     const d = await r.json();
-    if(!d || !d.data) throw new Error('no data');
-    // Coinglass da longLiquidationUsd y shortLiquidationUsd
-    const last = d.data[d.data.length - 1];
-    liquidationsReal = {
-      longUSD:  parseFloat(last.longLiquidationUsd  || last[1] || 0),
-      shortUSD: parseFloat(last.shortLiquidationUsd || last[2] || 0),
-      ts: last.createTime || Date.now(),
-      source: 'real'
-    };
+    if(!Array.isArray(d)) throw new Error('no array');
+    const cutoff = Date.now() - 12 * 3600 * 1000;
+    const recent = d.filter(x => parseInt(x.time) > cutoff);
+    let longUSD = 0, shortUSD = 0;
+    recent.forEach(x => {
+      const v = parseFloat(x.origQty) * parseFloat(x.price);
+      if(x.side === 'SELL') longUSD  += v;
+      else                  shortUSD += v;
+    });
+    if(longUSD > 0 || shortUSD > 0){
+      liquidationsReal = { longUSD, shortUSD, ts: Date.now(), source: 'binance' };
+    } else {
+      // Sin liquidaciones recientes = mercado tranquilo
+      liquidationsReal = { longUSD: 0, shortUSD: 0, ts: Date.now(), source: 'binance' };
+    }
   } catch(e){
-    // Fallback: Binance forced liquidations endpoint (fapi)
-    try{
-      const r2 = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/fapi/v1/allForceOrders&symbol=${sym}&limit=50&futures=1`);
-      if(!r2.ok) throw new Error('binance liq');
-      const d2 = await r2.json();
-      if(Array.isArray(d2) && d2.length > 0){
-        const cutoff = Date.now() - 12 * 3600 * 1000; // últimas 12h
-        const recent = d2.filter(x => parseInt(x.time) > cutoff);
-        let longUSD = 0, shortUSD = 0;
-        recent.forEach(x => {
-          const v = parseFloat(x.origQty) * parseFloat(x.price);
-          if(x.side === 'SELL') longUSD  += v; // long liquidado = orden sell forzada
-          else                  shortUSD += v;
-        });
-        liquidationsReal = { longUSD, shortUSD, ts: Date.now(), source: 'binance' };
-      }
-    } catch(e2){ liquidationsReal = null; }
+    liquidationsReal = null;
   }
 }
 
@@ -1841,7 +1834,7 @@ function buildZones(mid){
   for(let i = -8; i <= 8; i++){
     if(!i) continue;
     const isRound = (i % 5 === 0);
-    z.push({ price: base + i*step, strength: isRound ? 0.82 : 0.58, tf:'1D', type: isRound ? 'OB' : 'STOP', side:(base+i*step)>mid?'above':'below', width:20 });
+    if(isRound) z.push({ price: base + i*step, strength: 0.82, tf:'1D', type: 'OB', side:(base+i*step)>mid?'above':'below', width:20 });
   }
   return z.sort((a,b) => b.price - a.price);
 }
@@ -1924,32 +1917,35 @@ function drawAll(){
     ctx.fillText('$'+formatPrice(p), W-75, y-2);
   }
 
-  // Liquidity heatmap — ZONAS MÁS VISIBLES (amarillo fuerte)
-  zones.forEach(z => {
+  // Liquidity heatmap — ZONAS LIMPIAS (solo las más relevantes)
+  const visibleZones = zones
+    .filter(z => z.strength > 0.65)          // solo zonas fuertes
+    .sort((a,b) => b.strength - a.strength)   // más fuertes primero
+    .slice(0, 14);                             // máximo 14 zonas
+
+  visibleZones.forEach(z => {
     const y = pY(z.price); if(y < -10 || y > H+10) return;
     const s = z.strength;
-    const tfa = z.tf==='1D'?1.0:z.tf==='4h'?0.85:z.tf==='1h'?0.70:0.55;
-    const a = Math.min(1, s * tfa * 1.2); // +20% más brillante
-    // Colores: amarillo para fuertes, teal para medias, cyan para débiles
-    const col = s > 0.78 ? `rgba(255,220,0,` : s > 0.60 ? `rgba(0,255,180,` : `rgba(0,200,255,`;
-    // Zona de altura: más gruesa para zonas fuertes
-    const bh = s > 0.78 ? Math.max(5, s * 14) : s > 0.60 ? Math.max(3, s * 9) : Math.max(2, s * 6);
-    // Fondo difuso (área)
-    ctx.fillStyle = col + (a * 0.18) + ')';
+    // Colores: amarillo brillante para fuertes, teal para medias
+    const col = s > 0.80 ? `rgba(255,220,0,` : `rgba(0,255,180,`;
+    // Altura de zona proporcional a la fuerza
+    const bh = Math.max(4, s * 12);
+    // Fondo difuso sutil
+    ctx.fillStyle = col + (s * 0.12) + ')';
     ctx.fillRect(0, y - bh/2, W - 77, bh);
-    // Línea central sólida — más gruesa para zonas fuertes
-    ctx.fillStyle = col + Math.min(1, a * 1.1) + ')';
-    const lineH = s > 0.78 ? 2.5 : s > 0.60 ? 1.5 : 1;
+    // Línea central sólida y clara
+    const lineH = s > 0.80 ? 2.5 : 1.8;
+    ctx.fillStyle = col + Math.min(1, s * 1.1) + ')';
     ctx.fillRect(0, y - lineH/2, W - 77, lineH);
-    // Barra lateral de fuerza (derecha) — más visible
-    const barW = Math.max(8, z.width * 1.3);
-    ctx.fillStyle = col + Math.min(1, a * 1.3) + ')';
+    // Barra lateral derecha
+    const barW = Math.max(10, s * 40);
+    ctx.fillStyle = col + Math.min(1, s * 1.2) + ')';
     ctx.fillRect(W - 77 - barW, y - lineH/2, barW, lineH + 1);
-    // Etiqueta precio en zonas muy fuertes
-    if(s > 0.82){
+    // Etiqueta precio solo en zonas muy fuertes
+    if(s > 0.78){
       ctx.fillStyle = col + '0.9)';
-      ctx.font = 'bold 8px Space Mono,monospace';
-      ctx.fillText('$' + formatPrice(z.price), W - 77 - barW - 65, y - 2);
+      ctx.font = 'bold 9px Space Mono,monospace';
+      ctx.fillText('$' + formatPrice(z.price), 6, y - 4);
     }
   });
 
@@ -1982,20 +1978,13 @@ function drawAll(){
     });
   }
 
-  // Stop clusters
-  zones.filter(z => z.type === 'STOP' && z.strength > .65).forEach(z => {
-    const y = pY(z.price); ctx.setLineDash([3,3]);
-    ctx.strokeStyle = `rgba(255,45,107,${z.strength*.5})`; ctx.lineWidth = .8;
-    ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W-77,y); ctx.stroke(); ctx.setLineDash([]);
-  });
-
-  // Order Blocks
-  zones.filter(z => (z.type==='OB'||z.type==='FVG') && z.strength>.55).forEach(z => {
-    const y = pY(z.price), h = Math.max(4, z.strength*12);
-    ctx.fillStyle = z.side==='above' ? 'rgba(255,45,107,.04)' : 'rgba(0,255,157,.05)';
-    ctx.fillRect(0, y-h, W*.28, h*2);
-    ctx.strokeStyle = z.side==='above' ? 'rgba(255,45,107,.18)' : 'rgba(0,255,204,.2)';
-    ctx.lineWidth = .5; ctx.setLineDash([2,2]); ctx.strokeRect(0, y-h, W*.28, h*2); ctx.setLineDash([]);
+  // Order Blocks — solo los más fuertes, sin stop clusters de ruido
+  zones.filter(z => z.type==='OB' && z.strength > 0.75).slice(0, 4).forEach(z => {
+    const y = pY(z.price), h = Math.max(5, z.strength*10);
+    ctx.fillStyle = z.side==='above' ? 'rgba(255,45,107,.06)' : 'rgba(0,255,157,.07)';
+    ctx.fillRect(0, y-h, W*.20, h*2);
+    ctx.strokeStyle = z.side==='above' ? 'rgba(255,45,107,.25)' : 'rgba(0,255,204,.28)';
+    ctx.lineWidth = .8; ctx.setLineDash([3,3]); ctx.strokeRect(0, y-h, W*.20, h*2); ctx.setLineDash([]);
   });
 
   // Candlesticks
@@ -2045,8 +2034,8 @@ function drawAll(){
   if(stJuez && stJuez.stLine && candles.length > 5){
     const stY = pY(stJuez.stLine);
     if(stY > 2 && stY < H - 2){
-      const stColor = stJuez.dir === 'UP' ? 'rgba(0,255,157,.85)' : stJuez.dir === 'DOWN' ? 'rgba(255,45,107,.85)' : 'rgba(255,224,0,.5)';
-      ctx.strokeStyle = stColor; ctx.lineWidth = 2; ctx.setLineDash([]);
+      const stColor = stJuez.dir === 'UP' ? 'rgba(0,255,157,1)' : stJuez.dir === 'DOWN' ? 'rgba(255,45,107,1)' : 'rgba(255,224,0,.8)';
+      ctx.strokeStyle = stColor; ctx.lineWidth = 3; ctx.setLineDash([]);
       ctx.beginPath(); ctx.moveTo(0, stY); ctx.lineTo(W - 77, stY); ctx.stroke();
       // Label ST
       ctx.fillStyle = stColor; ctx.font = 'bold 9px Space Mono,monospace';
