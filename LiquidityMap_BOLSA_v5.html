@@ -556,9 +556,23 @@ const ATR_MAP = {
   'JPM':0.010,'BAC':0.012,'GS':0.012,'MS':0.012,'C':0.012,
   'UBER':0.020,'ABNB':0.022,'SNAP':0.035,
 };
-function getATR(ticker, price){
-  const pct = ATR_MAP[(ticker||'').toUpperCase()] || 0.015;
-  return parseFloat(price) * pct;
+// Factor ATR por timeframe — distancias reales según TF activo
+const TF_ATR_FACTOR = {'5':0.10,'15':0.18,'60':0.35,'240':0.60,'D':1.00};
+// Multiplicadores SL/TP por TF — R:R ajustado al tipo de operación
+const TF_TP_MULT = {
+  '5':   {sl:0.8,  tp1:1.2,  tp2:2.0,  tp3:3.0},
+  '15':  {sl:1.0,  tp1:1.5,  tp2:2.5,  tp3:4.0},
+  '60':  {sl:1.5,  tp1:2.0,  tp2:3.5,  tp3:6.0},
+  '240': {sl:2.0,  tp1:3.0,  tp2:5.0,  tp3:9.0},
+  'D':   {sl:2.5,  tp1:4.0,  tp2:7.0,  tp3:12.0},
+};
+function getATR(ticker, price, currentTF){
+  const pct    = ATR_MAP[(ticker||'').toUpperCase()] || 0.015;
+  const factor = TF_ATR_FACTOR[currentTF || tf || '60'] || 0.35;
+  return parseFloat(price) * pct * factor;
+}
+function getTPMult(currentTF){
+  return TF_TP_MULT[currentTF || tf || '60'] || TF_TP_MULT['60'];
 }
 
 // ── WEBHOOK / TELEGRAM ────────────────────────────────────────
@@ -583,7 +597,7 @@ async function sendTelegram(signal, ticker, price, score, extra){
   const kz = getKillZone();
   const body = {
     signal, alert_type: signal, source: 'BOLSA_HTML', ticker: t,
-    timeframe: tf || '1H', price: p.toString(),
+    timeframe: ({'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'}[tf]||tf), price: p.toString(),
     sl: sl || '—', tp1: tp1 || '—', tp2: tp2 || '—', tp3: tp3 || '—',
     score: score ? score+'/10' : '—',
     kill_zone: kz.name, ...(extra || {})
@@ -703,7 +717,7 @@ function computeNeuralScore(p){
   if(!p || !vp) return { type:'NEUTRAL', score:0, rawScore:0, conf:[], superTrendDir:0 };
   const conf = [];
   let score = 0;
-  const rawMax = 11.5;
+  const rawMax = 12.5;
 
   // CAPA 1 — SuperTrend JUEZ (3 pts máx)
   const stLast = stResult && stResult.length > 0 ? stResult[stResult.length - 1] : null;
@@ -722,12 +736,12 @@ function computeNeuralScore(p){
 
   // CAPA 4 — CHoCH / BOS (2 pts máx)
   if(struct.bos){
-    if(struct.bos.dir === 'BULL') { score += 2; conf.push('🏗 BOS alcista ✓'); }
-    else                          { score -= 2; conf.push('🏗 BOS bajista ✗'); }
+    if(struct.bos.dir === 'BULL') { score += 3; conf.push('🏗 BOS ALCISTA ✓ — desplazamiento confirmado'); }
+    else                          { score -= 3; conf.push('🏗 BOS BAJISTA ✗ — desplazamiento bajista'); }
   }
   if(struct.choch){
-    if(struct.choch.dir === 'BULL') { score += 1.5; conf.push('🏗 CHoCH BULL ✓'); }
-    else                            { score -= 1.5; conf.push('🏗 CHoCH BEAR ✗'); }
+    if(struct.choch.dir === 'BULL') { score += 1.5; conf.push('⚡ CHoCH BULL — alerta temprana'); }
+    else                            { score -= 1.5; conf.push('⚡ CHoCH BEAR — alerta temprana'); }
   }
 
   // CAPA 5 — Delta / Buy pressure (1 pt)
@@ -1067,8 +1081,9 @@ function updateDerived(){
   if(wh){ wBadge.textContent='🐋 BALLENA '+wh.dir+' ×'+wh.ratio; wBadge.style.display=''; }
   else { wBadge.style.display='none'; }
   // SL/TP
-  const atr = quote.h&&quote.l ? (quote.h-quote.l)*0.5 : p*0.008;
-  const slD=atr*1.5, tp1D=slD*2, tp2D=slD*3, tp3D=slD*5;
+  const atr = getATR(sym, p, tf);
+  const _m  = getTPMult(tf);
+  const slD = atr*_m.sl, tp1D = atr*_m.tp1, tp2D = atr*_m.tp2, tp3D = atr*_m.tp3;
   if(sig.type==='BUY'){
     document.getElementById('sig-stop').textContent='SL $'+(p-slD).toFixed(2);
     document.getElementById('sig-t1').textContent='TP1 $'+(p+tp1D).toFixed(2);
@@ -1423,7 +1438,7 @@ function drawAll(){
     // SL/TP lines
     const sig2=computeNeuralScore(cp);
     if(sig2&&sig2.type!=='NEUTRAL'&&quote.h&&quote.l){
-      const atrE=(quote.h-quote.l)*0.5, slD2=atrE*1.5, tp1D2=slD2*2, tp2D2=slD2*3;
+      const atrE=getATR(sym,cp,tf), _mC=getTPMult(tf), slD2=atrE*_mC.sl, tp1D2=atrE*_mC.tp1, tp2D2=atrE*_mC.tp2;
       const isBuy2=sig2.type==='BUY';
       const slP2=isBuy2?cp-slD2:cp+slD2, tp1P2=isBuy2?cp+tp1D2:cp-tp1D2, tp2P2=isBuy2?cp+tp2D2:cp-tp2D2;
       [[slP2,'rgba(255,45,107,.8)',[4,3],'SL'],[tp1P2,'rgba(0,255,157,.8)',[6,3],'TP1'],[tp2P2,'rgba(255,224,0,.75)',[6,3],'TP2']].forEach(([price2,color2,dash2,lbl2])=>{
