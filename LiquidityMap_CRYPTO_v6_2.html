@@ -388,17 +388,21 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div class="vol-bar"><div class="vol-fill" id="vf" style="width:0%"></div></div>
     </div>
 
-    <!-- GEX — GAMMA EXPOSURE CRYPTO -->
+    <!-- CHoCH / BOS — ESTRUCTURA INSTITUCIONAL -->
     <div class="ps">
-      <h3>⚡ GEX — Gamma Crypto</h3>
-      <div class="mr"><span class="lb">GEX Net est.</span><span class="vl" id="gex-net">—</span></div>
-      <div style="margin:4px 0;height:7px;background:#07101f;border-radius:2px;overflow:hidden;"><div id="gex-bar" style="height:100%;width:50%;background:var(--muted);border-radius:2px;transition:width .4s,background .3s;"></div></div>
-      <div class="mr"><span class="lb">Volatilidad imp.</span><span class="vl y" id="gex-iv">—</span></div>
-      <div class="mr"><span class="lb">Régimen</span><span class="vl" id="gex-reg">—</span></div>
-      <div class="mr"><span class="lb">Call Wall est.</span><span class="vl g" id="gex-cw">—</span></div>
-      <div class="mr"><span class="lb">Put Wall est.</span><span class="vl r" id="gex-pw">—</span></div>
-      <div class="mr"><span class="lb">Zero Gamma</span><span class="vl y" id="gex-zg">—</span></div>
-      <div style="margin-top:4px;font-size:8px;color:#6a90b0;line-height:1.5" id="gex-explain">—</div>
+      <h3>🏗 Estructura — CHoCH / BOS</h3>
+      <div class="mr"><span class="lb">Último evento</span><span class="vl y" id="struct-last">—</span></div>
+      <div class="mr"><span class="lb">Tipo</span><span class="vl" id="struct-type">—</span></div>
+      <div class="mr"><span class="lb">Dirección</span><span class="vl" id="struct-dir">—</span></div>
+      <div class="mr"><span class="lb">Precio nivel</span><span class="vl a" id="struct-price">—</span></div>
+      <div class="mr"><span class="lb">En score</span><span class="vl" id="struct-score">—</span></div>
+      <div style="margin-top:5px;padding-top:5px;border-top:1px solid rgba(255,255,255,.05);">
+        <div class="mr"><span class="lb">BOS</span><span class="vl g" id="struct-bos">No detectado</span></div>
+        <div class="mr"><span class="lb">CHoCH</span><span class="vl y" id="struct-choch">No detectado</span></div>
+        <div class="mr"><span class="lb">Swing High</span><span class="vl" id="struct-sh">—</span></div>
+        <div class="mr"><span class="lb">Swing Low</span><span class="vl" id="struct-sl2">—</span></div>
+      </div>
+      <div style="margin-top:4px;font-size:8px;color:#6a90b0;line-height:1.5" id="struct-explain">BOS = desplazamiento confirmado (3pts). CHoCH = alerta temprana (1.5pts). Ambos visibles en el gráfico.</div>
     </div>
 
     <!-- MAX PAIN CRYPTO -->
@@ -537,7 +541,25 @@ const ATR_MAP = {
   'LTCUSDT':0.030,'ATOMUSDT':0.042,'FTMUSDT':0.055,'ARBUSDT':0.050,
   'OPUSDT':0.052,'INJUSDT':0.055,'SUIUSDT':0.060,'SEIUSDT':0.065,
 };
-function getATR(sym, price){ return price * (ATR_MAP[sym] || 0.035); }
+// Factor ATR por TF — distancias proporcionales al timeframe operativo
+const TF_ATR_FACTOR = {'1m':0.06,'5m':0.10,'15m':0.18,'1h':0.35,'4h':0.60,'1d':1.00};
+// Multiplicadores SL/TP por TF — scalp vs swing vs posicional
+const TF_TP_MULT = {
+  '1m':  {sl:0.8,  tp1:1.2, tp2:2.0, tp3:3.0},
+  '5m':  {sl:0.8,  tp1:1.2, tp2:2.0, tp3:3.5},
+  '15m': {sl:1.0,  tp1:1.5, tp2:2.5, tp3:4.0},
+  '1h':  {sl:1.5,  tp1:2.0, tp2:3.5, tp3:6.0},
+  '4h':  {sl:2.0,  tp1:3.0, tp2:5.0, tp3:9.0},
+  '1d':  {sl:2.5,  tp1:4.0, tp2:7.0, tp3:12.0},
+};
+function getATR(sym, price, currentTF){
+  const basePct = ATR_MAP[sym] || 0.035;
+  const factor  = TF_ATR_FACTOR[currentTF || tf || '15m'] || 0.18;
+  return price * basePct * factor;
+}
+function getTPMult(currentTF){
+  return TF_TP_MULT[currentTF || tf || '15m'] || TF_TP_MULT['15m'];
+}
 
 let sym = 'BTCUSDT', tf = '15m';
 let ws = null, wsAll = null;
@@ -1270,11 +1292,12 @@ async function sendTelegram(signal, ticker, price, score, extra){
   if(window._cool[coolKey] && now - window._cool[coolKey] < COOLDOWN) return;
   window._cool[coolKey] = now;
   const isBuy = signal === 'BUY', isSell = signal === 'SELL';
-  const atr = getATR(t, p);
-  const sl = isBuy ? (p - atr*1.5).toFixed(2) : isSell ? (p + atr*1.5).toFixed(2) : null;
-  const tp1 = isBuy ? (p + atr*2).toFixed(2) : isSell ? (p - atr*2).toFixed(2) : null;
-  const tp2 = isBuy ? (p + atr*3).toFixed(2) : isSell ? (p - atr*3).toFixed(2) : null;
-  const tp3 = isBuy ? (p + atr*5).toFixed(2) : isSell ? (p - atr*5).toFixed(2) : null;
+  const atr = getATR(t, p, tf);
+  const _m  = getTPMult(tf);
+  const sl = isBuy ? (p - atr*_m.sl).toFixed(2)  : isSell ? (p + atr*_m.sl).toFixed(2)  : null;
+  const tp1 = isBuy ? (p + atr*_m.tp1).toFixed(2) : isSell ? (p - atr*_m.tp1).toFixed(2) : null;
+  const tp2 = isBuy ? (p + atr*_m.tp2).toFixed(2) : isSell ? (p - atr*_m.tp2).toFixed(2) : null;
+  const tp3 = isBuy ? (p + atr*_m.tp3).toFixed(2) : isSell ? (p - atr*_m.tp3).toFixed(2) : null;
   const bp = Math.round(buyV / (buyV + sellV + 1) * 100);
   const q = evalQuality(score || 0);
   const body = {
@@ -1328,6 +1351,38 @@ function checkAlerts(price){
     const q = evalQuality(sig.score);
     triggerAlert('SELL', '🔴 SELL ' + q.label + ' — Score ' + sig.score + '/10 | ST:' + sig.stDir, sig.score, { confluencias: sig.conf.join(' · ') });
   } else if(sig.type === 'NEUTRAL') lastSigType = '';
+  // ALERTA SALIDA — Ballena vendedora masiva contra tendencia alcista
+  // Esta es la señal más importante para proteger posición
+  {
+    const now9 = Date.now();
+    const recentW9 = (whales||[]).filter(w => now9 - w.ts < 120000); // últimos 2 min
+    if(recentW9.length > 0){
+      const buyUSD9  = recentW9.filter(w=>w.side==='BUY').reduce((a,w)=>a+w.usd,0);
+      const sellUSD9 = recentW9.filter(w=>w.side==='SELL').reduce((a,w)=>a+w.usd,0);
+      const fmtM9 = v => v>1e6?(v/1e6).toFixed(1)+'M':(v/1e3).toFixed(0)+'K';
+      // Ballena vendiendo masivo + CVD girando bajista = señal de SALIDA
+      if(sellUSD9 > buyUSD9 * 2.0 && sellUSD9 > 500000 && cvd < 0
+         && lastSigType === 'BUY' && Date.now() - (window._cool['WHALE_EXIT_'+sym]||0) > 120000){
+        window._cool['WHALE_EXIT_'+sym] = Date.now();
+        triggerAlert('SELL',
+          '🚨 BALLENA VENDEDORA $'+fmtM9(sellUSD9)+' — ALERTA SALIDA POSICIÓN LONG',
+          8,
+          {note:'Venta institucional masiva detectada — CVD girando bajista — considerar cerrar longs'}
+        );
+      }
+      // Ballena comprando masivo cuando estabas en SELL = alerta de salida short
+      if(buyUSD9 > sellUSD9 * 2.0 && buyUSD9 > 500000 && cvd > 0
+         && lastSigType === 'SELL' && Date.now() - (window._cool['WHALE_EXIT_B_'+sym]||0) > 120000){
+        window._cool['WHALE_EXIT_B_'+sym] = Date.now();
+        triggerAlert('BUY',
+          '🚨 BALLENA COMPRADORA $'+fmtM9(buyUSD9)+' — ALERTA SALIDA POSICIÓN SHORT',
+          8,
+          {note:'Compra institucional masiva detectada — CVD subiendo — considerar cerrar shorts'}
+        );
+      }
+    }
+  }
+
   // Stop Hunt detection — mejorado con peso por temporalidad
   if(candles.length > 3 && alertCfg.sh){
     const last = candles[candles.length-1];
@@ -1548,7 +1603,40 @@ function computeSignal(price) {
     }
   }
 
-  // CAPA 7 — Kill Zone activa (peso +0.5 bonus)
+  // CAPA 7 — BOS / CHoCH estructural (BOS=3pts, CHoCH=1.5pts)
+  // BOS es el desplazamiento real — más poderoso que CHoCH
+  if(structureEvents && structureEvents.length > 0){
+    const lastEv = structureEvents[structureEvents.length - 1];
+    const evBull = lastEv.dir === 'bull';
+    const isBOS  = lastEv.type === 'BOS';
+    const evPts  = isBOS ? 3.0 : 1.5;
+    if(evBull){ bullPts += evPts; confBull.push(isBOS ? 'BOS ALCISTA✓ desplazamiento' : 'CHoCH BULL⚡ alerta'); }
+    else      { bearPts += evPts; confBear.push(isBOS ? 'BOS BAJISTA✗ desplazamiento' : 'CHoCH BEAR⚡ alerta'); }
+  }
+
+  // CAPA 8 — Ballenas con confirmación de dirección (1.5pts)
+  // Solo suma si la ballena va en la MISMA dirección que el CVD
+  // Ballena + CVD opuesto = posible trampa, no suma (evita falsos positivos)
+  {
+    const now8 = Date.now();
+    const recentW = (whales||[]).filter(w => now8 - w.ts < 300000);
+    if(recentW.length > 0){
+      const buyUSD  = recentW.filter(w=>w.side==='BUY').reduce((a,w)=>a+w.usd,0);
+      const sellUSD = recentW.filter(w=>w.side==='SELL').reduce((a,w)=>a+w.usd,0);
+      const fmtM = v => v>1e6?(v/1e6).toFixed(1)+'M':(v/1e3).toFixed(0)+'K';
+      if(buyUSD > sellUSD * 1.3 && cvd > 0){
+        bullPts += 1.5; confBull.push('🐋 Ballena $'+fmtM(buyUSD)+'+CVD↑');
+      } else if(sellUSD > buyUSD * 1.3 && cvd < 0){
+        bearPts += 1.5; confBear.push('🐋 Ballena $'+fmtM(sellUSD)+'+CVD↓');
+      } else if(buyUSD > sellUSD * 1.3 && cvd < 0){
+        confBull.push('🐋⚠ Ballena compra vs CVD↓ divergencia');
+      } else if(sellUSD > buyUSD * 1.3 && cvd > 0){
+        confBear.push('🐋⚠ Ballena vende vs CVD↑ divergencia');
+      }
+    }
+  }
+
+  // CAPA 9 — Kill Zone activa (peso +0.5 bonus)
   const nowHM = new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
   const inKZ = (nowHM >= 30 && nowHM < 90) || (nowHM >= 480 && nowHM < 540) ||
                (nowHM >= 780 && nowHM < 870) || (nowHM >= 1140 && nowHM < 1200);
@@ -1593,7 +1681,52 @@ function computeSignal(price) {
 // ═══════════════════════════════════════════════════════════
 // PANELS
 // ═══════════════════════════════════════════════════════════
-function updatePanels(){ updateQuotePanel(); updateDerived(); updateVP(); updateZonesList(); updateCandleList(); }
+function updatePanels(){ updateQuotePanel(); updateDerived(); updateVP(); updateZonesList(); updateCandleList(); updateStructurePanel(); }
+
+// ── Panel CHoCH / BOS ────────────────────────────────────
+function updateStructurePanel(){
+  const set = (id,v,cls) => { const e=document.getElementById(id); if(e){ e.textContent=v; if(cls!==undefined) e.className='vl '+cls; } };
+  if(!structureEvents || !structureEvents.length){
+    set('struct-last','Sin eventos recientes','');
+    set('struct-bos','No detectado','');
+    set('struct-choch','No detectado','');
+    return;
+  }
+  const last = structureEvents[structureEvents.length-1];
+  const isBull = last.dir === 'bull';
+  const isBOS  = last.type === 'BOS';
+  const col    = isBull ? 'g' : 'r';
+  const arrow  = isBull ? '▲' : '▼';
+  set('struct-last', last.type + ' ' + arrow + (isBull?' ALCISTA':' BAJISTA'), col);
+  set('struct-type', isBOS ? '🏗 BOS — Desplazamiento (3pts)' : '⚡ CHoCH — Alerta (1.5pts)', isBOS?'g':'y');
+  set('struct-dir',  isBull ? '▲ ALCISTA — precio rompió arriba' : '▼ BAJISTA — precio rompió abajo', col);
+  const dec = (last.price||0) > 1000 ? 1 : (last.price||0) > 1 ? 2 : 4;
+  set('struct-price', last.price ? '$'+(last.price).toFixed(dec) : '—', 'a');
+  set('struct-score', isBOS ? (isBull?'+3.0pts BUY':'+3.0pts SELL') : (isBull?'+1.5pts BUY':'+1.5pts SELL'), isBull?'g':'r');
+  // BOS y CHoCH separados
+  const bos   = structureEvents.filter(e=>e.type==='BOS').slice(-1)[0];
+  const choch = structureEvents.filter(e=>e.type==='CHoCH').slice(-1)[0];
+  if(bos){
+    const bd = bos.dir==='bull';
+    set('struct-bos', (bd?'▲ BOS ALCISTA':'▼ BOS BAJISTA')+' — $'+(bos.price||0).toFixed(dec), bd?'g':'r');
+  } else { set('struct-bos','No detectado',''); }
+  if(choch){
+    const cd = choch.dir==='bull';
+    set('struct-choch', (cd?'▲ CHoCH BULL':'▼ CHoCH BEAR')+' — $'+(choch.price||0).toFixed(dec), cd?'y':'y');
+  } else { set('struct-choch','No detectado',''); }
+  // Swings
+  if(candles.length > 6){
+    const recent = candles.slice(-20);
+    const highs = recent.map(b=>b.h), lows = recent.map(b=>b.l);
+    set('struct-sh', '$'+(Math.max(...highs)).toFixed(dec), '');
+    set('struct-sl2', '$'+(Math.min(...lows)).toFixed(dec), '');
+  }
+  set('struct-explain',
+    isBOS
+      ? (isBull ? 'BOS ALCISTA: precio rompió swing high — desplazamiento institucional. Alta probabilidad de continuación.' : 'BOS BAJISTA: precio rompió swing low — venta institucional confirmada. Buscar TP.')
+      : (isBull ? 'CHoCH BULL: cambio de carácter alcista. Alerta temprana. Esperar confirmación BOS.' : 'CHoCH BEAR: cambio de carácter bajista. Alerta temprana. No entrar sin BOS confirmado.')
+  );
+}
 
 function fmt(v, decimals){ if(v == null) return '—'; const d = v < 1 ? 4 : v < 100 ? 2 : v < 10000 ? 2 : 0; return '$' + v.toFixed(decimals !== undefined ? decimals : d); }
 const set = (id, v, cls) => { const e = document.getElementById(id); if(e){ e.textContent = v; if(cls !== undefined) e.className = 'vl ' + cls; } };
@@ -1662,8 +1795,9 @@ function updateDerived(){
   const nowStr = new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   if(sig.type !== 'NEUTRAL') { const te = document.getElementById('sig-time'); if(te) te.textContent = 'Última señal: '+nowStr+' UTC'; }
   // Niveles SL/TP con ATR real
-  const atr = getATR(sym, p);
-  const slD = atr * 1.5, tp1D = slD * 2, tp2D = slD * 3, tp3D = slD * 5;
+  const atr = getATR(sym, p, tf);
+  const _mD = getTPMult(tf);
+  const slD = atr * _mD.sl, tp1D = atr * _mD.tp1, tp2D = atr * _mD.tp2, tp3D = atr * _mD.tp3;
   const dec = p < 1 ? 5 : p < 100 ? 3 : p < 10000 ? 1 : 0;
   if(sig.type === 'BUY'){
     set('sig-stop', '$'+(p-slD).toFixed(dec), 'r');
@@ -2137,8 +2271,9 @@ function drawAll(){
     // TP / SL lines
     const sig2 = computeSignal(cp);
     if(sig2 && sig2.type !== 'NEUTRAL'){
-      const atr = getATR(sym, cp);
-      const slD = atr*1.5, tp1D = slD*2, tp2D = slD*3;
+      const atr = getATR(sym, cp, tf);
+      const _mG = getTPMult(tf);
+      const slD = atr*_mG.sl, tp1D = atr*_mG.tp1, tp2D = atr*_mG.tp2;
       const isBuy = sig2.type === 'BUY';
       const slP = isBuy?cp-slD:cp+slD, tp1P = isBuy?cp+tp1D:cp-tp1D, tp2P = isBuy?cp+tp2D:cp-tp2D;
       [[slP,'rgba(255,45,107,.8)',[4,3],'SL'],[tp1P,'rgba(0,255,157,.8)',[5,3],'TP1'],[tp2P,'rgba(255,224,0,.7)',[5,3],'TP2']].forEach(([price,color,dash,lbl]) => {
@@ -2268,8 +2403,9 @@ function drawOF(bars){
   const steps = 12;
   for(let i = 0; i < steps; i++){
     const y = H - (i/steps)*H*.8 - H*.08;
-    const b = 0.2 + (buyV/(buyV+sellV+1)) * 0.6 + (Math.random()*.1);
-    const s = 1 - b + (Math.random()*.1);
+    const ratio = buyV/(buyV+sellV+1);
+    const b = Math.max(0.1, Math.min(0.9, 0.2 + ratio * 0.6));
+    const s = Math.max(0.1, Math.min(0.9, 1 - b));
     ofctx.fillStyle = `rgba(0,255,157,${b*.4})`; ofctx.fillRect(2,y-3,b*26,6);
     ofctx.fillStyle = `rgba(255,45,107,${s*.4})`; ofctx.fillRect(36,y-3,s*22,6);
   }
