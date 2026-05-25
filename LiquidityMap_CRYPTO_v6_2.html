@@ -838,7 +838,7 @@ let oiHistory = [];
 
 async function loadOIHistory(){
   try{
-    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/fapi/v1/openInterestHist&symbol=${sym}&period=1h&limit=3&futures=1`);
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/fapi/v1/openInterestHist&symbol=${sym}&period=1h&limit=3`);
     if(!r.ok) throw new Error('no hist');
     const d = await r.json();
     if(!Array.isArray(d) || d.length < 2) throw new Error('no data');
@@ -925,7 +925,7 @@ let liquidationsReal = null;
 async function loadLiquidationsCoinglass(){
   // Usamos Binance forced orders via proxy (Coinglass bloquea CORS desde browser)
   try{
-    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/fapi/v1/allForceOrders&symbol=${sym}&limit=100&futures=1`);
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/fapi/v1/forceOrders&symbol=${sym}&limit=100&futures=1`);
     if(!r.ok) throw new Error('liq ' + r.status);
     const d = await r.json();
     if(!Array.isArray(d)) throw new Error('no array');
@@ -1927,26 +1927,23 @@ function drawAll(){
     const y = pY(z.price); if(y < -10 || y > H+10) return;
     const s = z.strength;
     // Colores: amarillo brillante para fuertes, teal para medias
-    const col = s > 0.80 ? `rgba(255,220,0,` : `rgba(0,255,180,`;
-    // Altura de zona proporcional a la fuerza
-    const bh = Math.max(4, s * 12);
-    // Fondo difuso sutil
-    ctx.fillStyle = col + (s * 0.12) + ')';
+    const col = s > 0.78 ? `rgba(255,224,0,` : `rgba(0,255,180,`;
+    // Fondo difuso — visible pero no agresivo
+    const bh = Math.max(5, s * 14);
+    ctx.fillStyle = col + (s * 0.15) + ')';
     ctx.fillRect(0, y - bh/2, W - 77, bh);
-    // Línea central sólida y clara
-    const lineH = s > 0.80 ? 2.5 : 1.8;
-    ctx.fillStyle = col + Math.min(1, s * 1.1) + ')';
+    // Línea central sólida — bien visible
+    const lineH = s > 0.78 ? 2.5 : 2.0;
+    ctx.fillStyle = col + '0.95)';
     ctx.fillRect(0, y - lineH/2, W - 77, lineH);
-    // Barra lateral derecha
-    const barW = Math.max(10, s * 40);
-    ctx.fillStyle = col + Math.min(1, s * 1.2) + ')';
+    // Barra lateral de fuerza derecha
+    const barW = Math.max(12, s * 45);
+    ctx.fillStyle = col + '1)';
     ctx.fillRect(W - 77 - barW, y - lineH/2, barW, lineH + 1);
-    // Etiqueta precio solo en zonas muy fuertes
-    if(s > 0.78){
-      ctx.fillStyle = col + '0.9)';
-      ctx.font = 'bold 9px Space Mono,monospace';
-      ctx.fillText('$' + formatPrice(z.price), 6, y - 4);
-    }
+    // Etiqueta precio en TODAS las zonas visibles (no solo las muy fuertes)
+    ctx.fillStyle = col + '0.85)';
+    ctx.font = (s > 0.78 ? 'bold ' : '') + '9px Space Mono,monospace';
+    ctx.fillText('$' + formatPrice(z.price), 6, y - 4);
   });
 
   // Long/Short liquidation levels
@@ -2357,18 +2354,31 @@ function toggleLegend(){ document.getElementById('legend-modal').classList.toggl
 
 // TOOLTIP
 cv.addEventListener('mousemove', e => {
-  const r = cv.getBoundingClientRect(), my = e.clientY - r.top;
+  const r = cv.getBoundingClientRect(), my = e.clientY - r.top, mx = e.clientX - r.left;
   let near = null, md = Infinity;
-  zones.forEach(z => { const zy = pY(z.price), d = Math.abs(my-zy); if(d < 14 && d < md){ md = d; near = z; } });
+  // Buscar en TODAS las zonas visibles — radio de detección amplio
+  const searchZones = zones.filter(z => z.strength > 0.65).sort((a,b) => b.strength - a.strength).slice(0, 14);
+  searchZones.forEach(z => {
+    const zy = pY(z.price), d = Math.abs(my - zy);
+    if(d < 20 && d < md){ md = d; near = z; }
+  });
+  // También mostrar precio del cursor en línea horizontal
+  const priceAtCursor = pMin + ((cv.height - my) / cv.height) * pRng;
   const t = document.getElementById('tip');
   if(near){
-    t.style.display = 'block'; t.style.left = (e.clientX+14)+'px'; t.style.top = (e.clientY-40)+'px';
-    document.getElementById('tip-t').textContent = near.type + ' ZONE';
-    document.getElementById('tip-p').textContent = '$' + formatPrice(near.price);
-    document.getElementById('tip-l').textContent = (near.strength*100).toFixed(0) + '%';
-    document.getElementById('tip-ty').textContent = near.side==='above' ? '▲ Resistencia' : '▼ Soporte';
-    document.getElementById('tip-tf').textContent = near.tf;
-  } else t.style.display = 'none';
+    t.style.display = 'block';
+    t.style.left = (e.clientX + 16) + 'px';
+    t.style.top  = Math.max(10, e.clientY - 50) + 'px';
+    const col = near.strength > 0.80 ? '#ffe000' : '#00ffb4';
+    document.getElementById('tip-t').style.color = col;
+    document.getElementById('tip-t').textContent = near.type + ' — $' + formatPrice(near.price);
+    document.getElementById('tip-p').textContent = (near.strength * 100).toFixed(0) + '% fuerza';
+    document.getElementById('tip-l').textContent = near.side === 'above' ? '▲ Resistencia' : '▼ Soporte';
+    document.getElementById('tip-ty').textContent = near.tf + ' timeframe';
+    document.getElementById('tip-tf').textContent = 'dist: ' + (Math.abs(priceAtCursor - near.price) / near.price * 100).toFixed(2) + '% del precio';
+  } else {
+    t.style.display = 'none';
+  }
 });
 cv.addEventListener('mouseleave', () => { document.getElementById('tip').style.display = 'none'; });
 
