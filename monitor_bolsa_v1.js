@@ -1,21 +1,23 @@
 // ============================================================
-//  monitor_bolsa_v1.js — LiquidMap PRO · BOLSA
-//  Sistema Neuronal Institucional — Stocks Edition
+//  monitor_bolsa_v2.js — LiquidMap PRO · BOLSA
+//  Sistema Neuronal Institucional — SINCRONIZADO con Mapa v6
 //
-//  CAPA 1 — VOLUME PROFILE: POC, VAH, VAL, HVN
-//  CAPA 2 — CVD + DELTA: compra/venta agresiva institucional
-//  CAPA 3 — ESTRUCTURA: CHoCH, BOS, swing highs/lows
-//  CAPA 4 — LIQUIDEZ: Stop Hunt, EQH/EQL, Order Blocks
-//  CAPA 5 — GEX + MAX PAIN + OPTIONS FLOW (bolsa = opciones)
-//  CAPA 6 — DARK POOL + VWAP + sesión NY
-//  CAPA 7 — CONFIRMACIÓN 15m + timing Power Hour
+//  CAPA 1 — SUPERTREND JUEZ (3pts) — igual al mapa v6
+//  CAPA 2 — POC / VWAP (1.5pts)
+//  CAPA 3 — CVD real + divergencia (1.5pts)
+//  CAPA 4 — CHoCH + BOS (2pts) — 2 cierres confirmados
+//  CAPA 5 — Stop Hunt + Order Blocks + EQH/EQL (1pt)
+//  CAPA 6 — GEX estimado + MaxPain (1pt)
+//  CAPA 7 — Dark Pool estimado (1pt)
+//  CAPA 8 — Confirmación 15m + Power Hour timing
 //
 //  Reglas:
-//  - Solo opera en sesión NY (9:30–16:00 ET) y Pre-Market relevante
+//  - Solo opera en sesión NY (9:30–16:00 ET) y pre-market desde 9:00 ET
 //  - Score mínimo 6/10 · mínimo 3 capas concordantes
 //  - Power Hour (9:30–10:30 y 15:00–16:00 ET) = señales prioritarias
-//  - Silencio en Lunch (11:30–13:30 ET) — demasiado ruido
-//  - Bot separado: @liquidmapbolsa_bot
+//  - Silencio en Lunch (11:30–13:30 ET)
+//  - Cooldown 4H roto automáticamente por CHoCH
+//  - Bot: @liquidmapbolsa_bot
 // ============================================================
 
 'use strict';
@@ -26,37 +28,32 @@ const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
 const FINNHUB_TOKEN        = 'd0qsf2hr01qgsn5hm2k0d0qsf2hr01qgsn5hm2kg';
 
-// Tickers activos — agregar aquí para activar nuevos
 const STOCK_TICKERS = [
   'SPY', 'QQQ', 'NVDA', 'AAPL', 'AMZN',
   'TSLA', 'MSFT', 'META', 'GOOG', 'AMD',
-  'IWM', 'DIA', 'WMT'
+  'IWM', 'DIA', 'WMT',
 ];
 
-// ATR estimado por ticker (% del precio)
 const ATR_PCT = {
   SPY: 0.008, QQQ: 0.010, NVDA: 0.025, AAPL: 0.012,
   AMZN: 0.015, TSLA: 0.030, MSFT: 0.012, META: 0.018,
   GOOG: 0.013, AMD: 0.025, IWM: 0.010, DIA: 0.007, WMT: 0.010,
 };
 
-const MIN_SCORE    = 6;       // score mínimo 6/10
-const COOLDOWN_MS  = 4 * 60 * 60 * 1000; // 4H cooldown
-const SCAN_INTERVAL = 5 * 60 * 1000;     // scan cada 5 min
+const MIN_SCORE     = 6;
+const COOLDOWN_MS   = 4 * 60 * 60 * 1000;
+const SCAN_INTERVAL = 5 * 60 * 1000;
 
-// ── ESTADO NEURONAL ─────────────────────────────────────────
+// ── ESTADO ──────────────────────────────────────────────────
 const STATE = {};
 function getState(ticker) {
   if (!STATE[ticker]) {
-    STATE[ticker] = {
-      lastSignalDir: null, lastSignalTs: 0,
-      lastStructure: 'NEUTRAL', lastCVDDir: 'neutral',
-    };
+    STATE[ticker] = { lastSignalDir: null, lastSignalTs: 0 };
   }
   return STATE[ticker];
 }
 
-// ── HELPERS ──────────────────────────────────────────────────
+// ── HELPERS ─────────────────────────────────────────────────
 function fmt(n, ref) {
   if (isNaN(+n)) return '—';
   if (ref >= 1000) return (+n).toFixed(2);
@@ -64,43 +61,23 @@ function fmt(n, ref) {
   return (+n).toFixed(3);
 }
 
-function getATR(ticker, price) {
-  return price * (ATR_PCT[ticker] || 0.015);
+// Factor ATR según timeframe — distancias proporcionales al TF operativo
+const TF_ATR_FACTOR = { '5':0.10, '15':0.18, '60':0.35, '240':0.60, 'D':1.00 };
+// Multiplicadores SL/TP por TF — scalp vs swing vs posicional
+const TF_TP_MULT = {
+  '5':   { sl:0.8,  tp1:1.2,  tp2:2.0,  tp3:3.0  },
+  '15':  { sl:1.0,  tp1:1.5,  tp2:2.5,  tp3:4.0  },
+  '60':  { sl:1.5,  tp1:2.0,  tp2:3.5,  tp3:6.0  },
+  '240': { sl:2.0,  tp1:3.0,  tp2:5.0,  tp3:9.0  },
+  'D':   { sl:2.5,  tp1:4.0,  tp2:7.0,  tp3:12.0 },
+};
+function getATR(ticker, price, currentTF) {
+  const basePct = ATR_PCT[ticker] || 0.015;
+  const factor  = TF_ATR_FACTOR[currentTF || '240'] || 0.60;
+  return price * basePct * factor;
 }
-
-// ── SESIÓN NY — NÚCLEO DEL MONITOR DE BOLSA ─────────────────
-function getNYSession() {
-  const now = new Date();
-  // Convertir a ET (UTC-4 en verano, UTC-5 en invierno)
-  const etOffset = isDST(now) ? -4 : -5;
-  const etHour = (now.getUTCHours() + etOffset + 24) % 24;
-  const etMin  = now.getUTCMinutes();
-  const etTime = etHour + etMin / 60;
-
-  // Mercado cerrado — no tiene sentido monitorear stocks
-  const marketOpen  = etTime >= 9.5  && etTime < 16;
-  const preMarket   = etTime >= 4    && etTime < 9.5;
-  const afterHours  = etTime >= 16   && etTime < 20;
-
-  // Power Hours — ventanas institucionales en bolsa
-  const powerHourOpen  = etTime >= 9.5  && etTime < 10.5;  // mejor momento del día
-  const lunchZone      = etTime >= 11.5 && etTime < 13.5;  // evitar — ruido máximo
-  const powerHourClose = etTime >= 15   && etTime < 16;    // segunda mejor ventana
-
-  let sessionName = 'Cerrado';
-  if (marketOpen)  sessionName = 'Sesión NY';
-  if (preMarket)   sessionName = 'Pre-Market';
-  if (afterHours)  sessionName = 'After-Hours';
-
-  let powerHour = null;
-  if (powerHourOpen)  powerHour = { name: '🔥 Power Hour Open', weight: 1.6 };
-  if (powerHourClose) powerHour = { name: '🔥 Power Hour Close', weight: 1.4 };
-
-  return {
-    etHour, etTime, marketOpen, preMarket, afterHours,
-    lunchZone, powerHour, sessionName,
-    shouldScan: marketOpen || (preMarket && etTime >= 9), // escanear desde 9am ET
-  };
+function getTPMult(currentTF) {
+  return TF_TP_MULT[currentTF || '240'] || TF_TP_MULT['240'];
 }
 
 function isDST(date) {
@@ -109,7 +86,38 @@ function isDST(date) {
   return Math.max(jan, jul) !== date.getTimezoneOffset();
 }
 
-// ── FETCH FINNHUB — DATOS REALES ──────────────────────────────
+// ── SESIÓN NY ────────────────────────────────────────────────
+function getNYSession() {
+  const now      = new Date();
+  const etOffset = isDST(now) ? -4 : -5;
+  const etHour   = (now.getUTCHours() + etOffset + 24) % 24;
+  const etMin    = now.getUTCMinutes();
+  const etTime   = etHour + etMin / 60;
+
+  const marketOpen      = etTime >= 9.5  && etTime < 16;
+  const preMarket       = etTime >= 4    && etTime < 9.5;
+  const afterHours      = etTime >= 16   && etTime < 20;
+  const powerHourOpen   = etTime >= 9.5  && etTime < 10.5;
+  const lunchZone       = etTime >= 11.5 && etTime < 13.5;
+  const powerHourClose  = etTime >= 15   && etTime < 16;
+
+  let sessionName = 'Cerrado';
+  if (marketOpen)  sessionName = 'Sesión NY';
+  if (preMarket)   sessionName = 'Pre-Market';
+  if (afterHours)  sessionName = 'After-Hours';
+
+  let powerHour = null;
+  if (powerHourOpen)  powerHour = { name: '🔥 Power Hour Open',  weight: 1.6 };
+  if (powerHourClose) powerHour = { name: '🔥 Power Hour Close', weight: 1.4 };
+
+  return {
+    etTime, marketOpen, preMarket, afterHours,
+    lunchZone, powerHour, sessionName,
+    shouldScan: marketOpen || (preMarket && etTime >= 9),
+  };
+}
+
+// ── FETCH FINNHUB ────────────────────────────────────────────
 async function fetchFinnhubCandles(symbol, resolution, from, to) {
   try {
     const url = `https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=${resolution}&from=${from}&to=${to}&token=${FINNHUB_TOKEN}`;
@@ -118,50 +126,43 @@ async function fetchFinnhubCandles(symbol, resolution, from, to) {
     if (!d || d.s === 'no_data' || !d.c) return [];
     return d.t.map((t, i) => ({
       t: t * 1000, o: d.o[i], h: d.h[i], l: d.l[i],
-      c: d.c[i], v: d.v[i],
+      c: d.c[i],  v: d.v[i],
     }));
   } catch { return []; }
-}
-
-async function fetchCandles(symbol, tf) {
-  const now  = Math.floor(Date.now() / 1000);
-  let resolution, from;
-
-  switch(tf) {
-    case '1D': resolution = 'D';  from = now - 86400 * 120; break; // 120 días
-    case '4H': resolution = '60'; from = now - 3600 * 200;  break; // ~200 velas H → agrupa 4
-    case '1H': resolution = '60'; from = now - 3600 * 100;  break; // 100 horas
-    case '15m': resolution = '15'; from = now - 900 * 100;  break; // 100 velas 15m
-    default:    resolution = '60'; from = now - 3600 * 100;
-  }
-
-  const raw = await fetchFinnhubCandles(symbol, resolution, from, now);
-
-  // Para 4H agrupar velas 1H de a 4
-  if (tf === '4H' && resolution === '60') {
-    return groupCandles(raw, 4);
-  }
-  return raw;
 }
 
 function groupCandles(candles, n) {
   const grouped = [];
   for (let i = 0; i < candles.length; i += n) {
-    const group = candles.slice(i, i + n);
-    if (!group.length) continue;
+    const g = candles.slice(i, i + n);
+    if (!g.length) continue;
     grouped.push({
-      t: group[0].t,
-      o: group[0].o,
-      h: Math.max(...group.map(c => c.h)),
-      l: Math.min(...group.map(c => c.l)),
-      c: group[group.length - 1].c,
-      v: group.reduce((a, c) => a + c.v, 0),
+      t: g[0].t,
+      o: g[0].o,
+      h: Math.max(...g.map(c => c.h)),
+      l: Math.min(...g.map(c => c.l)),
+      c: g[g.length - 1].c,
+      v: g.reduce((a, c) => a + c.v, 0),
     });
   }
   return grouped;
 }
 
-// Quote en tiempo real
+async function fetchCandles(symbol, tf) {
+  const now = Math.floor(Date.now() / 1000);
+  let resolution, from;
+  switch (tf) {
+    case '1D':  resolution = 'D';   from = now - 86400 * 120; break;
+    case '4H':  resolution = '60';  from = now - 3600 * 200;  break;
+    case '1H':  resolution = '60';  from = now - 3600 * 100;  break;
+    case '15m': resolution = '15';  from = now - 900 * 100;   break;
+    default:    resolution = '60';  from = now - 3600 * 100;
+  }
+  const raw = await fetchFinnhubCandles(symbol, resolution, from, now);
+  if (tf === '4H' && resolution === '60') return groupCandles(raw, 4);
+  return raw;
+}
+
 async function fetchQuote(symbol) {
   try {
     const url = `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_TOKEN}`;
@@ -170,11 +171,74 @@ async function fetchQuote(symbol) {
   } catch { return null; }
 }
 
-// ── CAPA 1: VOLUME PROFILE ────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  CAPA 1 — SUPERTREND JUEZ
+//  Idéntico al mapa v6: period=10, multiplier=3.0, peso=3pts
+// ════════════════════════════════════════════════════════════
+function calcSuperTrend(candles, period = 10, multiplier = 3.0) {
+  if (candles.length < period + 2) return null;
+
+  // ATR suavizado (EMA)
+  const atrRaw = [];
+  for (let i = 1; i < candles.length; i++) {
+    atrRaw.push(Math.max(
+      candles[i].h - candles[i].l,
+      Math.abs(candles[i].h - candles[i - 1].c),
+      Math.abs(candles[i].l - candles[i - 1].c)
+    ));
+  }
+  const atrSmooth = [];
+  let atrVal = atrRaw.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  atrSmooth.push(atrVal);
+  for (let i = period; i < atrRaw.length; i++) {
+    atrVal = (atrVal * (period - 1) + atrRaw[i]) / period;
+    atrSmooth.push(atrVal);
+  }
+
+  let upperBand = 0, lowerBand = 0, trend = 1;
+  const result = [];
+
+  for (let i = 0; i < atrSmooth.length; i++) {
+    const ci  = i + period;
+    if (ci >= candles.length) break;
+    const hl2 = (candles[ci].h + candles[ci].l) / 2;
+    const ub  = hl2 + multiplier * atrSmooth[i];
+    const lb  = hl2 - multiplier * atrSmooth[i];
+    const prevC = candles[ci - 1]?.c || candles[ci].c;
+
+    upperBand = (ub < upperBand || prevC > upperBand) ? ub : upperBand;
+    lowerBand = (lb > lowerBand || prevC < lowerBand) ? lb : lowerBand;
+
+    if (candles[ci].c > upperBand) trend = 1;
+    if (candles[ci].c < lowerBand) trend = -1;
+
+    result.push({ value: trend === 1 ? lowerBand : upperBand, trend });
+  }
+
+  if (result.length < 2) return null;
+
+  const last    = result[result.length - 1];
+  const prev    = result[result.length - 2];
+  const crossed = last.trend !== prev.trend;
+
+  return {
+    value:   last.value,
+    trend:   last.trend,
+    bullish: last.trend === 1,
+    bearish: last.trend === -1,
+    crossed,
+    label:   last.trend === 1 ? '📗 SuperTrend ALCISTA' : '📕 SuperTrend BAJISTA',
+  };
+}
+
+// ════════════════════════════════════════════════════════════
+//  CAPA 2 — VOLUME PROFILE: POC, VWAP, VAH, VAL
+// ════════════════════════════════════════════════════════════
 function buildVolumeProfile(candles, bins = 100) {
   const mn = Math.min(...candles.map(c => c.l));
   const mx = Math.max(...candles.map(c => c.h));
   if (mx <= mn) return null;
+
   const bs      = (mx - mn) / bins;
   const profile = new Array(bins).fill(0);
 
@@ -200,54 +264,60 @@ function buildVolumeProfile(candles, bins = 100) {
     else break;
   }
 
-  const vah = mn + hi * bs + bs;
-  const val = mn + lo * bs;
-
-  // VWAP estimado (promedio ponderado por volumen)
   let sumPV = 0, sumV = 0;
   for (const c of candles) {
-    const typical = (c.h + c.l + c.c) / 3;
-    sumPV += typical * c.v;
+    const tp = (c.h + c.l + c.c) / 3;
+    sumPV += tp * c.v;
     sumV  += c.v;
   }
-  const vwap = sumV > 0 ? sumPV / sumV : poc;
 
-  return { poc, vah, val, vwap, profile, min: mn, max: mx, binSize: bs };
+  return {
+    poc,
+    vah:  mn + hi * bs + bs,
+    val:  mn + lo * bs,
+    vwap: sumV > 0 ? sumPV / sumV : poc,
+    profile, min: mn, max: mx, binSize: bs,
+  };
 }
 
-// ── CAPA 2: CVD + DELTA ───────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  CAPA 3 — CVD + DELTA
+// ════════════════════════════════════════════════════════════
 function calcCVD(candles) {
   let cvd = 0, buyVol = 0, sellVol = 0;
   const deltas = [];
+
   for (const c of candles) {
-    const bv = c.c >= c.o ? c.v * 0.6 : c.v * 0.4; // estimación sin datos de tape
+    const bv = c.c >= c.o ? c.v * 0.6 : c.v * 0.4;
     const sv = c.v - bv;
     buyVol  += bv;
     sellVol += sv;
     cvd     += (bv - sv);
     deltas.push(bv - sv);
   }
-  const total  = buyVol + sellVol || 1;
-  const buyPct = (buyVol / total) * 100;
 
-  // Divergencia CVD vs precio
-  const recent   = candles.slice(-8);
+  const total   = buyVol + sellVol || 1;
+  const buyPct  = (buyVol / total) * 100;
+  const recent  = candles.slice(-8);
   const priceDir = recent[recent.length - 1].c > recent[0].c ? 'up' : 'down';
-  const cvdRecent = deltas.slice(-8).reduce((a, b) => a + b, 0);
-  const cvdDir    = cvdRecent > 0 ? 'up' : 'down';
-  const divergence = priceDir !== cvdDir;
+  const cvdDir   = deltas.slice(-8).reduce((a, b) => a + b, 0) > 0 ? 'up' : 'down';
 
   return {
-    cvd, buyVol, sellVol, buyPct, divergence, priceDir, cvdDir,
-    bullish: cvd > 0 && buyPct > 51 && !divergence,
-    bearish: cvd < 0 && buyPct < 49 && !divergence,
+    cvd, buyVol, sellVol, buyPct,
+    divergence: priceDir !== cvdDir,
+    priceDir, cvdDir,
+    bullish: cvd > 0 && buyPct > 51 && priceDir === cvdDir,
+    bearish: cvd < 0 && buyPct < 49 && priceDir === cvdDir,
   };
 }
 
-// ── CAPA 3: ESTRUCTURA CHoCH + BOS ───────────────────────────
+// ════════════════════════════════════════════════════════════
+//  CAPA 4 — CHoCH + BOS (con 2 cierres confirmados — igual mapa v6)
+// ════════════════════════════════════════════════════════════
 function detectStructure(candles) {
   if (candles.length < 30) return null;
-  const lookback  = 5;
+
+  const lookback   = 5;
   const swingHighs = [], swingLows = [];
 
   for (let i = lookback; i < candles.length - lookback; i++) {
@@ -263,220 +333,220 @@ function detectStructure(candles) {
   const prevHigh  = swingHighs[swingHighs.length - 2];
   const lastLow   = swingLows[swingLows.length - 1];
   const prevLow   = swingLows[swingLows.length - 2];
-  const lastClose = candles[candles.length - 1].c;
-  const prevClose = candles[candles.length - 2].c;
+  const n         = candles.length;
+  const lastClose = candles[n - 1].c;
+  const prevClose = candles[n - 2].c;
 
+  // CHoCH: requiere 2 cierres confirmados (igual mapa v6)
   if (lastClose < prevLow.price && prevClose < prevLow.price * 1.003)
-    return { type: 'CHOCH_SELL', label: '⚡ CHoCH BAJISTA', desc: 'Cambio de carácter — reversión bajista', priority: 10 };
+    return { type: 'CHOCH_SELL', label: '⚡ CHoCH BAJISTA', priority: 10 };
   if (lastClose > prevHigh.price && prevClose > prevHigh.price * 0.997)
-    return { type: 'CHOCH_BUY', label: '⚡ CHoCH ALCISTA', desc: 'Cambio de carácter — reversión alcista', priority: 10 };
+    return { type: 'CHOCH_BUY',  label: '⚡ CHoCH ALCISTA', priority: 10 };
   if (lastClose < lastLow.price && lastHigh.price < prevHigh.price)
-    return { type: 'BOS_SELL', label: '📉 BOS BAJISTA', desc: 'Continuación bajista confirmada', priority: 7 };
+    return { type: 'BOS_SELL', label: '📉 BOS BAJISTA', priority: 7 };
   if (lastClose > lastHigh.price && lastLow.price > prevLow.price)
-    return { type: 'BOS_BUY', label: '📈 BOS ALCISTA', desc: 'Continuación alcista confirmada', priority: 7 };
+    return { type: 'BOS_BUY',  label: '📈 BOS ALCISTA', priority: 7 };
 
   return null;
 }
 
-// ── CAPA 4: STOP HUNT ─────────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  CAPA 5 — STOP HUNT + ORDER BLOCKS + EQH/EQL
+// ════════════════════════════════════════════════════════════
 function detectStopHunt(candles) {
   if (candles.length < 5) return null;
-  const c    = candles[candles.length - 1];
-  const body  = Math.abs(c.c - c.o);
-  const range = c.h - c.l;
+  const c      = candles[candles.length - 1];
+  const body   = Math.abs(c.c - c.o);
+  const range  = c.h - c.l;
   if (!range || body < range * 0.01) return null;
 
   const upperWick = c.h - Math.max(c.o, c.c);
   const lowerWick = Math.min(c.o, c.c) - c.l;
-
-  const isBearSH = upperWick >= body * 2.5 && upperWick / range >= 0.45;
-  const isBullSH = lowerWick >= body * 2.5 && lowerWick / range >= 0.45;
+  const isBearSH  = upperWick >= body * 2.5 && upperWick / range >= 0.45;
+  const isBullSH  = lowerWick >= body * 2.5 && lowerWick / range >= 0.45;
   if (!isBullSH && !isBearSH) return null;
 
   const prevHigh = Math.max(...candles.slice(-10, -1).map(x => x.h));
   const prevLow  = Math.min(...candles.slice(-10, -1).map(x => x.l));
 
-  if (isBullSH && c.l < prevLow * 0.999)
-    return { type: 'SH_BUY',  strength: lowerWick / range, brokeLevel: prevLow };
-  if (isBearSH && c.h > prevHigh * 1.001)
-    return { type: 'SH_SELL', strength: upperWick / range, brokeLevel: prevHigh };
-  if (isBullSH) return { type: 'SH_BUY',  strength: lowerWick / range * 0.7, brokeLevel: null };
-  if (isBearSH) return { type: 'SH_SELL', strength: upperWick / range * 0.7, brokeLevel: null };
+  if (isBullSH && c.l < prevLow  * 0.999) return { type: 'SH_BUY',  strength: lowerWick/range };
+  if (isBearSH && c.h > prevHigh * 1.001) return { type: 'SH_SELL', strength: upperWick/range };
+  if (isBullSH) return { type: 'SH_BUY',  strength: lowerWick/range * 0.7 };
+  if (isBearSH) return { type: 'SH_SELL', strength: upperWick/range * 0.7 };
   return null;
 }
 
-// ── CAPA 4b: ZONAS DE LIQUIDEZ + ORDER BLOCKS ────────────────
 function detectLiquidityZones(candles, price) {
   const zones = [], tolerance = price * 0.002;
   const highs = candles.slice(-50).map(c => c.h);
   const lows  = candles.slice(-50).map(c => c.l);
-
-  // Equal Highs / Equal Lows
   const hc = {}, lc = {};
-  highs.forEach(h => { const k = Math.round(h / tolerance); hc[k] = (hc[k]||0)+1; });
-  lows.forEach(l  => { const k = Math.round(l / tolerance); lc[k] = (lc[k]||0)+1; });
 
-  Object.entries(hc).forEach(([k, n]) => {
-    if (n >= 2) zones.push({ price: +k * tolerance, type: 'EQH',
-      side: +k * tolerance > price ? 'above' : 'below',
+  highs.forEach(h => { const k = Math.round(h/tolerance); hc[k] = (hc[k]||0)+1; });
+  lows.forEach(l  => { const k = Math.round(l/tolerance); lc[k] = (lc[k]||0)+1; });
+
+  Object.entries(hc).forEach(([k,n]) => {
+    if (n >= 2) zones.push({ price: +k*tolerance, type: 'EQH',
+      side: +k*tolerance > price ? 'above' : 'below',
       strength: Math.min(1, n/3), label: 'Equal Highs' });
   });
-  Object.entries(lc).forEach(([k, n]) => {
-    if (n >= 2) zones.push({ price: +k * tolerance, type: 'EQL',
-      side: +k * tolerance < price ? 'below' : 'above',
+  Object.entries(lc).forEach(([k,n]) => {
+    if (n >= 2) zones.push({ price: +k*tolerance, type: 'EQL',
+      side: +k*tolerance < price ? 'below' : 'above',
       strength: Math.min(1, n/3), label: 'Equal Lows' });
   });
 
-  // Order Blocks
   for (let i = candles.length - 20; i < candles.length - 3; i++) {
     if (i < 0) continue;
     const c = candles[i], n1 = candles[i+1], n2 = candles[i+2];
-    if (c.c < c.o && n1.c > n1.o && n2.c > n2.o && (n2.h - c.l)/price > 0.004)
-      zones.push({ price: c.l, type: 'OB_BUY', side: 'below', strength: (n2.h-c.l)/price*8, label: 'Order Block Alcista' });
-    if (c.c > c.o && n1.c < n1.o && n2.c < n2.o && (c.h - n2.l)/price > 0.004)
-      zones.push({ price: c.h, type: 'OB_SELL', side: 'above', strength: (c.h-n2.l)/price*8, label: 'Order Block Bajista' });
+    if (c.c < c.o && n1.c > n1.o && n2.c > n2.o && (n2.h-c.l)/price > 0.004)
+      zones.push({ price: c.l, type:'OB_BUY',  side:'below', strength:(n2.h-c.l)/price*8, label:'Order Block Alcista' });
+    if (c.c > c.o && n1.c < n1.o && n2.c < n2.o && (c.h-n2.l)/price > 0.004)
+      zones.push({ price: c.h, type:'OB_SELL', side:'above', strength:(c.h-n2.l)/price*8, label:'Order Block Bajista' });
   }
 
-  const nearZones = zones
-    .filter(z => Math.abs(z.price - price)/price < 0.02)
-    .sort((a, b) => Math.abs(a.price - price) - Math.abs(b.price - price));
-
-  return { zones, nearZones };
+  return {
+    zones,
+    nearZones: zones
+      .filter(z => Math.abs(z.price-price)/price < 0.02)
+      .sort((a,b) => Math.abs(a.price-price) - Math.abs(b.price-price)),
+  };
 }
 
-// ── CAPA 5: GEX ESTIMADO + MAX PAIN ──────────────────────────
-// Sin acceso a datos de opciones reales, estimamos con precio vs VWAP/POC
-// y niveles psicológicos — lógica idéntica al mapa HTML
+// ════════════════════════════════════════════════════════════
+//  CAPA 6 — GEX ESTIMADO + MAX PAIN
+// ════════════════════════════════════════════════════════════
 function estimateGEX(price, vp, candles) {
-  if (!vp) return { gexNet: 0, regime: 'NEUTRAL', callWall: null, putWall: null };
-
-  // GEX estimado: en bolsa el precio tiende a "pinear" strikes redondos cerca del cierre
-  // Aproximar Call Wall (resistencia gamma) y Put Wall (soporte gamma)
-  const roundUp   = Math.ceil(price / 5) * 5;  // siguiente nivel redondo
-  const roundDown = Math.floor(price / 5) * 5; // nivel redondo inferior
-
-  // Régimen GEX: positivo (precio se mueve lento) vs negativo (movimientos amplificados)
-  // Estimamos por volatilidad intraday de las últimas velas
-  const ranges  = candles.slice(-10).map(c => (c.h - c.l) / c.c);
-  const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
-  const regime   = avgRange < 0.008 ? 'POSITIVO (bajo vol)' : 'NEGATIVO (alto vol)';
-  const gexNet   = avgRange < 0.008 ? 1 : -1;
-
-  // Max Pain estimado — nivel psicológico más cercano con más "gravedad"
-  // En acciones es el nivel redondo más cercano al precio
-  const maxPain = Math.round(price / 10) * 10;
-
-  return { gexNet, regime, callWall: roundUp, putWall: roundDown, maxPain };
+  if (!vp) return { gexNet: 0, regime: 'NEUTRAL', callWall: null, putWall: null, maxPain: null };
+  const roundUp   = Math.ceil(price  / 5) * 5;
+  const roundDown = Math.floor(price / 5) * 5;
+  const ranges    = candles.slice(-10).map(c => (c.h-c.l)/c.c);
+  const avgRange  = ranges.reduce((a,b)=>a+b,0) / ranges.length;
+  return {
+    gexNet:   avgRange < 0.008 ? 1 : -1,
+    regime:   avgRange < 0.008 ? 'POSITIVO (bajo vol)' : 'NEGATIVO (alto vol)',
+    callWall: roundUp,
+    putWall:  roundDown,
+    maxPain:  Math.round(price/10)*10,
+  };
 }
 
-// ── CAPA 6: DARK POOL ESTIMADO ────────────────────────────────
-// Detecta divergencia volumen/precio — huella institucional
+// ════════════════════════════════════════════════════════════
+//  CAPA 7 — DARK POOL ESTIMADO
+// ════════════════════════════════════════════════════════════
 function estimateDarkPool(candles, price) {
   if (candles.length < 10) return null;
+  const vols   = candles.map(c => c.v);
+  const avgVol = vols.slice(0,-3).reduce((a,b)=>a+b,0) / (vols.length-3);
 
-  const vols    = candles.map(c => c.v);
-  const avgVol  = vols.slice(0, -3).reduce((a, b) => a + b, 0) / (vols.length - 3);
-  const recent  = candles.slice(-3);
-
-  // Dark Pool: vela con volumen anómalamente alto respecto al precio
-  for (const c of recent) {
-    if (c.v < avgVol * 2.5) continue; // no es anómalo
+  for (const c of candles.slice(-3)) {
+    if (c.v < avgVol * 2.5) continue;
+    const bodyPct = Math.abs(c.c-c.o) / (c.h-c.l);
+    if (bodyPct < 0.3) return { direction:'NEUTRAL', volumeRatio:c.v/avgVol, label:'🌑 DP: acumulación/distribución oculta' };
     const dir = c.c > c.o ? 'BUY' : 'SELL';
-    // Señal DP: volumen muy alto con cuerpo pequeño = acumulación/distribución oculta
-    const bodyPct = Math.abs(c.c - c.o) / (c.h - c.l);
-    if (bodyPct < 0.3) {
-      return { direction: 'NEUTRAL', volumeRatio: c.v/avgVol, label: '🌑 DP: acumulación/distribución oculta' };
-    }
-    return { direction: dir, volumeRatio: c.v/avgVol, label: `🌑 Dark Pool ${dir === 'BUY' ? 'alcista' : 'bajista'} x${(c.v/avgVol).toFixed(1)}` };
+    return { direction:dir, volumeRatio:c.v/avgVol, label:`🌑 Dark Pool ${dir==='BUY'?'alcista':'bajista'} ×${(c.v/avgVol).toFixed(1)}` };
   }
   return null;
 }
 
-// ── MOTOR NEURONAL BOLSA ─────────────────────────────────────
+// ════════════════════════════════════════════════════════════
+//  MOTOR NEURONAL — PESOS IDÉNTICOS AL MAPA v6
+// ════════════════════════════════════════════════════════════
 function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, session }) {
   const signals = [];
 
-  // ── CAPA 1: POC + VWAP + VALUE AREA ────────────────────
-  if (vp) {
-    if (price > vp.poc) signals.push({ layer:1, dir:'BUY',  weight:1,   label:`Precio > POC (${fmt(vp.poc,price)})` });
-    else                signals.push({ layer:1, dir:'SELL', weight:1,   label:`Precio < POC (${fmt(vp.poc,price)})` });
+  // ── CAPA 1: SUPERTREND JUEZ (3pts) ─────────────────────
+  const st4H = calcSuperTrend(candles4H);
+  const st1H = calcSuperTrend(candles1H);
 
-    if (price > vp.vwap) signals.push({ layer:1, dir:'BUY',  weight:1.5, label:`Precio > VWAP (${fmt(vp.vwap,price)}) — alcista intradía` });
-    else                 signals.push({ layer:1, dir:'SELL', weight:1.5, label:`Precio < VWAP (${fmt(vp.vwap,price)}) — bajista intradía` });
-
-    if (price > vp.vah) signals.push({ layer:1, dir:'SELL', weight:0.5, label:'Sobre VAH — sobrecomprado, resistencia' });
-    else if (price < vp.val) signals.push({ layer:1, dir:'BUY', weight:0.5, label:'Bajo VAL — sobrevendido, soporte' });
+  if (st4H) {
+    if (st4H.bullish) signals.push({ layer:1, dir:'BUY',  weight: st4H.crossed ? 3.5 : 3, label:`${st4H.label} 4H${st4H.crossed?' ← CRUCE':''} — precio sobre soporte` });
+    if (st4H.bearish) signals.push({ layer:1, dir:'SELL', weight: st4H.crossed ? 3.5 : 3, label:`${st4H.label} 4H${st4H.crossed?' ← CRUCE':''} — precio bajo resistencia` });
+  }
+  if (st1H) {
+    // Confirmación en 1H vale 0.5pts adicional si coincide con 4H
+    if (st4H && st1H.trend === st4H.trend) {
+      signals.push({ layer:1, dir: st1H.bullish?'BUY':'SELL', weight:0.5, label:`SuperTrend 1H confirma ${st1H.bullish?'alcista':'bajista'}` });
+    }
   }
 
-  // ── CAPA 2: CVD ─────────────────────────────────────────
+  // ── CAPA 2: POC / VWAP (1.5pts) ────────────────────────
+  if (vp) {
+    if (price > vp.vwap) signals.push({ layer:2, dir:'BUY',  weight:1.5, label:`Precio > VWAP (${fmt(vp.vwap,price)}) — alcista intradía` });
+    else                 signals.push({ layer:2, dir:'SELL', weight:1.5, label:`Precio < VWAP (${fmt(vp.vwap,price)}) — bajista intradía` });
+
+    if (price > vp.poc)  signals.push({ layer:2, dir:'BUY',  weight:0.5, label:`Precio > POC (${fmt(vp.poc,price)})` });
+    else                 signals.push({ layer:2, dir:'SELL', weight:0.5, label:`Precio < POC (${fmt(vp.poc,price)})` });
+
+    if (price > vp.vah)  signals.push({ layer:2, dir:'SELL', weight:0.5, label:'Sobre VAH — resistencia de valor' });
+    else if (price < vp.val) signals.push({ layer:2, dir:'BUY', weight:0.5, label:'Bajo VAL — soporte de valor' });
+  }
+
+  // ── CAPA 3: CVD (1.5pts) ───────────────────────────────
   const cvd4H = calcCVD(candles4H);
   const cvd1H = calcCVD(candles1H);
 
-  if (cvd4H.bullish) signals.push({ layer:2, dir:'BUY',  weight:1.5, label:`CVD 4H positivo — ${cvd4H.buyPct.toFixed(0)}% compra institucional` });
-  if (cvd4H.bearish) signals.push({ layer:2, dir:'SELL', weight:1.5, label:`CVD 4H negativo — ${(100-cvd4H.buyPct).toFixed(0)}% venta institucional` });
+  if (cvd4H.bullish) signals.push({ layer:3, dir:'BUY',  weight:1.5, label:`CVD 4H positivo — ${cvd4H.buyPct.toFixed(0)}% compra institucional` });
+  if (cvd4H.bearish) signals.push({ layer:3, dir:'SELL', weight:1.5, label:`CVD 4H negativo — ${(100-cvd4H.buyPct).toFixed(0)}% venta institucional` });
 
   if (cvd4H.divergence) {
     const divDir = cvd4H.priceDir === 'up' ? 'SELL' : 'BUY';
-    signals.push({ layer:2, dir:divDir, weight:2, label:`⚠️ Divergencia CVD — ${divDir==='SELL'?'distribución oculta':'acumulación oculta'}` });
+    signals.push({ layer:3, dir:divDir, weight:2, label:`⚠️ Divergencia CVD 4H — ${divDir==='SELL'?'distribución':'acumulación'} oculta` });
   }
 
-  if (cvd1H.bullish && cvd4H.bullish) signals.push({ layer:2, dir:'BUY',  weight:0.8, label:'CVD 1H confirma alcista' });
-  if (cvd1H.bearish && cvd4H.bearish) signals.push({ layer:2, dir:'SELL', weight:0.8, label:'CVD 1H confirma bajista' });
+  if (cvd1H.bullish && cvd4H.bullish) signals.push({ layer:3, dir:'BUY',  weight:0.5, label:'CVD 1H confirma alcista' });
+  if (cvd1H.bearish && cvd4H.bearish) signals.push({ layer:3, dir:'SELL', weight:0.5, label:'CVD 1H confirma bajista' });
 
-  // ── CAPA 3: ESTRUCTURA ──────────────────────────────────
+  // ── CAPA 4: CHoCH + BOS (2pts) ─────────────────────────
   const struct4H = detectStructure(candles4H);
   const struct1H = detectStructure(candles1H);
 
   if (struct4H) {
     const sDir = struct4H.type.includes('BUY') ? 'BUY' : 'SELL';
-    signals.push({ layer:3, dir:sDir, weight: struct4H.type.includes('CHOCH')?3:2, label:`${struct4H.label} 4H` });
+    signals.push({ layer:4, dir:sDir, weight: struct4H.type.includes('CHOCH') ? 1.5 : 3.0, label:`${struct4H.label} 4H` });
   }
   if (struct1H) {
     const sDir = struct1H.type.includes('BUY') ? 'BUY' : 'SELL';
-    signals.push({ layer:3, dir:sDir, weight: struct1H.type.includes('CHOCH')?1.5:1, label:`${struct1H.label} 1H` });
+    signals.push({ layer:4, dir:sDir, weight: struct1H.type.includes('CHOCH') ? 0.8 : 2.0, label:`${struct1H.label} 1H` });
   }
 
-  // ── CAPA 4: STOP HUNT + LIQUIDEZ ───────────────────────
+  // ── CAPA 5: SH + OB + EQH/EQL (1pt) ───────────────────
   const sh4H = detectStopHunt(candles4H);
   const sh1H = detectStopHunt(candles1H);
-  if (sh4H) signals.push({ layer:4, dir: sh4H.type==='SH_BUY'?'BUY':'SELL', weight: sh4H.strength*2,
-    label:`🎯 Stop Hunt ${sh4H.type==='SH_BUY'?'alcista':'bajista'} 4H` });
-  if (sh1H) signals.push({ layer:4, dir: sh1H.type==='SH_BUY'?'BUY':'SELL', weight: sh1H.strength*1.2,
-    label:`🎯 SH ${sh1H.type==='SH_BUY'?'alcista':'bajista'} 1H` });
+  if (sh4H) signals.push({ layer:5, dir: sh4H.type==='SH_BUY'?'BUY':'SELL', weight: sh4H.strength*2, label:`🎯 Stop Hunt ${sh4H.type==='SH_BUY'?'alcista':'bajista'} 4H` });
+  if (sh1H) signals.push({ layer:5, dir: sh1H.type==='SH_BUY'?'BUY':'SELL', weight: sh1H.strength,   label:`🎯 SH ${sh1H.type==='SH_BUY'?'alcista':'bajista'} 1H` });
 
   const liqData = detectLiquidityZones(candles4H, price);
   const nearSup = liqData.nearZones.find(z => z.side==='below' && z.strength>0.5);
   const nearRes = liqData.nearZones.find(z => z.side==='above' && z.strength>0.5);
-  if (nearSup) signals.push({ layer:4, dir:'BUY',  weight:nearSup.strength, label:`${nearSup.label} soporte en ${fmt(nearSup.price,price)}` });
-  if (nearRes) signals.push({ layer:4, dir:'SELL', weight:nearRes.strength, label:`${nearRes.label} resistencia en ${fmt(nearRes.price,price)}` });
+  if (nearSup) signals.push({ layer:5, dir:'BUY',  weight:nearSup.strength, label:`${nearSup.label} soporte ${fmt(nearSup.price,price)}` });
+  if (nearRes) signals.push({ layer:5, dir:'SELL', weight:nearRes.strength, label:`${nearRes.label} resistencia ${fmt(nearRes.price,price)}` });
 
-  // ── CAPA 5: GEX + MAX PAIN ──────────────────────────────
+  // ── CAPA 6: GEX + MAX PAIN (1pt) ───────────────────────
   const gex = estimateGEX(price, vp, candles4H);
-  if (gex.gexNet < 0) signals.push({ layer:5, dir:'BUY',  weight:0.8, label:`GEX ${gex.regime} — movimientos amplificados, oportunidad direccional` });
-  if (gex.putWall && price > gex.putWall) signals.push({ layer:5, dir:'BUY',  weight:0.5, label:`Precio sobre Put Wall (${fmt(gex.putWall,price)}) — soporte gamma` });
-  if (gex.callWall && price < gex.callWall) signals.push({ layer:5, dir:'SELL', weight:0.5, label:`Precio bajo Call Wall (${fmt(gex.callWall,price)}) — resistencia gamma` });
+  if (gex.gexNet < 0) signals.push({ layer:6, dir:'BUY',  weight:0.8, label:`GEX ${gex.regime} — momentum amplificado` });
+  if (gex.putWall  && price > gex.putWall)  signals.push({ layer:6, dir:'BUY',  weight:0.5, label:`Sobre Put Wall ${fmt(gex.putWall,price)} — soporte gamma` });
+  if (gex.callWall && price < gex.callWall) signals.push({ layer:6, dir:'SELL', weight:0.5, label:`Bajo Call Wall ${fmt(gex.callWall,price)} — resistencia gamma` });
 
-  // ── CAPA 6: DARK POOL ───────────────────────────────────
+  // ── CAPA 7: DARK POOL (1pt) ─────────────────────────────
   const dp = estimateDarkPool(candles4H, price);
   if (dp && dp.direction !== 'NEUTRAL') {
-    signals.push({ layer:6, dir: dp.direction, weight: Math.min(2, dp.volumeRatio/3), label: dp.label });
+    signals.push({ layer:7, dir:dp.direction, weight: Math.min(2, dp.volumeRatio/3), label:dp.label });
   }
 
-  // ── CAPA 7: CONFIRMACIÓN 15m + POWER HOUR ──────────────
+  // ── CAPA 8: CONFIRMACIÓN 15m + POWER HOUR ──────────────
   const cvd15m = calcCVD(candles15m);
   const sh15m  = detectStopHunt(candles15m);
-  if (cvd15m.bullish) signals.push({ layer:7, dir:'BUY',  weight:0.5, label:'CVD 15m alcista — momentum' });
-  if (cvd15m.bearish) signals.push({ layer:7, dir:'SELL', weight:0.5, label:'CVD 15m bajista — momentum' });
-  if (sh15m) signals.push({ layer:7, dir: sh15m.type==='SH_BUY'?'BUY':'SELL', weight:0.8, label:'SH 15m — timing de entrada' });
+  if (cvd15m.bullish) signals.push({ layer:8, dir:'BUY',  weight:0.5, label:'CVD 15m alcista — momentum entrada' });
+  if (cvd15m.bearish) signals.push({ layer:8, dir:'SELL', weight:0.5, label:'CVD 15m bajista — momentum entrada' });
+  if (sh15m) signals.push({ layer:8, dir: sh15m.type==='SH_BUY'?'BUY':'SELL', weight:0.8, label:'SH 15m — timing preciso' });
 
-  // Power Hour pesa más
   if (session.powerHour) {
     const dir15 = cvd15m.bullish ? 'BUY' : cvd15m.bearish ? 'SELL' : null;
-    if (dir15) signals.push({ layer:7, dir: dir15, weight: session.powerHour.weight - 1,
-      label:`${session.powerHour.name} — ventana institucional activa` });
+    if (dir15) signals.push({ layer:8, dir:dir15, weight: session.powerHour.weight - 1, label:`${session.powerHour.name} activa` });
   }
 
-  // ── SCORE FINAL ─────────────────────────────────────────
+  // ── SCORE FINAL — NORMALIZADO 0-10 (igual mapa v6) ─────
   let buyScore = 0, sellScore = 0;
   for (const sig of signals) {
     if (sig.dir === 'BUY')  buyScore  += sig.weight;
@@ -484,8 +554,8 @@ function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, sessio
   }
 
   let direction = 'NEUTRAL';
-  if (buyScore > sellScore && Math.abs(buyScore-sellScore) >= 1.5) direction = 'BUY';
-  if (sellScore > buyScore && Math.abs(buyScore-sellScore) >= 1.5) direction = 'SELL';
+  if (buyScore  > sellScore && (buyScore  - sellScore) >= 1.5) direction = 'BUY';
+  if (sellScore > buyScore  && (sellScore - buyScore)  >= 1.5) direction = 'SELL';
 
   const netScore   = Math.abs(buyScore - sellScore);
   const finalScore = Math.min(10, Math.round(netScore * 1.2));
@@ -501,18 +571,20 @@ function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, sessio
   return {
     direction, score: finalScore, buyScore, sellScore,
     confluences, signals, layersInDir,
-    cvd4H, struct4H, sh4H, gex, dp, vp,
+    st4H, cvd4H, struct4H, sh4H, gex, dp, vp,
   };
 }
 
 // ── MENSAJE TELEGRAM ─────────────────────────────────────────
 function buildMessage(ticker, price, result, session, quote) {
   const isBuy  = result.direction === 'BUY';
-  const atr    = getATR(ticker, price);
-  const sl     = isBuy ? price - atr * 1.5 : price + atr * 1.5;
-  const tp1    = isBuy ? price + atr * 2   : price - atr * 2;
-  const tp2    = isBuy ? price + atr * 3   : price - atr * 3;
-  const tp3    = isBuy ? price + atr * 5   : price - atr * 5;
+  const _tf    = '240';  // monitor analiza en 4H — señales de swing
+  const atr    = getATR(ticker, price, _tf);
+  const _m     = getTPMult(_tf);
+  const sl     = isBuy ? price - atr * _m.sl  : price + atr * _m.sl;
+  const tp1    = isBuy ? price + atr * _m.tp1 : price - atr * _m.tp1;
+  const tp2    = isBuy ? price + atr * _m.tp2 : price - atr * _m.tp2;
+  const tp3    = isBuy ? price + atr * _m.tp3 : price - atr * _m.tp3;
 
   const arrow   = isBuy ? '▲ BUY — COMPRA 🟢' : '▼ SELL — VENTA 🔴';
   const quality = result.score >= 8 ? '🔥 MÁXIMA CALIDAD'
@@ -520,10 +592,11 @@ function buildMessage(ticker, price, result, session, quote) {
                 : '✅ VÁLIDA';
 
   const phLine    = session.powerHour ? `\n⏰ ${session.powerHour.name}` : '';
+  const stLine    = result.st4H       ? `\n${result.st4H.label}${result.st4H.crossed?' ← CRUCE RECIENTE':''}` : '';
   const structL   = result.struct4H   ? `\n🔷 ${result.struct4H.label} 4H` : '';
   const shLine    = result.sh4H       ? `\n🎯 Stop Hunt ${result.sh4H.type==='SH_BUY'?'alcista':'bajista'} 4H` : '';
   const dpLine    = result.dp && result.dp.direction !== 'NEUTRAL' ? `\n${result.dp.label}` : '';
-  const gexLine   = result.gex ? `\nGEX: ${result.gex.regime} · MP: ${fmt(result.gex.maxPain,price)}` : '';
+  const gexLine   = result.gex ? `\nGEX: ${result.gex.regime} · MaxPain: ${fmt(result.gex.maxPain,price)}` : '';
   const confList  = result.confluences.map(c => `  • ${c}`).join('\n');
   const changeStr = quote ? `${quote.dp > 0 ? '+' : ''}${((quote.c - quote.pc)/quote.pc*100).toFixed(2)}%` : '—';
 
@@ -533,7 +606,7 @@ ${arrow}
 🎯 <b>${ticker}</b> · 4H${phLine}
 💰 Precio: <b>${fmt(price,price)}</b> (${changeStr} hoy)
 ⭐ Score: ${result.score}/10 · ${quality}
-🌏 Sesión: ${session.sessionName}
+🌏 Sesión: ${session.sessionName}${stLine}
 
 📊 <b>Confluencias:</b>
 ${confList}${structL}${shLine}${dpLine}${gexLine}
@@ -546,7 +619,7 @@ ${confList}${structL}${shLine}${dpLine}${gexLine}
 ✅ TP2: ${fmt(tp2,price)} · R:R 1:3
 🔶 TP3: ${fmt(tp3,price)} · R:R 1:5
 
-⚡ LiquidMap PRO · Bolsa v1`;
+⚡ LiquidMap PRO · Bolsa v2`;
 }
 
 // ── ENVIAR TELEGRAM ──────────────────────────────────────────
@@ -580,30 +653,27 @@ async function scanTicker(ticker, session) {
       return;
     }
 
-    const price = quote?.c || candles4H[candles4H.length - 1].c;
-    const vp    = buildVolumeProfile(candles4H, 100);
+    const price  = quote?.c || candles4H[candles4H.length - 1].c;
+    const vp     = buildVolumeProfile(candles4H, 100);
     const result = evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, session });
 
-    console.log(`[${ticker}] Dir=${result.direction} Score=${result.score}/10 BUY=${result.buyScore.toFixed(1)} SELL=${result.sellScore.toFixed(1)} Capas=${result.layersInDir.size}`);
+    const stLabel = result.st4H ? (result.st4H.bullish ? '↑ST' : '↓ST') : 'ST?';
+    console.log(`[${ticker}] Dir=${result.direction} Score=${result.score}/10 ${stLabel} BUY=${result.buyScore.toFixed(1)} SELL=${result.sellScore.toFixed(1)} Capas=${result.layersInDir.size}`);
 
-    // REGLA 1: Sin dirección → silencio
     if (result.direction === 'NEUTRAL') return;
 
-    // REGLA 2: Score mínimo (en Power Hour baja a 5)
     const minReq = session.powerHour ? 5 : MIN_SCORE;
     if (result.score < minReq) {
-      console.log(`[${ticker}] Score ${result.score}/${minReq} insuficiente — silencio`);
+      console.log(`[${ticker}] Score ${result.score}/${minReq} insuficiente`);
       return;
     }
 
-    // REGLA 3: Al menos 3 capas concordando
     if (result.layersInDir.size < 3) {
       console.log(`[${ticker}] Solo ${result.layersInDir.size} capas — necesita 3`);
       return;
     }
 
-    // REGLA 4: Cooldown (se rompe si hay CHoCH)
-    const hasChoch = result.struct4H?.type?.includes('CHOCH');
+    const hasChoch = result.struct4H?.type?.includes('CHOCH') || result.struct4H?.type?.includes('BOS');
     const inCooldown = s.lastSignalDir === result.direction
                     && (Date.now() - s.lastSignalTs) < COOLDOWN_MS
                     && !hasChoch;
@@ -613,10 +683,8 @@ async function scanTicker(ticker, session) {
       return;
     }
 
-    // ✅ DISPARAR
-    console.log(`[${ticker}] ✅ SEÑAL BOLSA: ${result.direction} score=${result.score}/10`);
-    const msg = buildMessage(ticker, price, result, session, quote);
-    await sendTelegram(msg);
+    console.log(`[${ticker}] ✅ SEÑAL BOLSA v2: ${result.direction} score=${result.score}/10`);
+    await sendTelegram(buildMessage(ticker, price, result, session, quote));
 
     s.lastSignalDir = result.direction;
     s.lastSignalTs  = Date.now();
@@ -629,38 +697,40 @@ async function scanTicker(ticker, session) {
 // ── LOOP PRINCIPAL ────────────────────────────────────────────
 async function runScan() {
   const session = getNYSession();
-  const now = new Date().toISOString();
+  const now     = new Date().toISOString();
 
-  // Si el mercado está cerrado y no es pre-market relevante → no escanear bolsa
   if (!session.shouldScan) {
     console.log(`[BOLSA] ${now} · Mercado cerrado (${session.sessionName}) — esperando apertura NY`);
     return;
   }
-
-  // Lunch zone — silencio completo
   if (session.lunchZone) {
-    console.log(`[BOLSA] ${now} · Lunch zone (11:30–13:30 ET) — silencio, demasiado ruido`);
+    console.log(`[BOLSA] ${now} · Lunch zone (11:30–13:30 ET) — silencio`);
     return;
   }
 
-  console.log(`\n[BOLSA SCAN] ${now} · ${session.sessionName} ${session.powerHour ? `· ${session.powerHour.name}` : ''}`);
+  console.log(`\n[BOLSA SCAN v2] ${now} · ${session.sessionName} ${session.powerHour ? `· ${session.powerHour.name}` : ''}`);
 
   for (const ticker of STOCK_TICKERS) {
     await scanTicker(ticker, session);
-    await new Promise(r => setTimeout(r, 1000)); // 1s entre tickers
+    await new Promise(r => setTimeout(r, 1000));
   }
 
-  console.log(`[BOLSA SCAN] Completo.`);
+  console.log('[BOLSA SCAN v2] Completo.');
 }
 
 // ── ARRANQUE ──────────────────────────────────────────────────
-console.log('📊 LiquidMap PRO Monitor BOLSA v1 — Sistema Neuronal Institucional');
-console.log(`   Tickers  : ${STOCK_TICKERS.join(', ')}`);
-console.log(`   Capas    : POC·VWAP·CVD·CHoCH·BOS·SH·GEX·MaxPain·DarkPool·OB`);
-console.log(`   Sesión   : Solo NY (9:30–16:00 ET) · Sin Lunch (11:30–13:30)`);
-console.log(`   Score    : mínimo ${MIN_SCORE}/10 · 3 capas concordantes`);
-console.log(`   Power Hour: 9:30–10:30 y 15:00–16:00 ET ponderadas`);
-console.log(`   Bot      : @liquidmapbolsa_bot`);
+console.log('📊 LiquidMap PRO Monitor BOLSA v2 — Sincronizado con Mapa v6');
+console.log(`   Tickers   : ${STOCK_TICKERS.join(', ')}`);
+console.log('   CAPA 1    : SuperTrend JUEZ (3pts) — NUEVO v2');
+console.log('   CAPA 2    : POC / VWAP (1.5pts)');
+console.log('   CAPA 3    : CVD real + divergencia (1.5pts)');
+console.log('   CAPA 4    : CHoCH + BOS con 2 cierres (2pts)');
+console.log('   CAPA 5    : Stop Hunt + OB + EQH/EQL (1pt)');
+console.log('   CAPA 6    : GEX + MaxPain (1pt)');
+console.log('   CAPA 7    : Dark Pool estimado (1pt)');
+console.log('   CAPA 8    : 15m + Power Hour timing');
+console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10`);
+console.log('   Bot       : @liquidmapbolsa_bot');
 
 runScan();
 setInterval(runScan, SCAN_INTERVAL);
