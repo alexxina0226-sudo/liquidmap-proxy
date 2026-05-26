@@ -388,6 +388,16 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div class="vol-bar"><div class="vol-fill" id="vf" style="width:0%"></div></div>
     </div>
 
+    <!-- SuperTrend JUEZ -->
+    <div class="ps">
+      <h3>⚡ SUPERTREND JUEZ</h3>
+      <div class="mr"><span class="lb">Dirección</span><span class="vl" id="st-dir">—</span></div>
+      <div class="mr"><span class="lb">Línea ST</span><span class="vl" id="st-line">—</span></div>
+      <div class="mr"><span class="lb">Dist. precio</span><span class="vl" id="st-dist">—</span></div>
+      <div class="mr"><span class="lb">ATR(10)</span><span class="vl a" id="st-atr">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)" id="st-note">Calculando...</div>
+    </div>
+
     <!-- CHoCH / BOS — ESTRUCTURA INSTITUCIONAL -->
     <div class="ps">
       <h3>🏗 Estructura — CHoCH / BOS</h3>
@@ -1422,113 +1432,54 @@ function toggleAL(el){ el.classList.toggle('on'); const id = el.id.replace('al-'
 // SUPERTREND ENGINE — JUEZ DE TENDENCIA INSTITUCIONAL
 // ═══════════════════════════════════════════════════════════
 
-// SuperTrend: calcula ATR-based trend direction
-// Retorna: { dir: 'UP'|'DOWN', stLine: precio_st, strength: 0-1 }
-function computeSuperTrend(bars, atrMult = 2.5, atrPeriod = 10) {
-  if (!bars || bars.length < atrPeriod + 2) return { dir: 'NEUTRAL', stLine: 0, strength: 0 };
-  
-  // Calcular ATR real
-  const atrs = [];
-  for (let i = 1; i < bars.length; i++) {
-    const prev = bars[i - 1];
-    const curr = bars[i];
-    const tr = Math.max(curr.h - curr.l, Math.abs(curr.h - prev.c), Math.abs(curr.l - prev.c));
-    atrs.push(tr);
+// SuperTrend — versión exacta del mapa bolsa (array por barra con índice)
+function computeSuperTrend(bars, period, mult){
+  if(!bars || bars.length < period + 1) return [];
+  const result = [];
+  let prevUpper = 0, prevLower = 0, prevTrend = 1;
+  for(let i = period; i < bars.length; i++){
+    const slice = bars.slice(i - period, i + 1);
+    const trList = slice.map((b, j) => {
+      if(j === 0) return b.h - b.l;
+      return Math.max(b.h - b.l, Math.abs(b.h - slice[j-1].c), Math.abs(b.l - slice[j-1].c));
+    });
+    const atr = trList.reduce((a, v) => a + v, 0) / period;
+    const hl2 = (bars[i].h + bars[i].l) / 2;
+    const upper = hl2 + mult * atr;
+    const lower = hl2 - mult * atr;
+    const finalUpper = (upper < prevUpper || bars[i-1].c > prevUpper) ? upper : prevUpper;
+    const finalLower = (lower > prevLower || bars[i-1].c < prevLower) ? lower : prevLower;
+    let trend = prevTrend;
+    if(bars[i].c > finalUpper) trend = 1;
+    else if(bars[i].c < finalLower) trend = -1;
+    result.push({ i, upper:finalUpper, lower:finalLower, trend, line: trend===1?finalLower:finalUpper });
+    prevUpper = finalUpper; prevLower = finalLower; prevTrend = trend;
   }
-  // ATR suavizado (EMA-like)
-  let atr = atrs.slice(0, atrPeriod).reduce((a, b) => a + b, 0) / atrPeriod;
-  for (let i = atrPeriod; i < atrs.length; i++) {
-    atr = (atr * (atrPeriod - 1) + atrs[i]) / atrPeriod;
-  }
-
-  // Calcular bandas SuperTrend
-  let dir = 1; // 1 = UP (verde), -1 = DOWN (rojo)
-  let stLine = 0;
-  let upperBand = 0, lowerBand = 0;
-  let prevUpper = 0, prevLower = 0;
-
-  for (let i = 1; i < bars.length; i++) {
-    const b = bars[i];
-    const hl2 = (b.h + b.l) / 2;
-    // ATR en este punto (aprox)
-    const tr = Math.max(b.h - b.l, Math.abs(b.h - (bars[i-1]?.c||b.o)), Math.abs(b.l - (bars[i-1]?.c||b.o)));
-    const localAtr = tr * 0.3 + atr * 0.7; // suavizado
-    
-    const rawUpper = hl2 + atrMult * localAtr;
-    const rawLower = hl2 - atrMult * localAtr;
-
-    upperBand = (rawUpper < prevUpper || bars[i-1].c > prevUpper) ? rawUpper : prevUpper;
-    lowerBand = (rawLower > prevLower || bars[i-1].c < prevLower) ? rawLower : prevLower;
-
-    if (dir === 1) {
-      stLine = lowerBand;
-      if (b.c < lowerBand) { dir = -1; stLine = upperBand; }
-    } else {
-      stLine = upperBand;
-      if (b.c > upperBand) { dir = 1; stLine = lowerBand; }
-    }
-    prevUpper = upperBand;
-    prevLower = lowerBand;
-  }
-
-  // Cuántas barras lleva en esta dirección (momentum del ST)
-  let consecutive = 0;
-  const finalDir = dir;
-  for (let i = bars.length - 1; i >= 0; i--) {
-    const b = bars[i];
-    if (finalDir === 1 && b.c > stLine) consecutive++;
-    else if (finalDir === -1 && b.c < stLine) consecutive++;
-    else break;
-    if (consecutive >= 10) break;
-  }
-  const strength = Math.min(1, consecutive / 8);
-
-  return {
-    dir: dir === 1 ? 'UP' : 'DOWN',
-    stLine,
-    consecutive,
-    strength,
-    atr
-  };
+  return result;
 }
 
-// Cache del SuperTrend 4H (se recalcula con cada refresh de velas)
-let stJuez = { dir: 'NEUTRAL', stLine: 0, strength: 0, consecutive: 0 };
-let stJuez1H = { dir: 'NEUTRAL', stLine: 0, strength: 0 };
+// Cache del SuperTrend (resultado completo como array)
+let stResult = []; // array de {i, line, trend} — igual que el mapa bolsa
+// stResult defined above
 
 // Actualizar el JUEZ cuando llegan velas nuevas
+let stJuez = { dir: 'NEUTRAL', stLine: 0, strength: 0, consecutive: 0 };
 function updateSuperTrendJuez() {
-  if (!candles || candles.length < 15) return;
-  
-  // SuperTrend en el TF actual (ya tenemos las velas cargadas)
-  stJuez = computeSuperTrend(candles, 2.5, 10);
-  
-  // Actualizar display del JUEZ
-  const biasEl = document.getElementById('st-bias');
-  const biasRow = document.getElementById('st-bias-row');
-  const biasLabel = document.getElementById('st-bias-label');
-  if (!biasEl) return;
-  // Update label with current TF
-  if(biasLabel) biasLabel.textContent = 'SESGO ' + (tf || '').toUpperCase();
-
-  if (stJuez.dir === 'UP') {
-    biasEl.textContent = '▲ ALCISTA';
-    biasEl.style.color = 'var(--green)';
-    biasRow.style.borderColor = 'rgba(0,255,157,.3)';
-    biasRow.style.background = 'rgba(0,255,157,.06)';
-  } else if (stJuez.dir === 'DOWN') {
-    biasEl.textContent = '▼ BAJISTA';
-    biasEl.style.color = 'var(--red)';
-    biasRow.style.borderColor = 'rgba(255,45,107,.3)';
-    biasRow.style.background = 'rgba(255,45,107,.06)';
+  stResult = computeSuperTrend(candles, 10, 3.0);
+  // Actualizar stJuez con el último resultado para compatibilidad
+  if(stResult.length > 0){
+    const last = stResult[stResult.length-1];
+    const consecutive = stResult.slice(-8).filter(s=>s.trend===last.trend).length;
+    stJuez = {
+      dir: last.trend===1 ? 'UP' : 'DOWN',
+      stLine: last.line,
+      strength: Math.min(1, consecutive/8),
+      consecutive
+    };
   } else {
-    biasEl.textContent = '◈ NEUTRAL';
-    biasEl.style.color = 'var(--yellow)';
+    stJuez = { dir: 'NEUTRAL', stLine: 0, strength: 0, consecutive: 0 };
   }
 }
-
-// ═══════════════════════════════════════════════════════════
-// SIGNAL ENGINE — CRYPTO INSTITUCIONAL v6 (SNIPER)
 // Sistema de 10 puntos con JUEZ SuperTrend
 // REGLA #1: Si el JUEZ dice DOWN → solo SELL, nunca BUY
 // REGLA #2: Si el JUEZ dice UP   → solo BUY,  nunca SELL  
@@ -1852,6 +1803,21 @@ function updateDerived(){
     if(srt2[1]) set('hvn-v', '$'+(vp.min+srt2[1].i*vp.binSize).toFixed(dec2), 'o');
     const mv3 = Math.max(...vp.profile), cv3 = vp.profile[Math.floor(vp.profile.length/2)]||0;
     document.getElementById('vf').style.width = Math.min(100,(cv3/mv3)*100)+'%';
+    // SuperTrend JUEZ panel
+    const stLast = stResult.length > 0 ? stResult[stResult.length-1] : null;
+    if(stLast){
+      const stUp = stLast.trend === 1;
+      const dec = p < 1 ? 5 : p < 100 ? 3 : p < 10000 ? 1 : 0;
+      set('st-dir', stUp ? '▲ ALCISTA' : '▼ BAJISTA', stUp ? 'g' : 'r');
+      set('st-line', '$'+stLast.line.toFixed(dec), 'a');
+      const stDist = ((p - stLast.line) / p * 100);
+      set('st-dist', (stDist>=0?'+':'')+stDist.toFixed(2)+'%', stDist>=0?'g':'r');
+      const atrEst = stResult.length > 1 ? Math.abs(stResult[stResult.length-1].line - stResult[stResult.length-2].line) * 3 : p * 0.015;
+      set('st-atr', '$'+atrEst.toFixed(dec), 'a');
+      document.getElementById('st-note').textContent = stUp
+        ? 'Tendencia alcista. Precio sobre la línea cyan — buscar entradas en retrocesos.'
+        : 'Tendencia bajista. Precio bajo la línea roja — evitar compras contra la tendencia.';
+    }
     // GEX
     updateGEXPanel(p, vwapEst, sigma);
     // Max Pain
@@ -1905,8 +1871,6 @@ function updateZonesList(){
 // GEX PANEL
 // ═══════════════════════════════════════════════════════════
 function updateGEXPanel(price, vwap, sigma){
-  // Panel GEX fue reemplazado por panel CHoCH/BOS — los elementos ya no existen en el HTML
-  // Guard: si no hay elementos GEX, salir sin error
   if(!document.getElementById('gex-bar')) return;
   const dec = price < 1 ? 5 : price < 100 ? 3 : price < 10000 ? 1 : 0;
   // GEX estimated from price position relative to VWAP
@@ -2044,7 +2008,6 @@ let cv, ctx, ofc, ofctx;
 let pMin, pMax, pRng;
 
 function resizeCanvas(){
-  // Guard: cv must exist before resizing
   if(!cv || !ofc) return;
   requestAnimationFrame(() => {
     if(!cv || !ofc) return;
@@ -2070,7 +2033,6 @@ function pY(p){ return !pRng ? 0 : cv.height - ((p-pMin)/pRng) * cv.height * .85
 function formatPrice(p){ return p < 1 ? p.toFixed(4) : p < 100 ? p.toFixed(2) : p < 10000 ? p.toFixed(1) : Math.round(p).toString(); }
 
 function drawAll(){
-  // Guard: cv must exist
   if(!cv || !ctx) return;
   // Always ensure canvas has valid dimensions
   if(!cv.width || cv.width < 10){
@@ -2216,30 +2178,31 @@ function drawAll(){
     });
   }
 
-  // SuperTrend line (JUEZ visual en el gráfico)
-  if(stJuez && stJuez.stLine && candles.length > 5){
-    const stY = pY(stJuez.stLine);
-    if(stY > 2 && stY < H - 2){
-      const stColor = stJuez.dir === 'UP' ? 'rgba(0,255,157,1)' : stJuez.dir === 'DOWN' ? 'rgba(255,45,107,1)' : 'rgba(255,224,0,.8)';
-      ctx.strokeStyle = stColor; ctx.lineWidth = 3; ctx.setLineDash([]);
-      ctx.beginPath(); ctx.moveTo(0, stY); ctx.lineTo(W - 77, stY); ctx.stroke();
-      // Label ST
-      ctx.fillStyle = stColor; ctx.font = 'bold 9px Space Mono,monospace';
-      const stLbl = 'ST ' + (stJuez.dir === 'UP' ? '▲' : stJuez.dir === 'DOWN' ? '▼' : '—') + ' $' + formatPrice(stJuez.stLine);
-      ctx.fillText(stLbl, 4, stY - 4);
-      // Área de color entre precio y ST (sutil)
-      const priceY = pY(quote.c || candles[candles.length-1].c);
-      if(priceY > 0 && stY > 0){
-        const grd = ctx.createLinearGradient(0, Math.min(priceY,stY), 0, Math.max(priceY,stY));
-        if(stJuez.dir === 'UP'){
-          grd.addColorStop(0, 'rgba(0,255,157,.06)');
-          grd.addColorStop(1, 'rgba(0,255,157,.0)');
-        } else {
-          grd.addColorStop(0, 'rgba(255,45,107,.0)');
-          grd.addColorStop(1, 'rgba(255,45,107,.06)');
-        }
-        ctx.fillStyle = grd;
-        ctx.fillRect(0, Math.min(priceY,stY), W-77, Math.abs(stY-priceY));
+  // SuperTrend line — barra por barra, igual que mapa bolsa
+  if(stResult.length > 0){
+    let prevX=null, prevY=null, prevTrend=null;
+    stResult.forEach((st) => {
+      const barIdx = st.i - (candles.length - bars.length);
+      if(barIdx < 0 || barIdx >= bars.length) return;
+      const x = (barIdx + 1) * bw;
+      const y = pY(st.line);
+      if(y < 2 || y > H - 2){ prevX=null; prevY=null; prevTrend=null; return; }
+      if(prevX !== null && prevTrend === st.trend){
+        ctx.strokeStyle = st.trend===1 ? 'rgba(0,229,255,.95)' : 'rgba(255,45,107,.9)';
+        ctx.lineWidth = 2.5; ctx.setLineDash([]);
+        ctx.beginPath(); ctx.moveTo(prevX,prevY); ctx.lineTo(x,y); ctx.stroke();
+      }
+      prevX = x; prevY = y; prevTrend = st.trend;
+    });
+    ctx.setLineDash([]);
+    // Label en el último punto visible
+    const lastSt = stResult[stResult.length-1];
+    if(lastSt){
+      const ly = pY(lastSt.line);
+      if(ly > 2 && ly < H-2){
+        const lc = lastSt.trend===1 ? 'rgba(0,229,255,1)' : 'rgba(255,45,107,1)';
+        ctx.fillStyle = lc; ctx.font = 'bold 9px Space Mono,monospace';
+        ctx.fillText('ST'+(lastSt.trend===1?'▲':'▼')+' $'+formatPrice(lastSt.line), W-145, ly-4);
       }
     }
   }
