@@ -503,14 +503,6 @@ function checkPass(){
   if(val === getPass()){
     document.getElementById('lock-screen').classList.add('hidden');
     document.getElementById('lock-err').textContent = '';
-    // Wait for lock screen to fully hide and layout to recalculate
-    setTimeout(() => {
-      // Force canvas to window size now that main is visible
-      cv.width  = window.innerWidth  - 210;
-      cv.height = window.innerHeight - 80;
-      ofc.height = cv.height;
-      console.log('Post-unlock canvas:', cv.width, 'x', cv.height);
-    }, 50);
     initApp();
   } else {
     document.getElementById('lock-err').textContent = '❌ Contraseña incorrecta';
@@ -1913,6 +1905,9 @@ function updateZonesList(){
 // GEX PANEL
 // ═══════════════════════════════════════════════════════════
 function updateGEXPanel(price, vwap, sigma){
+  // Panel GEX fue reemplazado por panel CHoCH/BOS — los elementos ya no existen en el HTML
+  // Guard: si no hay elementos GEX, salir sin error
+  if(!document.getElementById('gex-bar')) return;
   const dec = price < 1 ? 5 : price < 100 ? 3 : price < 10000 ? 1 : 0;
   // GEX estimated from price position relative to VWAP
   const dist = (price - vwap) / Math.max(sigma, 1);
@@ -2049,7 +2044,10 @@ let cv, ctx, ofc, ofctx;
 let pMin, pMax, pRng;
 
 function resizeCanvas(){
+  // Guard: cv must exist before resizing
+  if(!cv || !ofc) return;
   requestAnimationFrame(() => {
+    if(!cv || !ofc) return;
     // Try parentElement first, fallback to window
     const wrap = cv.parentElement;
     const wrapRect = wrap ? wrap.getBoundingClientRect() : null;
@@ -2072,6 +2070,8 @@ function pY(p){ return !pRng ? 0 : cv.height - ((p-pMin)/pRng) * cv.height * .85
 function formatPrice(p){ return p < 1 ? p.toFixed(4) : p < 100 ? p.toFixed(2) : p < 10000 ? p.toFixed(1) : Math.round(p).toString(); }
 
 function drawAll(){
+  // Guard: cv must exist
+  if(!cv || !ctx) return;
   // Always ensure canvas has valid dimensions
   if(!cv.width || cv.width < 10){
     const wrap = cv.parentElement;
