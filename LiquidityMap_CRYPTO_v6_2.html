@@ -376,7 +376,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <div class="ps">
       <h3>📐 VWAP / POC / Bandas</h3>
       <div class="mr"><span class="lb">POC</span><span class="vl o" id="poc-v">—</span></div>
-      <div class="mr"><span class="lb">VWAP est.</span><span class="vl p" id="vwap-v">—</span></div>
+      <div class="mr"><span class="lb">VWAP real</span><span class="vl p" id="vwap-v">—</span></div>
       <div class="mr"><span class="lb">+1σ (resist.)</span><span class="vl" id="vwap-1up" style="color:rgba(180,77,255,.85)">—</span></div>
       <div class="mr"><span class="lb">-1σ (soporte)</span><span class="vl" id="vwap-1dn" style="color:rgba(180,77,255,.85)">—</span></div>
       <div class="mr"><span class="lb">+2σ (extremo)</span><span class="vl" id="vwap-2up" style="color:rgba(180,77,255,.55)">—</span></div>
@@ -385,6 +385,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div class="mr"><span class="lb">VAL</span><span class="vl r" id="val-v">—</span></div>
       <div class="mr"><span class="lb">Dist. VWAP</span><span class="vl" id="vwap-dist">—</span></div>
       <div class="mr"><span class="lb">HVN</span><span class="vl o" id="hvn-v">—</span></div>
+      <div class="mr"><span class="lb">ATR(14) real</span><span class="vl a" id="atr-real">—</span></div>
+      <div class="mr"><span class="lb">Régimen</span><span class="vl y" id="mkt-regime">—</span></div>
       <div class="vol-bar"><div class="vol-fill" id="vf" style="width:0%"></div></div>
     </div>
 
@@ -554,13 +556,427 @@ const TF_TP_MULT = {
   '4h':  {sl:2.0,  tp1:3.0, tp2:5.0, tp3:9.0},
   '1d':  {sl:2.5,  tp1:4.0, tp2:7.0, tp3:12.0},
 };
-function getATR(sym, price, currentTF){
-  const basePct = ATR_MAP[sym] || 0.035;
-  const factor  = TF_ATR_FACTOR[currentTF || tf || '15m'] || 0.18;
-  return price * basePct * factor;
+// ═══════════════════════════════════════════════════════════
+// ATR DINÁMICO REAL — True Range EMA(14) estándar institucional
+// TR = max(H-L, |H-Cprev|, |L-Cprev|) — Wilder smoothing
+// Se adapta a CUALQUIER cripto y a cambios de volatilidad.
+// Fallback al método estático solo si no hay velas suficientes.
+// ═══════════════════════════════════════════════════════════
+let atrCache = {}; // {tf: {value, ts}} — cache por TF para no recalcular en cada frame
+
+function calcRealATR(bars, period){
+  period = period || 14;
+  if(!bars || bars.length < period + 1) return null;
+  // Calcular TR para cada barra
+  const trList = [];
+  for(let i = 1; i < bars.length; i++){
+    const b    = bars[i];
+    const prev = bars[i-1];
+    const tr   = Math.max(
+      b.h - b.l,
+      Math.abs(b.h - prev.c),
+      Math.abs(b.l - prev.c)
+    );
+    trList.push(tr);
+  }
+  // Wilder smoothing (equivale a EMA con α=1/period)
+  let atr = trList.slice(0, period).reduce((a,v)=>a+v, 0) / period;
+  for(let i = period; i < trList.length; i++){
+    atr = (atr * (period - 1) + trList[i]) / period;
+  }
+  return atr;
+}
+
+function getATR(symArg, price, currentTF){
+  const cacheKey = currentTF || tf || '15m';
+  const now      = Date.now();
+  // Usar cache si es reciente (< 10s) para no recalcular en cada render
+  if(atrCache[cacheKey] && now - atrCache[cacheKey].ts < 10000){
+    return atrCache[cacheKey].value;
+  }
+  // ATR real desde velas
+  const realATR = calcRealATR(candles, 14);
+  if(realATR && realATR > 0){
+    atrCache[cacheKey] = { value: realATR, ts: now };
+    return realATR;
+  }
+  // Fallback estático si no hay suficientes velas (bootstrap)
+  const basePct = ATR_MAP[symArg || sym] || 0.035;
+  const factor  = TF_ATR_FACTOR[cacheKey] || 0.18;
+  return (price || quote.c || 1) * basePct * factor;
 }
 function getTPMult(currentTF){
   return TF_TP_MULT[currentTF || tf || '15m'] || TF_TP_MULT['15m'];
+}
+
+// ═══════════════════════════════════════════════════════════
+// SMART TP — Sistema híbrido institucional (3 fórmulas)
+// ═══════════════════════════════════════════════════════════
+// MOTOR DE RÉGIMEN DE MERCADO
+// Detecta: TREND_STRONG / TREND_WEAK / RANGE / VOLATILE_SHOCK
+// Basado en: ADX proxy, ATR% vs historia, VP compresión
+// ═══════════════════════════════════════════════════════════
+function detectMarketRegime(bars){
+  if(!bars || bars.length < 20) return { regime: 'UNKNOWN', strength: 0.5 };
+  // ── Proxy ADX: ratio de movimiento direccional vs rango total ──
+  const slice  = bars.slice(-20);
+  const closes = slice.map(b => b.c);
+  const highs  = slice.map(b => b.h);
+  const lows   = slice.map(b => b.l);
+  let dmPlus = 0, dmMinus = 0, trSum = 0;
+  for(let i = 1; i < slice.length; i++){
+    const upMove   = highs[i]  - highs[i-1];
+    const downMove = lows[i-1] - lows[i];
+    if(upMove > downMove && upMove > 0)   dmPlus  += upMove;
+    if(downMove > upMove && downMove > 0) dmMinus += downMove;
+    trSum += Math.max(highs[i]-lows[i], Math.abs(highs[i]-closes[i-1]), Math.abs(lows[i]-closes[i-1]));
+  }
+  const adxProxy = trSum > 0 ? Math.abs(dmPlus - dmMinus) / trSum : 0;
+  // ── Volatilidad relativa: ATR actual vs ATR histórico (50 barras) ──
+  const atrNow  = calcRealATR(bars.slice(-20), 14) || 1;
+  const atrLong = calcRealATR(bars.slice(-50), 14) || 1;
+  const volRatio = atrNow / atrLong; // >1.5 = shock, <0.7 = compresión (rango)
+  // ── Compresión de VP: si muchas barras están en poco rango ──
+  const priceRange  = Math.max(...closes) - Math.min(...closes);
+  const avgBodySize = slice.reduce((s,b) => s + Math.abs(b.c-b.o), 0) / slice.length;
+  const compression = priceRange > 0 ? avgBodySize / (priceRange / slice.length) : 1;
+  // ── Clasificación ──────────────────────────────────────────
+  let regime   = 'RANGE';
+  let strength = 0.5;
+  if(volRatio > 1.8){
+    regime   = 'VOLATILE_SHOCK';
+    strength = Math.min(1, volRatio / 3);
+  } else if(adxProxy > 0.25 && volRatio >= 0.8){
+    regime   = adxProxy > 0.40 ? 'TREND_STRONG' : 'TREND_WEAK';
+    strength = Math.min(1, adxProxy * 2);
+  } else {
+    regime   = 'RANGE';
+    strength = Math.max(0, 1 - adxProxy * 3);
+  }
+  return { regime, strength, adxProxy, volRatio, compression };
+}
+
+// ═══════════════════════════════════════════════════════════
+// MULTI-TF CONFLUENCE — Valida niveles TP en TF superior
+// Un TP que coincide con resistencia en TF mayor es 3x más fuerte.
+// Cache para no re-fetchear en cada frame.
+// ═══════════════════════════════════════════════════════════
+const multiTFCache = {}; // { tf: { vp, vwap, poc, va, ts } }
+
+async function fetchTFData(tfName){
+  const now = Date.now();
+  if(multiTFCache[tfName] && now - multiTFCache[tfName].ts < 120000) return multiTFCache[tfName];
+  try{
+    const limit = 60;
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/api/v3/klines&symbol=${sym}&interval=${tfName}&limit=${limit}`);
+    if(!r.ok) return null;
+    const d = await r.json();
+    if(!Array.isArray(d) || !d.length) return null;
+    const bars = d.map(k => ({
+      t: k[0], o: parseFloat(k[1]), h: parseFloat(k[2]),
+      l: parseFloat(k[3]), c: parseFloat(k[4]), v: parseFloat(k[5])
+    }));
+    const tfVP   = buildVP(bars, 40);
+    const tfVWAP = calcRealVWAP(bars);
+    const tfATR  = calcRealATR(bars, 14);
+    const data = {
+      bars, vp: tfVP, vwap: tfVWAP, atr: tfATR,
+      poc:  tfVP  ? getPOC(tfVP) : null,
+      va:   tfVP  ? getVA(tfVP)  : null,
+      ts:   now
+    };
+    multiTFCache[tfName] = data;
+    return data;
+  } catch(e){ return null; }
+}
+
+// TF superiores a consultar por TF activo
+const TF_UPPER = {
+  '1m': ['5m','15m'], '5m': ['15m','1h'],
+  '15m': ['1h','4h'], '1h': ['4h','1d'],
+  '4h': ['1d'], '1d': []
+};
+
+// Busca niveles de TF superiores que estén cerca del precio objetivo
+// Retorna: { score: 0-2, labels: [] }
+function checkMultiTFConfluence(targetPrice, price, isBuy){
+  const upperTFs = TF_UPPER[tf] || [];
+  let confluenceScore = 0;
+  const labels = [];
+  const tolerance = Math.abs(targetPrice - price) * 0.12; // 12% de tolerancia
+  for(const utf of upperTFs){
+    const data = multiTFCache[utf];
+    if(!data) continue;
+    const levels = [];
+    if(data.poc)     levels.push({ v: data.poc,     lbl: `POC-${utf}` });
+    if(data.va?.vah) levels.push({ v: data.va.vah,  lbl: `VAH-${utf}` });
+    if(data.va?.val) levels.push({ v: data.va.val,  lbl: `VAL-${utf}` });
+    if(data.vwap?.sigma1up) levels.push({ v: data.vwap.sigma1up, lbl: `V+1σ-${utf}` });
+    if(data.vwap?.sigma1dn) levels.push({ v: data.vwap.sigma1dn, lbl: `V-1σ-${utf}` });
+    if(data.vwap?.sigma2up) levels.push({ v: data.vwap.sigma2up, lbl: `V+2σ-${utf}` });
+    if(data.vwap?.sigma2dn) levels.push({ v: data.vwap.sigma2dn, lbl: `V-2σ-${utf}` });
+    for(const lvl of levels){
+      if(Math.abs(lvl.v - targetPrice) <= tolerance){
+        // TF mayor = más peso
+        const weight = utf === '1d' ? 2 : utf === '4h' ? 1.5 : 1;
+        confluenceScore += weight;
+        labels.push(lvl.lbl);
+        break; // un nivel por TF es suficiente
+      }
+    }
+  }
+  return { score: Math.min(3, confluenceScore), labels };
+}
+
+// Prefetch TF superiores en background — sin bloquear el render
+function prefetchUpperTFs(){
+  const upperTFs = TF_UPPER[tf] || [];
+  upperTFs.forEach(utf => fetchTFData(utf).catch(()=>{}));
+}
+
+// ═══════════════════════════════════════════════════════════
+// SPOT vs PERP DIVERGENCE — Proxy flujo institucional/ETF
+// Si precio sube en spot pero OI baja → compra real (spot/ETF)
+// Si precio sube y OI sube → leveraged (perp) — menos confiable
+// No requiere API de ETF — se infiere del comportamiento OI+precio
+// ═══════════════════════════════════════════════════════════
+let oiHistory2 = []; // [{oi, price, ts}]
+let spotFlowBias = 0; // +1 = spot/ETF buying, -1 = perp leveraged, 0 = neutral
+
+function updateSpotFlowBias(){
+  if(oiHistory2.length < 3) return;
+  const recent = oiHistory2.slice(-6);
+  let spotSignals = 0;
+  for(let i = 1; i < recent.length; i++){
+    const dPrice = recent[i].price - recent[i-1].price;
+    const dOI    = recent[i].oi   - recent[i-1].oi;
+    if(dPrice > 0 && dOI < 0) spotSignals++;   // precio sube, OI baja = spot buying
+    if(dPrice < 0 && dOI < 0) spotSignals--;   // precio baja, OI baja = spot selling
+    // dPrice y dOI mismo signo = leveraged (perp) — neutral/negativo
+  }
+  spotFlowBias = Math.max(-1, Math.min(1, spotSignals / 3));
+}
+
+// ═══════════════════════════════════════════════════════════
+// calcSmartTP — Motor institucional adaptativo completo
+// Integra: VP real, VWAP real, ATR dinámico, régimen,
+//          multi-TF confluence, spot/ETF flow, ballenas+CVD
+// Válido para CUALQUIER cripto (BTC o altcoins)
+// ═══════════════════════════════════════════════════════════
+function calcSmartTP(price, direction, currentTF) {
+  const isBuy  = direction === 'BUY';
+  const atrRaw = getATR(sym, price, currentTF);
+  const dec    = price < 1 ? 5 : price < 100 ? 3 : price < 10000 ? 1 : 0;
+
+  // ── Mínimos por TF — porcentuales, válidos para cualquier activo ──
+  const TF_MIN_PCT = {'1m':0.0015,'5m':0.0025,'15m':0.004,'1h':0.008,'4h':0.015,'1d':0.030};
+  const minPct  = TF_MIN_PCT[currentTF||'15m'] || 0.004;
+  const minDist = price * minPct;
+
+  // ══════════════════════════════════════════════════════════
+  // MÓDULO 1 — RÉGIMEN DE MERCADO
+  // Ajusta la amplitud de los TPs según el contexto del mercado
+  // ══════════════════════════════════════════════════════════
+  const mktReg = detectMarketRegime(candles);
+  let regimeMult = 1.0;
+  let regimeLabel = '';
+  switch(mktReg.regime){
+    case 'TREND_STRONG':
+      // Tendencia fuerte → TPs más lejanos, el momentum manda
+      regimeMult  = 1.0 + mktReg.strength * 0.6; // hasta 1.6
+      regimeLabel = '📈TREND';
+      break;
+    case 'TREND_WEAK':
+      regimeMult  = 1.0 + mktReg.strength * 0.3; // hasta 1.3
+      regimeLabel = '〜TREND';
+      break;
+    case 'RANGE':
+      // Rango → TPs más conservadores, reversión probable
+      regimeMult  = 0.7 + mktReg.strength * 0.2; // 0.7 a 0.9
+      regimeLabel = '↔RANGE';
+      break;
+    case 'VOLATILE_SHOCK':
+      // Shock: TP1 cercano (salir rápido), TP2/3 expandidos (si la corrida continúa)
+      regimeMult  = 1.2 + mktReg.volRatio * 0.15;
+      regimeLabel = '⚡SHOCK';
+      break;
+    default:
+      regimeMult  = 1.0;
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // MÓDULO 2 — RÉGIMEN DE VOLUMEN (ballenas + CVD + spot flow)
+  // ══════════════════════════════════════════════════════════
+  let volMult = 1.0;
+  const now           = Date.now();
+  const recentWhales  = (whales||[]).filter(w => now - w.ts < 120000);
+  const whaleBuyUSD   = recentWhales.filter(w=>w.side==='BUY').reduce((s,w)=>s+w.usd,0);
+  const whaleSellUSD  = recentWhales.filter(w=>w.side==='SELL').reduce((s,w)=>s+w.usd,0);
+  const totalVol      = buyV + sellV + 1;
+  const buyPct        = buyV / totalVol * 100;
+  const whaleActive   = Math.max(whaleBuyUSD, whaleSellUSD) > 200000;
+  const cvdStrong     = Math.abs(cvd) > totalVol * 0.08;
+  const cvdAligned    = isBuy ? (cvd > 0 && buyPct > 54) : (cvd < 0 && buyPct < 46);
+  const whaleAligned  = isBuy ? whaleBuyUSD > whaleSellUSD * 1.4 : whaleSellUSD > whaleBuyUSD * 1.4;
+  const spotAligned   = isBuy ? spotFlowBias > 0.3 : spotFlowBias < -0.3;
+  // Score de confianza de volumen (0-4 factores)
+  let volScore = 0;
+  if(whaleAligned && whaleActive)  volScore += 1.5;
+  if(cvdAligned && cvdStrong)      volScore += 1.0;
+  if(spotAligned)                  volScore += 1.0; // spot/ETF flow
+  if(whaleActive && !whaleAligned) volScore -= 1.5; // ballena contra = peligro
+  volMult = 1.0 + (volScore / 4) * 0.8; // rango: ~0.65 a 1.8
+  volMult = Math.max(0.65, Math.min(1.8, volMult));
+
+  // ── ATR final compuesto ────────────────────────────────────
+  const atr = atrRaw * regimeMult * volMult;
+
+  // ══════════════════════════════════════════════════════════
+  // MÓDULO 3 — CANDIDATOS REALES (VP + VWAP real)
+  // ══════════════════════════════════════════════════════════
+  const vpCandidates = [];
+  if(vp && vwapData){
+    const poc  = getPOC(vp);
+    const va   = getVA(vp);
+    const vw   = vwapData;
+    if(isBuy){
+      // Resistencias por encima del precio — ordenadas por relevancia
+      [
+        { v: va.vah,        w: 3, lbl: 'VAH'    },
+        { v: vw.sigma1up,   w: 2.5, lbl: 'V+1σ' },
+        { v: poc + atrRaw,  w: 2, lbl: 'POC+ATR' },
+        { v: vw.sigma2up,   w: 2, lbl: 'V+2σ'  },
+        { v: vw.sigma3up,   w: 1, lbl: 'V+3σ'  },
+      ]
+      .filter(c => c.v > price + minDist)
+      .sort((a,b) => a.v - b.v) // más cercano primero
+      .forEach(c => vpCandidates.push({ v: parseFloat(c.v.toFixed(dec)), w: c.w, lbl: c.lbl }));
+    } else {
+      // Soportes por debajo del precio
+      [
+        { v: va.val,        w: 3, lbl: 'VAL'    },
+        { v: vw.sigma1dn,   w: 2.5, lbl: 'V-1σ' },
+        { v: poc - atrRaw,  w: 2, lbl: 'POC-ATR' },
+        { v: vw.sigma2dn,   w: 2, lbl: 'V-2σ'  },
+        { v: vw.sigma3dn,   w: 1, lbl: 'V-3σ'  },
+      ]
+      .filter(c => c.v < price - minDist)
+      .sort((a,b) => b.v - a.v) // más cercano primero
+      .forEach(c => vpCandidates.push({ v: parseFloat(c.v.toFixed(dec)), w: c.w, lbl: c.lbl }));
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // MÓDULO 4 — LIQUIDITY GRAB (SMC — zonas de stops reales)
+  // Escalado por ATR real del activo, no porcentaje estático
+  // ══════════════════════════════════════════════════════════
+  const liqCandidates = [];
+  const liqMult = [1.5, 3.0, 5.5]; // distancias SMC progresivas
+  liqMult.forEach((m, idx) => {
+    const liqDist = atrRaw * m; // escalado con ATR real del activo
+    const liqPrc  = isBuy ? price + liqDist : price - liqDist;
+    if(isBuy ? liqPrc > price + minDist : liqPrc < price - minDist){
+      liqCandidates.push({ v: parseFloat(liqPrc.toFixed(dec)), w: 2 - idx * 0.3, lbl: `LIQ${idx+1}` });
+    }
+  });
+
+  // ══════════════════════════════════════════════════════════
+  // MÓDULO 5 — ESTRUCTURAS BOS/CHoCH como target
+  // BOS alcista previo = soporte que puede ser próximo TP
+  // ══════════════════════════════════════════════════════════
+  const structCandidates = [];
+  if(structureEvents && structureEvents.length > 0){
+    const relevantStructure = structureEvents
+      .filter(e => {
+        const onTarget = isBuy ? e.price > price + minDist : e.price < price - minDist;
+        const notTooFar = Math.abs(e.price - price) < atrRaw * 8;
+        return onTarget && notTooFar;
+      })
+      .slice(-3);
+    relevantStructure.forEach(e =>
+      structCandidates.push({ v: e.price, w: e.type === 'BOS' ? 2.5 : 1.5, lbl: e.type })
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // FUSIÓN INTELIGENTE — Prioridad y eliminación de solapados
+  // VP+VWAP > Estructura > Liq > ATR fallback
+  // ══════════════════════════════════════════════════════════
+  const allRaw = [...vpCandidates, ...structCandidates, ...liqCandidates];
+  // Ordenar por distancia al precio (más cercano primero)
+  allRaw.sort((a,b) => isBuy ? a.v - b.v : b.v - a.v);
+  // Eliminar solapados: cada TP debe estar ≥ minDist del anterior
+  const filtered = [];
+  let lastLevel  = price;
+  for(const c of allRaw){
+    if(Math.abs(c.v - lastLevel) >= minDist){
+      // Verificar confluence multi-TF (no bloquea, solo puntúa)
+      const conf = checkMultiTFConfluence(c.v, price, isBuy);
+      filtered.push({ ...c, confScore: conf.score, confLabels: conf.labels });
+      lastLevel = c.v;
+    }
+    if(filtered.length >= 3) break;
+  }
+
+  // ── Fallback ATR compuesto si faltan candidatos ────────────
+  const _m = getTPMult(currentTF);
+  const fallbackDists = [
+    Math.max(atr * _m.tp1, minDist * 1.3),
+    Math.max(atr * _m.tp2, minDist * 2.8),
+    Math.max(atr * _m.tp3, minDist * 5.0),
+  ];
+  while(filtered.length < 3){
+    const idx  = filtered.length;
+    const base = filtered.length > 0 ? filtered[filtered.length-1].v : price;
+    const dist = fallbackDists[idx] || (minDist * (2 + idx * 2));
+    const fb   = isBuy ? base + dist : base - dist;
+    // Evitar solapados con fallbacks anteriores
+    const already = filtered.some(f => Math.abs(f.v - fb) < minDist * 0.7);
+    filtered.push({
+      v:          parseFloat((already ? (isBuy ? base + minDist*2 : base - minDist*2) : fb).toFixed(dec)),
+      lbl:        'ATR',
+      w:          1,
+      confScore:  0,
+      confLabels: []
+    });
+  }
+
+  // ── SL inteligente ────────────────────────────────────────
+  // En rango: SL más ajustado. En tendencia/shock: SL más holgado.
+  const slRegimeFactor = mktReg.regime === 'RANGE' ? 0.85 : mktReg.regime === 'VOLATILE_SHOCK' ? 1.4 : 1.0;
+  const slDist = Math.max(atrRaw * _m.sl * slRegimeFactor, minDist);
+  const sl     = parseFloat((isBuy ? price - slDist : price + slDist).toFixed(dec));
+
+  // ── Label fuente ───────────────────────────────────────────
+  const hasVP   = vpCandidates.length > 0;
+  const hasConf = filtered.some(f => f.confScore > 0);
+  let source    = hasVP ? 'VP+VWAP' : (liqCandidates.length > 0 ? 'SMC' : 'ATR');
+  if(hasConf)                          source += '+MTF';  // multi-TF confluence
+  if(volMult >= 1.5)                   source += '+🐋';
+  else if(volMult >= 1.2)              source += '+CVD';
+  if(spotFlowBias > 0.3 && isBuy)     source += '+ETF';
+  if(spotFlowBias < -0.3 && !isBuy)   source += '+ETF';
+  source += ' [' + regimeLabel + ']';
+
+  // R/R real
+  const rrRaw = slDist > 0 ? Math.abs(filtered[0].v - price) / slDist : 0;
+
+  return {
+    sl,
+    tp1: filtered[0].v,
+    tp2: filtered[1].v,
+    tp3: filtered[2].v,
+    tp1lbl: filtered[0].lbl + (filtered[0].confLabels?.length ? '·'+filtered[0].confLabels[0] : ''),
+    tp2lbl: filtered[1].lbl + (filtered[1].confLabels?.length ? '·'+filtered[1].confLabels[0] : ''),
+    tp3lbl: filtered[2].lbl + (filtered[2].confLabels?.length ? '·'+filtered[2].confLabels[0] : ''),
+    atrMult:  volMult,
+    regMult:  regimeMult,
+    regime:   mktReg.regime,
+    source,
+    rr:       rrRaw.toFixed(1),
+    volScore,
+    spotFlow: spotFlowBias
+  };
 }
 
 let sym = 'BTCUSDT', tf = '15m';
@@ -784,7 +1200,7 @@ function bootstrapFromQuote(){
     price = c;
   }
   candles = bars;
-  vp = buildVP(candles, 60);
+  vp = buildVP(candles, 60); refreshVWAP();
   zones = buildZones(quote.c);
   cvd = bars.reduce((a,b) => a + (b.c >= b.o ? b.v : -b.v), 0);
 }
@@ -812,6 +1228,8 @@ async function loadCandles(){
       if(quote.l) last.l = Math.min(last.l, quote.l);
     }
     vp = buildVP(candles, 60);
+    refreshVWAP();
+    prefetchUpperTFs();
     const slice = candles.slice(-30);
     const hasTaker = slice.some(b => b.bv > 0);
     if(hasTaker){
@@ -1294,12 +1712,11 @@ async function sendTelegram(signal, ticker, price, score, extra){
   if(window._cool[coolKey] && now - window._cool[coolKey] < COOLDOWN) return;
   window._cool[coolKey] = now;
   const isBuy = signal === 'BUY', isSell = signal === 'SELL';
-  const atr = getATR(t, p, tf);
-  const _m  = getTPMult(tf);
-  const sl = isBuy ? (p - atr*_m.sl).toFixed(2)  : isSell ? (p + atr*_m.sl).toFixed(2)  : null;
-  const tp1 = isBuy ? (p + atr*_m.tp1).toFixed(2) : isSell ? (p - atr*_m.tp1).toFixed(2) : null;
-  const tp2 = isBuy ? (p + atr*_m.tp2).toFixed(2) : isSell ? (p - atr*_m.tp2).toFixed(2) : null;
-  const tp3 = isBuy ? (p + atr*_m.tp3).toFixed(2) : isSell ? (p - atr*_m.tp3).toFixed(2) : null;
+  const stp = calcSmartTP(p, signal, tf);
+  const sl  = isBuy ? stp.sl.toFixed(2)  : stp.sl.toFixed(2);
+  const tp1 = isBuy ? stp.tp1.toFixed(2) : stp.tp1.toFixed(2);
+  const tp2 = isBuy ? stp.tp2.toFixed(2) : stp.tp2.toFixed(2);
+  const tp3 = isBuy ? stp.tp3.toFixed(2) : stp.tp3.toFixed(2);
   const bp = Math.round(buyV / (buyV + sellV + 1) * 100);
   const q = evalQuality(score || 0);
   const body = {
@@ -1737,23 +2154,21 @@ function updateDerived(){
   // Timestamp
   const nowStr = new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   if(sig.type !== 'NEUTRAL') { const te = document.getElementById('sig-time'); if(te) te.textContent = 'Última señal: '+nowStr+' UTC'; }
-  // Niveles SL/TP con ATR real
-  const atr = getATR(sym, p, tf);
-  const _mD = getTPMult(tf);
-  const slD = atr * _mD.sl, tp1D = atr * _mD.tp1, tp2D = atr * _mD.tp2, tp3D = atr * _mD.tp3;
+  // Niveles SL/TP con Smart TP institucional
+  const smartTP = calcSmartTP(p, sig.type, tf);
   const dec = p < 1 ? 5 : p < 100 ? 3 : p < 10000 ? 1 : 0;
   if(sig.type === 'BUY'){
-    set('sig-stop', '$'+(p-slD).toFixed(dec), 'r');
-    set('sig-t1', '$'+(p+tp1D).toFixed(dec)+' (1:2)', 'g');
-    set('sig-t2', '$'+(p+tp2D).toFixed(dec)+' (1:3)', 'g');
-    set('sig-t3', '$'+(p+tp3D).toFixed(dec)+' (1:5)', 'g');
-    set('sig-rr', 'SL:$'+slD.toFixed(dec)+' / TP1:$'+tp1D.toFixed(dec), 'y');
+    set('sig-stop', '$'+smartTP.sl.toFixed(dec), 'r');
+    set('sig-t1', '$'+smartTP.tp1.toFixed(dec)+' +'+((smartTP.tp1-p)/p*100).toFixed(2)+'% ['+smartTP.tp1lbl+']', 'g');
+    set('sig-t2', '$'+smartTP.tp2.toFixed(dec)+' +'+((smartTP.tp2-p)/p*100).toFixed(2)+'% ['+smartTP.tp2lbl+']', 'g');
+    set('sig-t3', '$'+smartTP.tp3.toFixed(dec)+' +'+((smartTP.tp3-p)/p*100).toFixed(2)+'% ['+smartTP.tp3lbl+']', 'g');
+    set('sig-rr', 'R/R:'+smartTP.rr+' · '+smartTP.source, 'y');
   } else if(sig.type === 'SELL'){
-    set('sig-stop', '$'+(p+slD).toFixed(dec), 'r');
-    set('sig-t1', '$'+(p-tp1D).toFixed(dec)+' (1:2)', 'g');
-    set('sig-t2', '$'+(p-tp2D).toFixed(dec)+' (1:3)', 'g');
-    set('sig-t3', '$'+(p-tp3D).toFixed(dec)+' (1:5)', 'g');
-    set('sig-rr', 'SL:$'+slD.toFixed(dec)+' / TP1:$'+tp1D.toFixed(dec), 'y');
+    set('sig-stop', '$'+smartTP.sl.toFixed(dec), 'r');
+    set('sig-t1', '$'+smartTP.tp1.toFixed(dec)+' -'+((p-smartTP.tp1)/p*100).toFixed(2)+'% ['+smartTP.tp1lbl+']', 'g');
+    set('sig-t2', '$'+smartTP.tp2.toFixed(dec)+' -'+((p-smartTP.tp2)/p*100).toFixed(2)+'% ['+smartTP.tp2lbl+']', 'g');
+    set('sig-t3', '$'+smartTP.tp3.toFixed(dec)+' -'+((p-smartTP.tp3)/p*100).toFixed(2)+'% ['+smartTP.tp3lbl+']', 'g');
+    set('sig-rr', 'R/R:'+smartTP.rr+' · '+smartTP.source, 'y');
   } else {
     set('sig-stop','—','r');set('sig-t1','—','g');set('sig-t2','—','g');set('sig-t3','—','g');set('sig-rr','—','y');
   }
@@ -1780,29 +2195,61 @@ function updateDerived(){
   const spread = (p * 0.004);
   set('ob-spread', '$' + spread.toFixed(dec2) + ' (' + (spread/p*100).toFixed(3) + '%)', 'a');
   set('ob-pressure', bp > 52 ? '▲ Compra neta' : bp < 48 ? '▼ Venta neta' : '⚖ Equilibrio', bp>52?'g':bp<48?'r':'y');
-  // VWAP + Bandas sigma
+  // VWAP real + Bandas sigma reales
   if(vp){
     const poc = getPOC(vp), va = getVA(vp);
-    const vwapEst = poc * (1 + (Math.sin(Date.now()/60000)*0.001));
-    // Volatility estimate from candle range
-    const recentBars = candles.slice(-20);
-    const avgRange = recentBars.reduce((s,b) => s + (b.h - b.l), 0) / Math.max(recentBars.length,1);
-    const sigma = avgRange * 0.5; // 1 sigma estimate
     set('poc-v', '$'+poc.toFixed(dec2), 'p');
-    set('vwap-v', '$'+vwapEst.toFixed(dec2), 'p');
-    set('vwap-1up', '$'+(vwapEst + sigma).toFixed(dec2));
-    set('vwap-1dn', '$'+(vwapEst - sigma).toFixed(dec2));
-    set('vwap-2up', '$'+(vwapEst + sigma*2).toFixed(dec2));
-    set('vwap-2dn', '$'+(vwapEst - sigma*2).toFixed(dec2));
     set('vah-v', '$'+va.vah.toFixed(dec2), 'g');
     set('val-v', '$'+va.val.toFixed(dec2), 'r');
-    const vd = ((p-vwapEst)/vwapEst*100);
-    set('vwap-dist', (vd>=0?'+':'')+vd.toFixed(2)+'%', vd>=0?'g':'r');
-    // HVN
+    // HVN — segundo nivel de mayor volumen
     const srt2 = [...vp.profile.map((v,i)=>({v,i}))].sort((a,b)=>b.v-a.v);
     if(srt2[1]) set('hvn-v', '$'+(vp.min+srt2[1].i*vp.binSize).toFixed(dec2), 'o');
     const mv3 = Math.max(...vp.profile), cv3 = vp.profile[Math.floor(vp.profile.length/2)]||0;
     document.getElementById('vf').style.width = Math.min(100,(cv3/mv3)*100)+'%';
+    // VWAP real anclado
+    refreshVWAP();
+    if(vwapData){
+      const vw = vwapData;
+      set('vwap-v',   '$'+vw.vwap.toFixed(dec2), 'p');
+      set('vwap-1up', '$'+vw.sigma1up.toFixed(dec2));
+      set('vwap-1dn', '$'+vw.sigma1dn.toFixed(dec2));
+      set('vwap-2up', '$'+vw.sigma2up.toFixed(dec2));
+      set('vwap-2dn', '$'+vw.sigma2dn.toFixed(dec2));
+      const vd = ((p - vw.vwap) / vw.vwap * 100);
+      set('vwap-dist', (vd>=0?'+':'')+vd.toFixed(2)+'%', vd>=0?'g':'r');
+      // Update ATR cache + spot flow bias
+      updateSpotFlowBias();
+      if(oiHistory2.length === 0 || Date.now() - (oiHistory2[oiHistory2.length-1]?.ts||0) > 30000){
+        oiHistory2.push({ oi: openInterest, price: p, ts: Date.now() });
+        if(oiHistory2.length > 20) oiHistory2.shift();
+        updateSpotFlowBias();
+      }
+      // Mostrar régimen de mercado
+      const mktReg = detectMarketRegime(candles);
+      const regEl  = document.getElementById('mkt-regime');
+      if(regEl){
+        const regColors = { TREND_STRONG:'g', TREND_WEAK:'a', RANGE:'y', VOLATILE_SHOCK:'r', UNKNOWN:'p' };
+        regEl.textContent = mktReg.regime.replace('_',' ');
+        regEl.className   = 'vl ' + (regColors[mktReg.regime]||'y');
+      }
+      // ATR dinámico real en panel
+      const realATR = calcRealATR(candles, 14);
+      const atrEl   = document.getElementById('atr-real');
+      if(atrEl && realATR) atrEl.textContent = '$'+realATR.toFixed(dec2)+' ('+((realATR/p)*100).toFixed(2)+'%)';
+    } else {
+      // Fallback: sigma desde rango de velas si VWAP no disponible aún
+      const recentBars = candles.slice(-20);
+      const avgRange   = recentBars.reduce((s,b) => s+(b.h-b.l), 0) / Math.max(recentBars.length,1);
+      const sigma      = avgRange * 0.5;
+      const vwapFB     = poc;
+      set('vwap-v',   '$'+vwapFB.toFixed(dec2), 'p');
+      set('vwap-1up', '$'+(vwapFB+sigma).toFixed(dec2));
+      set('vwap-1dn', '$'+(vwapFB-sigma).toFixed(dec2));
+      set('vwap-2up', '$'+(vwapFB+sigma*2).toFixed(dec2));
+      set('vwap-2dn', '$'+(vwapFB-sigma*2).toFixed(dec2));
+      const vd = ((p-vwapFB)/vwapFB*100);
+      set('vwap-dist', (vd>=0?'+':'')+vd.toFixed(2)+'%', vd>=0?'g':'r');
+    }
     // SuperTrend JUEZ panel
     const stLast = stResult.length > 0 ? stResult[stResult.length-1] : null;
     if(stLast){
@@ -1812,15 +2259,17 @@ function updateDerived(){
       set('st-line', '$'+stLast.line.toFixed(dec), 'a');
       const stDist = ((p - stLast.line) / p * 100);
       set('st-dist', (stDist>=0?'+':'')+stDist.toFixed(2)+'%', stDist>=0?'g':'r');
-      const atrEst = stResult.length > 1 ? Math.abs(stResult[stResult.length-1].line - stResult[stResult.length-2].line) * 3 : p * 0.015;
-      set('st-atr', '$'+atrEst.toFixed(dec), 'a');
+      // ATR real en panel ST
+      const atrForST = calcRealATR(candles, 14) || p * 0.015;
+      set('st-atr', '$'+atrForST.toFixed(dec), 'a');
       document.getElementById('st-note').textContent = stUp
         ? 'Tendencia alcista. Precio sobre la línea cyan — buscar entradas en retrocesos.'
         : 'Tendencia bajista. Precio bajo la línea roja — evitar compras contra la tendencia.';
     }
     // GEX
-    updateGEXPanel(p, vwapEst, sigma);
+    updateGEXPanel(p, vwapData?.vwap || poc, vwapData?.sigma || poc*0.01);
     // Max Pain
+
     updateMaxPainPanel(p);
     // Dark Pool
     updateDarkPoolPanel(p);
@@ -1985,21 +2434,111 @@ function buildZones(mid){
   return z.sort((a,b) => b.price - a.price);
 }
 
+// ═══════════════════════════════════════════════════════════
+// VOLUME PROFILE — Distribución real H-L (no solo cierre)
+// Metodología institucional TPO: cada barra distribuye su
+// volumen proporcionalmente entre high y low, no solo al cierre.
+// Resultado: POC/VAH/VAL reales, no distorsionados.
+// ═══════════════════════════════════════════════════════════
 function buildVP(bars, n){
-  if(!bars.length) return null;
-  const mn = Math.min(...bars.map(b=>b.l)), mx = Math.max(...bars.map(b=>b.h));
-  const bs = (mx-mn)/n, p = new Array(n).fill(0);
-  for(const b of bars){ const i = Math.max(0, Math.min(n-1, Math.floor((b.c-mn)/bs))); p[i] += b.v || 0; }
-  return { profile:p, min:mn, max:mx, binSize:bs };
+  if(!bars || !bars.length) return null;
+  const mn = Math.min(...bars.map(b=>b.l));
+  const mx = Math.max(...bars.map(b=>b.h));
+  if(mx <= mn) return null;
+  const bs = (mx - mn) / n;
+  const p  = new Float64Array(n); // Float64 para precisión acumulada
+  for(const b of bars){
+    const vol  = b.v || 0;
+    if(vol <= 0) continue;
+    const rng  = b.h - b.l;
+    if(rng < 1e-12){ // barra doji — todo al cierre
+      const idx = Math.max(0, Math.min(n-1, Math.floor((b.c - mn) / bs)));
+      p[idx] += vol;
+      continue;
+    }
+    // Distribución triangular sesgada: más peso cerca del cierre
+    // Modela absorción institucional al precio de cierre
+    const bins = Math.max(1, Math.ceil(rng / bs));
+    for(let k = 0; k < bins; k++){
+      const price = b.l + (k + 0.5) * (rng / bins);
+      const idx   = Math.max(0, Math.min(n-1, Math.floor((price - mn) / bs)));
+      // Peso: inversamente proporcional a distancia del cierre
+      const distFromClose = Math.abs(price - b.c) / rng;
+      const weight = Math.max(0.1, 1 - distFromClose * 0.7);
+      p[idx] += (vol / bins) * weight;
+    }
+  }
+  // Normalizar para que el total sea correcto
+  const rawSum = p.reduce((a,v)=>a+v, 0);
+  const realSum = bars.reduce((a,b)=>a+(b.v||0), 0);
+  const norm = rawSum > 0 ? realSum / rawSum : 1;
+  const profile = Array.from(p).map(v => v * norm);
+  return { profile, min: mn, max: mx, binSize: bs };
 }
-function getPOC(v){ const i = v.profile.indexOf(Math.max(...v.profile)); return v.min + i*v.binSize + v.binSize/2; }
+
+function getPOC(v){
+  if(!v) return 0;
+  let maxV = -1, maxI = 0;
+  for(let i = 0; i < v.profile.length; i++){
+    if(v.profile[i] > maxV){ maxV = v.profile[i]; maxI = i; }
+  }
+  return v.min + maxI * v.binSize + v.binSize * 0.5;
+}
+
 function getVA(v){
-  const tot = v.profile.reduce((a,b)=>a+b,0), tgt = tot*.70;
-  const mi = v.profile.indexOf(Math.max(...v.profile));
+  if(!v) return { vah: 0, val: 0 };
+  const tot = v.profile.reduce((a,b)=>a+b, 0);
+  const tgt = tot * 0.70; // Value Area = 70% del volumen
+  const mi  = v.profile.indexOf(Math.max(...v.profile));
   let lo = mi, hi = mi, acc = v.profile[mi];
-  while(acc < tgt){ const al = lo>0?v.profile[lo-1]:0, ah = hi<v.profile.length-1?v.profile[hi+1]:0; if(al>=ah&&lo>0){lo--;acc+=al;}else if(hi<v.profile.length-1){hi++;acc+=ah;}else break; }
-  return { vah: v.min+hi*v.binSize+v.binSize, val: v.min+lo*v.binSize };
+  while(acc < tgt){
+    const al = lo > 0 ? v.profile[lo-1] : 0;
+    const ah = hi < v.profile.length-1 ? v.profile[hi+1] : 0;
+    if(al >= ah && lo > 0){ lo--; acc += al; }
+    else if(hi < v.profile.length-1){ hi++; acc += ah; }
+    else break;
+  }
+  return {
+    vah: v.min + hi * v.binSize + v.binSize, // resistencia superior del VA
+    val: v.min + lo * v.binSize              // soporte inferior del VA
+  };
 }
+
+// ═══════════════════════════════════════════════════════════
+// VWAP REAL ANCLADO — Σ(precio_típico × volumen) / Σvolumen
+// precio_típico = (H + L + C) / 3  — estándar institucional
+// Retorna: { vwap, sigma1up, sigma1dn, sigma2up, sigma2dn }
+// ═══════════════════════════════════════════════════════════
+function calcRealVWAP(bars){
+  if(!bars || bars.length < 2) return null;
+  let sumPV = 0, sumV = 0, sumPV2 = 0;
+  for(const b of bars){
+    const tp  = (b.h + b.l + b.c) / 3; // typical price
+    const vol = b.v || 0;
+    sumPV  += tp * vol;
+    sumV   += vol;
+    sumPV2 += tp * tp * vol;
+  }
+  if(sumV <= 0) return null;
+  const vwap = sumPV / sumV;
+  // Desviación estándar ponderada por volumen (sigma real)
+  const variance = (sumPV2 / sumV) - (vwap * vwap);
+  const sigma    = variance > 0 ? Math.sqrt(variance) : vwap * 0.005;
+  return {
+    vwap,
+    sigma,
+    sigma1up: vwap + sigma,
+    sigma1dn: vwap - sigma,
+    sigma2up: vwap + sigma * 2,
+    sigma2dn: vwap - sigma * 2,
+    sigma3up: vwap + sigma * 3,
+    sigma3dn: vwap - sigma * 3,
+  };
+}
+
+// Cache global VWAP — se recalcula con cada nueva vela
+let vwapData = null;
+function refreshVWAP(){ vwapData = calcRealVWAP(candles); }
 
 // ═══════════════════════════════════════════════════════════
 // CANVAS CHART
@@ -2231,21 +2770,22 @@ function drawAll(){
     ctx.fillStyle = '#020407'; ctx.font = 'bold 9px Space Mono,monospace';
     ctx.fillText('$'+formatPrice(cp), W-75, cpy+3);
 
-    // TP / SL lines
+    // TP / SL lines — Smart TP institucional
     const sig2 = computeSignal(cp);
     if(sig2 && sig2.type !== 'NEUTRAL'){
-      const atr = getATR(sym, cp, tf);
-      const _mG = getTPMult(tf);
-      const slD = atr*_mG.sl, tp1D = atr*_mG.tp1, tp2D = atr*_mG.tp2;
+      const stp = calcSmartTP(cp, sig2.type, tf);
       const isBuy = sig2.type === 'BUY';
-      const slP = isBuy?cp-slD:cp+slD, tp1P = isBuy?cp+tp1D:cp-tp1D, tp2P = isBuy?cp+tp2D:cp-tp2D;
-      [[slP,'rgba(255,45,107,.8)',[4,3],'SL'],[tp1P,'rgba(0,255,157,.8)',[5,3],'TP1'],[tp2P,'rgba(255,224,0,.7)',[5,3],'TP2']].forEach(([price,color,dash,lbl]) => {
+      [[stp.sl,'rgba(255,45,107,.85)',[4,3],'SL'],[stp.tp1,'rgba(0,255,157,.85)',[5,3],'TP1'],[stp.tp2,'rgba(255,224,0,.75)',[5,3],'TP2'],[stp.tp3,'rgba(0,229,255,.55)',[3,4],'TP3']].forEach(([price,color,dash,lbl]) => {
         const y2 = pY(price); if(y2 < 2 || y2 > H-2) return;
-        ctx.strokeStyle = color; ctx.lineWidth = 1.1; ctx.setLineDash(dash);
+        ctx.strokeStyle = color; ctx.lineWidth = lbl==='SL'?1.2:1.0; ctx.setLineDash(dash);
         ctx.beginPath(); ctx.moveTo(0,y2); ctx.lineTo(W-79,y2); ctx.stroke(); ctx.setLineDash([]);
+        const pct = lbl==='SL' ? ((Math.abs(cp-price)/cp)*100).toFixed(2)+'%' : (isBuy ? '+':'-')+((Math.abs(price-cp)/cp)*100).toFixed(2)+'%';
         ctx.fillStyle = color; ctx.font = 'bold 9px Space Mono,monospace';
-        ctx.fillText(lbl+' $'+formatPrice(price), 4, y2-3);
+        ctx.fillText(lbl+' $'+formatPrice(price)+' ('+pct+')', 4, y2-3);
       });
+      // Label fuente del TP
+      ctx.fillStyle = 'rgba(255,224,0,.6)'; ctx.font = '8px Space Mono,monospace';
+      ctx.fillText('src:'+stp.source, 4, pY(stp.tp1)+12);
     }
   }
 
