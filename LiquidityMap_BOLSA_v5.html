@@ -575,9 +575,11 @@ function getTPMult(currentTF){
   return TF_TP_MULT[currentTF || tf || '60'] || TF_TP_MULT['60'];
 }
 
-// ── WEBHOOK / TELEGRAM ────────────────────────────────────────
-const WEBHOOK_URL = 'https://lambent-pothos-6493c5.netlify.app/.netlify/functions/webhook';
-const COOLDOWN_MS = 300000;
+// ── TELEGRAM DIRECTO — LiquidMap BOLSA ────────────────────────
+// Bot: @liquidmapbolsa_bot — envío directo, sin webhook intermediario
+const TG_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
+const TG_CHAT_IDS    = ['1218461753', '1373309702'];
+const COOLDOWN_MS    = 300000;
 if(!window._tgCool) window._tgCool = {};
 
 async function sendTelegram(signal, ticker, price, score, extra){
@@ -588,22 +590,53 @@ async function sendTelegram(signal, ticker, price, score, extra){
   const now = Date.now();
   if(window._tgCool[coolKey] && now - window._tgCool[coolKey] < COOLDOWN_MS) return;
   window._tgCool[coolKey] = now;
-  const isBuy = signal === 'BUY', isSell = signal === 'SELL', isMain = isBuy || isSell;
-  const atr = getATR(t, p);
-  const sl   = isMain ? (isBuy ? p - atr*1.5 : p + atr*1.5).toFixed(2) : null;
-  const tp1  = isMain ? (isBuy ? p + atr*2.0 : p - atr*2.0).toFixed(2) : null;
-  const tp2  = isMain ? (isBuy ? p + atr*3.0 : p - atr*3.0).toFixed(2) : null;
-  const tp3  = isMain ? (isBuy ? p + atr*5.0 : p - atr*5.0).toFixed(2) : null;
-  const kz = getKillZone();
-  const body = {
-    signal, alert_type: signal, source: 'BOLSA_HTML', ticker: t,
-    timeframe: ({'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'}[tf]||tf), price: p.toString(),
-    sl: sl || '—', tp1: tp1 || '—', tp2: tp2 || '—', tp3: tp3 || '—',
-    score: score ? score+'/10' : '—',
-    kill_zone: kz.name, ...(extra || {})
+
+  const isBuy  = signal === 'BUY';
+  const isSell = signal === 'SELL';
+  const isMain = isBuy || isSell;
+  const atr  = getATR(t, p);
+  const mult = getTPMult(tf);
+  const sl   = isMain ? (isBuy ? p - atr*mult.sl  : p + atr*mult.sl ).toFixed(2) : '—';
+  const tp1  = isMain ? (isBuy ? p + atr*mult.tp1 : p - atr*mult.tp1).toFixed(2) : '—';
+  const tp2  = isMain ? (isBuy ? p + atr*mult.tp2 : p - atr*mult.tp2).toFixed(2) : '—';
+  const tp3  = isMain ? (isBuy ? p + atr*mult.tp3 : p - atr*mult.tp3).toFixed(2) : '—';
+  const kz   = getKillZone();
+  const tfLabel = {'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'}[tf] || tf;
+  const arrow   = isBuy ? '▲ BUY — COMPRA 🟢' : isSell ? '▼ SELL — VENTA 🔴' : '⚡ ALERTA';
+  const quality = (score||0) >= 8 ? '🔥 MÁXIMA CALIDAD' : (score||0) >= 6 ? '⭐ INSTITUCIONAL' : '✅ VÁLIDA';
+  const extraNote = (extra && extra.note) ? `\n💡 ${extra.note}` : '';
+  const confStr = (extra && extra.conf) ? `\n📊 <b>Confluencias:</b>\n${extra.conf}` : '';
+
+  const fmtP = v => {
+    const n = parseFloat(v);
+    if(isNaN(n)) return v;
+    return n >= 100 ? '$'+n.toFixed(2) : n >= 1 ? '$'+n.toFixed(3) : '$'+n.toFixed(5);
   };
+
+  const text = `📊 <b>LIQUIDMAP PRO — BOLSA</b>
+${arrow}
+
+🎯 <b>${t}</b> · ${tfLabel} · 🕐 ${kz.name}
+💰 Precio: <b>${fmtP(p)}</b>
+⭐ Score: ${score ? score+'/10' : '—'} · ${quality}
+🌐 Origen: 🖥️ LiquidMap PRO · Bolsa${extraNote}${confStr}
+
+🛑 SL:  ${fmtP(sl)}
+✅ TP1: ${fmtP(tp1)} · cerrar 50%
+✅ TP2: ${fmtP(tp2)} · cerrar 30%
+🔶 TP3: ${fmtP(tp3)} · dejar 20%
+📌 Al llegar a TP1 → mover SL a breakeven
+
+⚡ LiquidMap PRO · Bolsa v6`;
+
   try{
-    await fetch(WEBHOOK_URL, { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(body) });
+    await Promise.all(TG_CHAT_IDS.map(id =>
+      fetch(`https://api.telegram.org/bot${TG_TOKEN_BOLSA}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: id, text, parse_mode: 'HTML', disable_web_page_preview: true })
+      })
+    ));
   } catch(e){}
 }
 
