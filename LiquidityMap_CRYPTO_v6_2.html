@@ -3198,7 +3198,7 @@ function startMonitorScan(){
 // Fetch candles for a symbol+TF (monitor context)
 async function monFetchCandles(s, t, limit=100){
   try{
-    const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=${s}&interval=${t}&limit=${limit}`);
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/api/v3/klines&symbol=${s}&interval=${t}&limit=${limit}`);
     const d = await r.json();
     if(!Array.isArray(d)) return null;
     return d.map(k => ({
@@ -3211,7 +3211,7 @@ async function monFetchCandles(s, t, limit=100){
 // Fetch 24h quote
 async function monFetch24h(s){
   try{
-    const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${s}`);
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/api/v3/ticker/24hr&symbol=${s}`);
     const d = await r.json();
     return { c: +d.lastPrice, dp: +d.priceChangePercent, v: +d.quoteVolume };
   } catch(e){ return null; }
