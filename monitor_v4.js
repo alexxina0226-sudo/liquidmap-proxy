@@ -22,10 +22,19 @@ const TELEGRAM_TOKEN = '8676337394:AAEVIwDY2xGwAmE7hMWcjjAMedjws_vjzSU';
 const CHAT_IDS       = ['1218461753', '1373309702'];
 
 // Tickers activos — agregar aquí cuando se quiera activar uno nuevo
-const CRYPTO_TICKERS = ['BTCUSDT', 'ETHUSDT', 'XRPUSDT'];
+const CRYPTO_TICKERS = [
+  'BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT',
+  'ADAUSDT','AVAXUSDT','DOGEUSDT','LINKUSDT','DOTUSDT',
+  'MATICUSDT','LTCUSDT'
+];
 
-// ATR estimado por ticker (% del precio) — para SL/TP
-const ATR_PCT = { BTCUSDT: 0.022, ETHUSDT: 0.028, XRPUSDT: 0.035 };
+// ATR base — se usa solo como fallback si hay < 15 velas
+// El sistema calcula ATR dinámico real (True Range EMA-14)
+const ATR_PCT = {
+  BTCUSDT:0.022, ETHUSDT:0.028, SOLUSDT:0.040, BNBUSDT:0.025,
+  XRPUSDT:0.035, ADAUSDT:0.038, AVAXUSDT:0.042, DOGEUSDT:0.045,
+  LINKUSDT:0.038, DOTUSDT:0.040, MATICUSDT:0.045, LTCUSDT:0.030,
+};
 
 // Score mínimo para disparar (de 10 posibles)
 const MIN_SCORE = 6;
@@ -76,8 +85,59 @@ function fmt(n, ref) {
   return (+n).toFixed(4);
 }
 
-function getATR(ticker, price) {
+// ATR dinámico real — True Range EMA-14 Wilder
+// Se adapta a cualquier cripto y a cambios de volatilidad
+function calcRealATR(candles, period = 14) {
+  if (!candles || candles.length < 2) return null;
+  const trList = [];
+  for (let i = 1; i < candles.length; i++) {
+    const tr = Math.max(
+      candles[i].h - candles[i].l,
+      Math.abs(candles[i].h - candles[i-1].c),
+      Math.abs(candles[i].l - candles[i-1].c)
+    );
+    trList.push(tr);
+  }
+  if (trList.length < period) return null;
+  let atr = trList.slice(0, period).reduce((a, v) => a + v, 0) / period;
+  for (let i = period; i < trList.length; i++) {
+    atr = atr * (period - 1) / period + trList[i] / period;
+  }
+  return atr;
+}
+
+function getATR(ticker, price, candles) {
+  // Primero intenta ATR dinámico real
+  if (candles && candles.length >= 15) {
+    const dynATR = calcRealATR(candles, 14);
+    if (dynATR && dynATR > 0) return dynATR;
+  }
+  // Fallback estático si no hay suficientes velas
   return price * (ATR_PCT[ticker] || 0.025);
+}
+
+// VWAP real — Σ(precio_típico × volumen) / Σvolumen
+function calcRealVWAP(candles) {
+  if (!candles || !candles.length) return null;
+  let sumPV = 0, sumV = 0, sumPV2 = 0;
+  for (const b of candles) {
+    const tp = (b.h + b.l + b.c) / 3;
+    const vol = b.qv || b.v;
+    sumPV  += tp * vol;
+    sumV   += vol;
+    sumPV2 += tp * tp * vol;
+  }
+  if (!sumV) return null;
+  const vwap = sumPV / sumV;
+  const variance = Math.max(0, sumPV2 / sumV - vwap * vwap);
+  const sigma = Math.sqrt(variance);
+  return {
+    vwap,
+    sigma1up: vwap + sigma,
+    sigma1dn: vwap - sigma,
+    sigma2up: vwap + 2 * sigma,
+    sigma2dn: vwap - 2 * sigma,
+  };
 }
 
 // Detectar Kill Zone UTC — ventanas institucionales reales
@@ -103,8 +163,9 @@ function getSession() {
 
 // ── FETCH BINANCE ───────────────────────────────────────────
 async function fetchCandles(symbol, interval, limit = 100) {
-  const url = `https://api.binance.com/api/v3/klines?symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const r   = await fetch(url, { timeout: 8000 });
+  // Usar proxy de Render para evitar bloqueos de Binance por IP/región
+  const url = `https://liquidmap-proxy.onrender.com/proxy?path=/api/v3/klines&symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  const r   = await fetch(url, { timeout: 10000 });
   const raw = await r.json();
   if (!Array.isArray(raw)) return [];
   return raw.map(k => ({
@@ -661,9 +722,9 @@ function evaluateAllLayers({
 }
 
 // ── CONSTRUIR MENSAJE INSTITUCIONAL ─────────────────────────
-function buildMessage(ticker, price, result, fr, oiHistory, lsRatio, session, killZone) {
+function buildMessage(ticker, price, result, fr, oiHistory, lsRatio, session, killZone, dynATR) {
   const isBuy = result.direction === 'BUY';
-  const atr   = getATR(ticker, price);
+  const atr   = dynATR || getATR(ticker, price);
 
   // SL/TP basados en ATR + estructura
   const sl  = isBuy ? price - atr * 1.5 : price + atr * 1.5;
@@ -697,7 +758,7 @@ ${confList}${structL}${shLine}${whaleL}
 
 📈 CVD: ${result.cvd4H.cvd > 0 ? '▲ Positivo' : '▼ Negativo'} · ${result.cvd4H.buyPct.toFixed(0)}% Buy${oiLine}${lsLine}
 💸 FR: ${fr.current.toFixed(3)}%
-📐 POC: ${result.vp ? fmt(result.vp.poc, price) : '—'}
+📐 POC: ${result.vp ? fmt(result.vp.poc, price) : '—'} · VAH: ${result.vp ? fmt(result.vp.vah, price) : '—'} · VAL: ${result.vp ? fmt(result.vp.val, price) : '—'}
 🌏 Sesión: ${session}
 
 🛑 SL:  ${fmt(sl, price)}
@@ -746,7 +807,9 @@ async function scanTicker(ticker) {
     const candle4HId = candles4H[candles4H.length - 1].t;
 
     // ── PASO 2: Volume Profile sobre 4H ──────────────────
-    const vp = buildVolumeProfile(candles4H, 100);
+    const vp     = buildVolumeProfile(candles4H, 100);
+    const vwapData = calcRealVWAP(candles4H.slice(-80));
+    const dynATR   = calcRealATR(candles4H, 14);
 
     // ── PASO 3: Motor neuronal — evaluar todas las capas ──
     const result = evaluateAllLayers({
@@ -813,7 +876,7 @@ async function scanTicker(ticker) {
     // ── PASO 5: TODAS LAS REGLAS PASADAS → DISPARAR ───────
     console.log(`[${ticker}] ✅ SEÑAL NEURONAL VALIDADA: ${result.direction} score=${result.score}/10 capas=${layersInDirection.size}`);
 
-    const msg = buildMessage(ticker, price, result, fr, oiHistory, lsRatio, session, killZone);
+    const msg = buildMessage(ticker, price, result, fr, oiHistory, lsRatio, session, killZone, dynATR);
     await sendTelegram(msg);
 
     // Actualizar estado neuronal
