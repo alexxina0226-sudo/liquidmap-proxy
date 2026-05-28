@@ -173,6 +173,55 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .lm-close{width:100%;margin-top:16px;padding:10px;background:var(--accent);color:var(--bg);border:none;border-radius:5px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:16px;letter-spacing:2px;}
 .lm-warn{background:rgba(255,224,0,.08);border:1px solid rgba(255,224,0,.3);border-radius:5px;padding:8px 12px;margin-top:12px;font-size:9px;color:var(--yellow);text-align:center;}
 @media(max-width:600px){.lm-grid{grid-template-columns:1fr;}}
+
+/* ══════════════════════════════════════
+   MONITOR CRYPTO v4 — SCANNER MULTI-SYM
+   ══════════════════════════════════════ */
+#monitor-overlay{position:fixed;inset:0;background:var(--bg);z-index:500;display:none;flex-direction:column;overflow:hidden;}
+#monitor-overlay.visible{display:flex;}
+#mon-topbar{display:flex;align-items:center;gap:8px;padding:6px 12px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;}
+#mon-topbar .logo{font-size:15px;}
+#mon-tf-group{display:flex;gap:3px;margin-left:8px;}
+.mon-tf{padding:2px 7px;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:2px;cursor:pointer;font-family:'Space Mono',monospace;font-size:9px;}
+.mon-tf.active{border-color:var(--yellow);color:var(--yellow);}
+#mon-status{font-size:9px;font-family:'Space Mono',monospace;color:var(--muted);margin-left:auto;}
+#mon-close{padding:3px 10px;border:1px solid var(--border);background:rgba(255,45,107,.1);color:var(--red);border-radius:3px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1px;}
+#mon-body{flex:1;overflow-y:auto;padding:10px 12px;}
+#mon-table{width:100%;border-collapse:collapse;font-family:'Space Mono',monospace;}
+#mon-table thead th{font-size:8px;color:var(--muted);letter-spacing:1.5px;text-transform:uppercase;padding:5px 8px;text-align:left;border-bottom:1px solid var(--border);white-space:nowrap;position:sticky;top:0;background:var(--bg);z-index:2;}
+#mon-table thead th.r{text-align:right;}
+#mon-table tbody tr{border-bottom:1px solid rgba(17,30,53,.6);transition:background .15s;cursor:pointer;}
+#mon-table tbody tr:hover{background:rgba(0,229,255,.04);}
+#mon-table tbody td{padding:7px 8px;font-size:10px;vertical-align:middle;white-space:nowrap;}
+#mon-table tbody td.r{text-align:right;}
+.mon-sym{font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;color:var(--white);}
+.mon-price{font-size:11px;color:var(--accent);}
+.mon-chg.up{color:var(--green);}
+.mon-chg.dn{color:var(--red);}
+.mon-signal{display:inline-block;padding:2px 7px;border-radius:2px;font-family:'Bebas Neue',sans-serif;font-size:11px;letter-spacing:1px;}
+.mon-signal.BUY{background:rgba(0,255,157,.15);color:var(--green);border:1px solid rgba(0,255,157,.4);}
+.mon-signal.SELL{background:rgba(255,45,107,.15);color:var(--red);border:1px solid rgba(255,45,107,.4);}
+.mon-signal.NEUTRAL{background:rgba(90,122,154,.1);color:var(--muted);border:1px solid var(--border);}
+.mon-score-wrap{display:flex;align-items:center;gap:5px;}
+.mon-score-bar{width:50px;height:5px;background:#07101f;border-radius:3px;overflow:hidden;}
+.mon-score-fill{height:100%;border-radius:3px;transition:width .4s;}
+.mon-regime{font-size:8px;padding:1px 5px;border-radius:2px;}
+.mon-regime.TREND_STRONG{background:rgba(0,255,157,.15);color:var(--green);}
+.mon-regime.TREND_WEAK{background:rgba(0,229,255,.1);color:var(--accent);}
+.mon-regime.RANGE{background:rgba(255,224,0,.1);color:var(--yellow);}
+.mon-regime.VOLATILE_SHOCK{background:rgba(255,45,107,.15);color:var(--red);}
+.mon-struct{font-size:9px;}
+.mon-struct.bos{color:var(--green);}
+.mon-struct.choch{color:var(--yellow);}
+.mon-struct.none{color:var(--muted);}
+.mon-whale{font-size:9px;}
+.mon-whale.buy{color:var(--green);}
+.mon-whale.sell{color:var(--red);}
+.mon-whale.none{color:var(--muted);}
+.mon-tp{font-size:9px;color:var(--text);}
+.mon-loading td{text-align:center;color:var(--muted);font-size:9px;padding:20px;}
+#mon-legend{padding:6px 12px;background:var(--panel);border-top:1px solid var(--border);display:flex;gap:12px;flex-shrink:0;font-size:8px;color:var(--muted);font-family:'Space Mono',monospace;align-items:center;}
+#mon-legend span{display:flex;align-items:center;gap:4px;}
 </style>
 </head>
 <body>
@@ -227,6 +276,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
   <div class="kpi"><span class="k">FR: </span><span class="v" id="k-fr">—</span></div>
   <div class="kpi"><span class="k">OI: </span><span class="v" id="k-oi">—</span></div>
   <div id="mkt-session" class="ny">● 24/7 CRYPTO</div>
+  <div class="vsep"></div>
+  <button id="monitor-btn" onclick="toggleMonitor()" style="padding:3px 10px;border:1px solid var(--purple);background:rgba(180,77,255,.1);color:var(--purple);border-radius:3px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1.5px;white-space:nowrap;transition:all .15s;" onmouseover="this.style.background='rgba(180,77,255,.25)'" onmouseout="this.style.background='rgba(180,77,255,.1)'">⊞ MONITOR v4</button>
 </div>
 
 <!-- LEGENDS -->
@@ -257,6 +308,56 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <div class="am-row"><label>Liquidación masiva est.</label><div class="am-toggle on" id="al-liq" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>Stop Hunt detectado</label><div class="am-toggle on" id="al-sh" onclick="toggleAL(this)"></div></div>
     <button class="am-close" onclick="toggleAlertModal()">CERRAR</button>
+  </div>
+</div>
+
+<!-- MONITOR CRYPTO v4 — SCANNER MULTI-SÍMBOLO INSTITUCIONAL -->
+<div id="monitor-overlay">
+  <div id="mon-topbar">
+    <div class="logo">LIQUIDMAP <span class="logo-tag">MONITOR v4</span></div>
+    <div id="mon-tf-group">
+      <button class="mon-tf" onclick="monSetTF('1m',this)">1m</button>
+      <button class="mon-tf active" onclick="monSetTF('15m',this)">15m</button>
+      <button class="mon-tf" onclick="monSetTF('1h',this)">1h</button>
+      <button class="mon-tf" onclick="monSetTF('4h',this)">4h</button>
+    </div>
+    <div id="mon-status">⟳ Iniciando escaneo...</div>
+    <button id="mon-close" onclick="toggleMonitor()">✕ CERRAR</button>
+  </div>
+  <div id="mon-body">
+    <table id="mon-table">
+      <thead>
+        <tr>
+          <th>PAR</th>
+          <th class="r">PRECIO</th>
+          <th class="r">24h</th>
+          <th>SEÑAL</th>
+          <th>SCORE</th>
+          <th>RÉGIMEN</th>
+          <th>ESTRUCTURA</th>
+          <th>🐋 BALLENA</th>
+          <th>TP1</th>
+          <th>TP2</th>
+          <th>TP3</th>
+          <th>SL</th>
+          <th>CONFLUENCIAS</th>
+        </tr>
+      </thead>
+      <tbody id="mon-tbody">
+        <tr class="mon-loading"><td colspan="13">⟳ Cargando datos institucionales...</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div id="mon-legend">
+    <span>⊞ MONITOR CRYPTO v4 — Motor institucional adaptativo</span>
+    <span style="margin-left:auto;">
+      <span style="color:var(--green)">■</span> BUY &nbsp;
+      <span style="color:var(--red)">■</span> SELL &nbsp;
+      <span style="color:var(--yellow)">■</span> RANGE &nbsp;
+      <span style="color:var(--green)">■</span> TREND &nbsp;
+      Haz clic en un par para ir al mapa
+    </span>
+    <span id="mon-scan-time">Último escaneo: —</span>
   </div>
 </div>
 
@@ -3047,6 +3148,413 @@ function setBar(p){ document.getElementById('lbar').style.width = p + '%'; }
 function toggleLegend(){ document.getElementById('legend-modal').classList.toggle('show'); }
 
 window.addEventListener('resize', resizeCanvas);
+
+// ═══════════════════════════════════════════════════════════════
+// MONITOR CRYPTO v4 — SCANNER MULTI-SÍMBOLO INSTITUCIONAL
+// Motor: VP real + VWAP real + ATR dinámico + Régimen + BOS/CHoCH
+// + Ballenas CVD validadas + Multi-TF + calcSmartTP
+// ═══════════════════════════════════════════════════════════════
+let monitorVisible   = false;
+let monitorTF        = '15m';
+let monitorInterval  = null;
+let monScanCount     = 0;
+
+const MON_SYMBOLS = [
+  'BTCUSDT','ETHUSDT','SOLUSDT','BNBUSDT','XRPUSDT',
+  'ADAUSDT','AVAXUSDT','DOGEUSDT','LINKUSDT','DOTUSDT',
+  'MATICUSDT','LTCUSDT'
+];
+
+function toggleMonitor(){
+  monitorVisible = !monitorVisible;
+  const overlay = document.getElementById('monitor-overlay');
+  const btn     = document.getElementById('monitor-btn');
+  if(monitorVisible){
+    overlay.classList.add('visible');
+    btn.style.background    = 'rgba(180,77,255,.35)';
+    btn.style.borderColor   = '#b44dff';
+    btn.textContent         = '⊠ MONITOR v4';
+    if(!monitorInterval) startMonitorScan();
+  } else {
+    overlay.classList.remove('visible');
+    btn.style.background  = 'rgba(180,77,255,.1)';
+    btn.style.borderColor = 'var(--purple)';
+    btn.textContent       = '⊞ MONITOR v4';
+  }
+}
+
+function monSetTF(newTF, el){
+  monitorTF = newTF;
+  document.querySelectorAll('.mon-tf').forEach(b => b.classList.remove('active'));
+  if(el) el.classList.add('active');
+  runMonitorScan();
+}
+
+function startMonitorScan(){
+  runMonitorScan();
+  monitorInterval = setInterval(runMonitorScan, 60000); // escaneo cada 60s
+}
+
+// Fetch candles for a symbol+TF (monitor context)
+async function monFetchCandles(s, t, limit=100){
+  try{
+    const r = await fetch(`https://api.binance.com/api/v3/klines?symbol=${s}&interval=${t}&limit=${limit}`);
+    const d = await r.json();
+    if(!Array.isArray(d)) return null;
+    return d.map(k => ({
+      t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4],
+      v: +k[5], bv: +k[9] // taker buy base volume
+    }));
+  } catch(e){ return null; }
+}
+
+// Fetch 24h quote
+async function monFetch24h(s){
+  try{
+    const r = await fetch(`https://api.binance.com/api/v3/ticker/24hr?symbol=${s}`);
+    const d = await r.json();
+    return { c: +d.lastPrice, dp: +d.priceChangePercent, v: +d.quoteVolume };
+  } catch(e){ return null; }
+}
+
+// Compute VP real (H-L distribution) — same logic as main map
+function monBuildVP(bars, n){
+  const b = bars.slice(-n);
+  if(!b.length) return {};
+  const mn = Math.min(...b.map(x=>x.l));
+  const mx = Math.max(...b.map(x=>x.h));
+  const rng = mx - mn; if(!rng) return {};
+  const bins = 60;
+  const bs = rng / bins;
+  const p = new Array(bins).fill(0);
+  b.forEach(bar => {
+    const slots = Math.max(1, Math.round((bar.h - bar.l) / bs));
+    const vol = bar.v / slots;
+    for(let s=0; s<slots; s++){
+      const price = bar.l + bs * s + bs/2;
+      const idx = Math.min(bins-1, Math.floor((price - mn) / bs));
+      const distFromClose = Math.abs(price - bar.c) / (rng + 0.001);
+      p[idx] += vol * (1 + (1 - distFromClose) * 0.6);
+    }
+  });
+  return { p, mn, bs, bins };
+}
+
+function monGetPOC(vp){
+  if(!vp.p) return 0;
+  let mi=0; vp.p.forEach((v,i)=>{ if(v>vp.p[mi]) mi=i; });
+  return vp.mn + vp.bs*(mi+0.5);
+}
+
+function monGetVA(vp){
+  if(!vp.p) return { vah:0, val:0 };
+  const total = vp.p.reduce((a,v)=>a+v,0);
+  let mi=0; vp.p.forEach((v,i)=>{ if(v>vp.p[mi]) mi=i; });
+  let lo=mi, hi=mi, acc=vp.p[mi];
+  const target = total * 0.7;
+  while(acc < target && (lo > 0 || hi < vp.bins-1)){
+    const addHi = hi+1 < vp.bins   ? vp.p[hi+1] : 0;
+    const addLo = lo-1 >= 0        ? vp.p[lo-1] : 0;
+    if(addHi >= addLo) hi++; else lo--;
+    acc += Math.max(addHi, addLo);
+  }
+  return { vah: vp.mn + vp.bs*(hi+1), val: vp.mn + vp.bs*lo };
+}
+
+// Real VWAP calculation
+function monCalcVWAP(bars){
+  let sumPV=0, sumV=0, sumPV2=0;
+  bars.forEach(b => {
+    const tp = (b.h+b.l+b.c)/3;
+    sumPV += tp*b.v; sumV += b.v;
+    sumPV2 += tp*tp*b.v;
+  });
+  if(!sumV) return { vwap:0, sigma1up:0, sigma1dn:0, sigma2up:0, sigma2dn:0 };
+  const vwap = sumPV/sumV;
+  const variance = Math.max(0, sumPV2/sumV - vwap*vwap);
+  const sigma = Math.sqrt(variance);
+  return { vwap, sigma1up: vwap+sigma, sigma1dn: vwap-sigma, sigma2up: vwap+2*sigma, sigma2dn: vwap-2*sigma };
+}
+
+// Real ATR (True Range EMA-14 Wilder)
+function monCalcATR(bars, period=14){
+  if(bars.length < 2) return bars[0] ? (bars[0].h - bars[0].l) : 0;
+  const trList = [];
+  for(let i=1; i<bars.length; i++){
+    const tr = Math.max(bars[i].h-bars[i].l, Math.abs(bars[i].h-bars[i-1].c), Math.abs(bars[i].l-bars[i-1].c));
+    trList.push(tr);
+  }
+  let atr = trList.slice(0,period).reduce((a,v)=>a+v,0) / period;
+  for(let i=period; i<trList.length; i++) atr = atr*(period-1)/period + trList[i]/period;
+  return atr;
+}
+
+// Detect market regime
+function monDetectRegime(bars){
+  if(bars.length < 20) return 'RANGE';
+  const sl = bars.slice(-20);
+  const highs = sl.map(b=>b.h), lows = sl.map(b=>b.l);
+  let upMoves=0, dnMoves=0;
+  for(let i=1;i<sl.length;i++){
+    if(sl[i].h > sl[i-1].h) upMoves++;
+    if(sl[i].l < sl[i-1].l) dnMoves++;
+  }
+  const adxProxy = Math.abs(upMoves-dnMoves) / sl.length;
+  const atrNow  = monCalcATR(bars.slice(-20), 14) || 1;
+  const atrLong = monCalcATR(bars.slice(-50), 14) || 1;
+  const volRatio = atrNow / atrLong;
+  if(volRatio > 1.8) return 'VOLATILE_SHOCK';
+  if(adxProxy > 0.35) return 'TREND_STRONG';
+  if(adxProxy > 0.20) return 'TREND_WEAK';
+  return 'RANGE';
+}
+
+// Detect BOS/CHoCH
+function monDetectStructure(bars){
+  if(bars.length < 10) return { type:null, dir:null, price:null };
+  const recent = bars.slice(-30);
+  let lastHH = null, lastLL = null;
+  let prevHH = null, prevLL = null;
+  for(let i=1;i<recent.length-1;i++){
+    if(recent[i].h > recent[i-1].h && recent[i].h > recent[i+1].h){
+      prevHH = lastHH;
+      lastHH = { price: recent[i].h, idx: i };
+    }
+    if(recent[i].l < recent[i-1].l && recent[i].l < recent[i+1].l){
+      prevLL = lastLL;
+      lastLL = { price: recent[i].l, idx: i };
+    }
+  }
+  const cur = recent[recent.length-1];
+  // BOS
+  if(lastHH && cur.c > lastHH.price) return { type:'BOS', dir:'bull', price: lastHH.price };
+  if(lastLL && cur.c < lastLL.price) return { type:'BOS', dir:'bear', price: lastLL.price };
+  // CHoCH
+  if(lastHH && prevHH && lastHH.price < prevHH.price && cur.c > lastHH.price)
+    return { type:'CHoCH', dir:'bull', price: lastHH.price };
+  if(lastLL && prevLL && lastLL.price > prevLL.price && cur.c < lastLL.price)
+    return { type:'CHoCH', dir:'bear', price: lastLL.price };
+  return { type:null, dir:null, price:null };
+}
+
+// Detect whale activity (last 5 bars)
+function monDetectWhale(bars){
+  const recent = bars.slice(-5);
+  if(!recent.length) return { side:null, usd:0 };
+  const avgVol = bars.slice(-20).reduce((a,b)=>a+b.v,0) / 20;
+  let bigBuy=0, bigSell=0;
+  recent.forEach(b => {
+    if(b.v > avgVol * 2.5){
+      const buyVol  = b.bv || b.v * (b.c > b.o ? 0.6 : 0.4);
+      const sellVol = b.v - buyVol;
+      bigBuy  += buyVol * b.c;
+      bigSell += sellVol * b.c;
+    }
+  });
+  const cvdSign = recent.reduce((a,b)=>a+(b.c>=b.o?b.v:-b.v),0);
+  if(bigBuy > bigSell * 1.3 && cvdSign > 0) return { side:'BUY', usd: bigBuy };
+  if(bigSell > bigBuy * 1.3 && cvdSign < 0) return { side:'SELL', usd: bigSell };
+  if(bigBuy > bigSell * 1.3) return { side:'BUY?', usd: bigBuy }; // sin CVD confirm
+  if(bigSell > bigBuy * 1.3) return { side:'SELL?', usd: bigSell };
+  return { side:null, usd:0 };
+}
+
+// Compute institutional score for a symbol
+function monComputeScore(bars, q, poc, va, vwap, atr, regime, struct, whale){
+  const price = q ? q.c : (bars[bars.length-1]?.c || 0);
+  if(!price) return { score:0, type:'NEUTRAL', conf:[] };
+  let bull=0, bear=0;
+  const confBull=[], confBear=[];
+
+  // 1 — Precio vs POC (1.5pts)
+  const dist = (price - poc) / (poc||1);
+  if(dist > 0.001){ bull+=1.5; confBull.push('P>POC'); }
+  else if(dist < -0.001){ bear+=1.5; confBear.push('P<POC'); }
+
+  // 2 — CVD (1.5pts)
+  const last10 = bars.slice(-10);
+  const cvdMon = last10.reduce((a,b)=>a+(b.c>=b.o?b.v:-b.v),0);
+  const buyV10 = last10.reduce((a,b)=>a+(b.bv||b.v*(b.c>b.o?0.6:0.4)),0);
+  const buyPct = buyV10 / (last10.reduce((a,b)=>a+b.v,0)||1) * 100;
+  if(cvdMon > 0 && buyPct > 54){ bull+=1.5; confBull.push('CVD+'+Math.round(buyPct)+'%'); }
+  else if(cvdMon < 0 && buyPct < 46){ bear+=1.5; confBear.push('CVD-'+Math.round(100-buyPct)+'%'); }
+
+  // 3 — Value Area (0.5pts)
+  if(va && va.vah && va.val){
+    if(price > va.vah){ bull+=0.5; confBull.push('>VA'); }
+    else if(price < va.val){ bear+=0.5; confBear.push('<VA'); }
+    else if(price > poc){ bull+=0.3; } else { bear+=0.3; }
+  }
+
+  // 4 — VWAP (1pt)
+  if(vwap && vwap.vwap){
+    if(price > vwap.sigma1up){ bull+=1.0; confBull.push('P>V+1σ'); }
+    else if(price > vwap.vwap){ bull+=0.5; confBull.push('P>VWAP'); }
+    else if(price < vwap.sigma1dn){ bear+=1.0; confBear.push('P<V-1σ'); }
+    else if(price < vwap.vwap){ bear+=0.5; confBear.push('P<VWAP'); }
+  }
+
+  // 5 — Estructura BOS/CHoCH (BOS=3pts, CHoCH=1.5pts)
+  if(struct && struct.type){
+    const isBOS = struct.type === 'BOS';
+    const pts = isBOS ? 3.0 : 1.5;
+    if(struct.dir === 'bull'){ bull+=pts; confBull.push(struct.type+'▲'); }
+    else { bear+=pts; confBear.push(struct.type+'▼'); }
+  }
+
+  // 6 — Ballena CVD confirmada (1.5pts)
+  if(whale && whale.side){
+    if(whale.side === 'BUY'){ bull+=1.5; confBull.push('🐋BUY'); }
+    else if(whale.side === 'SELL'){ bear+=1.5; confBear.push('🐋SELL'); }
+    else if(whale.side === 'BUY?'){ bull+=0.5; confBull.push('🐋BUY?'); }
+    else if(whale.side === 'SELL?'){ bear+=0.5; confBear.push('🐋SELL?'); }
+  }
+
+  // 7 — Regime bonus
+  if(regime === 'TREND_STRONG'){ bull+=0.5; bear+=0.5; }
+
+  // Score final
+  const total = Math.max(bull, bear);
+  const score = Math.min(10, Math.round(total * 1.4));
+  let type = 'NEUTRAL';
+  let conf = [];
+  if(bull > bear && bull >= 3.5){ type='BUY';  conf=confBull.slice(0,4); }
+  else if(bear > bull && bear >= 3.5){ type='SELL'; conf=confBear.slice(0,4); }
+  else { conf=['Confluencia insuf.']; }
+  return { score, type, conf };
+}
+
+// Format USD
+function monFmt(v){ if(!v) return '—'; if(v>1000) return '$'+v.toFixed(2); if(v>1) return '$'+v.toFixed(4); return '$'+v.toFixed(6); }
+function monFmtUSD(v){ if(!v) return '—'; if(v>1e6) return '$'+(v/1e6).toFixed(1)+'M'; if(v>1e3) return '$'+(v/1e3).toFixed(0)+'K'; return '$'+v.toFixed(0); }
+
+// Smart TP for monitor (simplified — same logic as calcSmartTP)
+function monSmartTP(price, type, poc, va, vwap, atr, regime){
+  const isBuy = type === 'BUY';
+  // Regime multiplier
+  const regMult = { TREND_STRONG:1.5, TREND_WEAK:1.1, RANGE:0.75, VOLATILE_SHOCK:1.3 }[regime] || 1.0;
+  const atrC = (atr||price*0.02) * regMult;
+  const slPct = isBuy ? price - atrC*1.0 : price + atrC*1.0;
+
+  // TP anchors — VP/VWAP levels
+  let tp1=0, tp2=0, tp3=0;
+  if(isBuy){
+    tp1 = (va && va.vah && va.vah > price) ? va.vah : price + atrC*1.5;
+    tp2 = (vwap && vwap.sigma1up && vwap.sigma1up > tp1) ? vwap.sigma1up : price + atrC*2.5;
+    tp3 = (vwap && vwap.sigma2up && vwap.sigma2up > tp2) ? vwap.sigma2up : price + atrC*4.0;
+  } else {
+    tp1 = (va && va.val && va.val < price) ? va.val : price - atrC*1.5;
+    tp2 = (vwap && vwap.sigma1dn && vwap.sigma1dn < tp1) ? vwap.sigma1dn : price - atrC*2.5;
+    tp3 = (vwap && vwap.sigma2dn && vwap.sigma2dn < tp2) ? vwap.sigma2dn : price - atrC*4.0;
+  }
+  return { sl: slPct, tp1, tp2, tp3 };
+}
+
+async function runMonitorScan(){
+  monScanCount++;
+  const tbody = document.getElementById('mon-tbody');
+  const status = document.getElementById('mon-status');
+  if(status) status.textContent = '⟳ Escaneando '+MON_SYMBOLS.length+' pares...';
+
+  const results = [];
+
+  for(const s of MON_SYMBOLS){
+    try{
+      const [bars, q24] = await Promise.all([
+        monFetchCandles(s, monitorTF, 120),
+        monFetch24h(s)
+      ]);
+      if(!bars || bars.length < 20) continue;
+
+      const price   = q24 ? q24.c : bars[bars.length-1].c;
+      const vp      = monBuildVP(bars, 80);
+      const poc     = monGetPOC(vp);
+      const va      = monGetVA(vp);
+      const vwap    = monCalcVWAP(bars.slice(-80));
+      const atr     = monCalcATR(bars, 14);
+      const regime  = monDetectRegime(bars);
+      const struct  = monDetectStructure(bars);
+      const whale   = monDetectWhale(bars);
+      const sig     = monComputeScore(bars, q24, poc, va, vwap, atr, regime, struct, whale);
+      const stp     = (sig.type !== 'NEUTRAL') ? monSmartTP(price, sig.type, poc, va, vwap, atr, regime) : null;
+
+      results.push({ sym:s, price, dp: q24?.dp||0, sig, regime, struct, whale, stp, atr });
+    } catch(e){ /* skip */ }
+  }
+
+  // Sort: BUY/SELL by score desc, then NEUTRAL
+  results.sort((a,b) => {
+    if(a.sig.type !== 'NEUTRAL' && b.sig.type === 'NEUTRAL') return -1;
+    if(a.sig.type === 'NEUTRAL' && b.sig.type !== 'NEUTRAL') return 1;
+    return b.sig.score - a.sig.score;
+  });
+
+  // Render table
+  if(!tbody) return;
+  tbody.innerHTML = '';
+  if(!results.length){
+    tbody.innerHTML = '<tr class="mon-loading"><td colspan="13">Sin datos — revisa la conexión</td></tr>';
+    return;
+  }
+
+  results.forEach(r => {
+    const up = r.dp >= 0;
+    const regLabel = { TREND_STRONG:'📈TREND+', TREND_WEAK:'📈TREND', RANGE:'↔RANGO', VOLATILE_SHOCK:'⚡SHOCK' }[r.regime] || r.regime;
+    const structLabel = r.struct.type
+      ? `<span class="mon-struct ${r.struct.type==='BOS'?'bos':'choch'}">${r.struct.type} ${r.struct.dir==='bull'?'▲':'▼'} $${(r.struct.price||0).toFixed(r.price>100?1:4)}</span>`
+      : `<span class="mon-struct none">—</span>`;
+    const whaleLabel = r.whale.side
+      ? `<span class="mon-whale ${r.whale.side.includes('BUY')?'buy':'sell'}">🐋${r.whale.side} ${monFmtUSD(r.whale.usd)}</span>`
+      : `<span class="mon-whale none">—</span>`;
+    const scoreColor = r.sig.score >= 7 ? 'var(--green)' : r.sig.score >= 5 ? 'var(--yellow)' : 'var(--muted)';
+    const tp1s = r.stp ? monFmt(r.stp.tp1) : '—';
+    const tp2s = r.stp ? monFmt(r.stp.tp2) : '—';
+    const tp3s = r.stp ? monFmt(r.stp.tp3) : '—';
+    const sls  = r.stp ? monFmt(r.stp.sl)  : '—';
+    const pctFmt = v => v > 0 ? '+'+v.toFixed(2)+'%' : v.toFixed(2)+'%';
+    const shortSym = r.sym.replace('USDT','');
+
+    const tr = document.createElement('tr');
+    tr.innerHTML = `
+      <td><span class="mon-sym">${shortSym}</span></td>
+      <td class="r"><span class="mon-price">${monFmt(r.price)}</span></td>
+      <td class="r"><span class="mon-chg ${up?'up':'dn'}">${pctFmt(r.dp)}</span></td>
+      <td><span class="mon-signal ${r.sig.type}">${r.sig.type}</span></td>
+      <td>
+        <div class="mon-score-wrap">
+          <div class="mon-score-bar"><div class="mon-score-fill" style="width:${r.sig.score*10}%;background:${scoreColor};"></div></div>
+          <span style="font-size:9px;color:${scoreColor};min-width:28px;">${r.sig.score}/10</span>
+        </div>
+      </td>
+      <td><span class="mon-regime ${r.regime}">${regLabel}</span></td>
+      <td>${structLabel}</td>
+      <td>${whaleLabel}</td>
+      <td class="mon-tp">${tp1s}</td>
+      <td class="mon-tp">${tp2s}</td>
+      <td class="mon-tp">${tp3s}</td>
+      <td class="mon-tp" style="color:var(--red);">${sls}</td>
+      <td style="font-size:8px;color:var(--muted);max-width:120px;overflow:hidden;text-overflow:ellipsis;">${r.sig.conf.join(' · ')}</td>
+    `;
+    // Click to go to that symbol on the main map
+    tr.addEventListener('click', () => {
+      const btn = document.querySelector(`.sym-btn[data-sym="${r.sym}"]`);
+      if(btn){ btn.click(); toggleMonitor(); }
+      else {
+        // Dynamic symbol not in buttons — load directly
+        sym = r.sym;
+        toggleMonitor();
+        loadAll();
+      }
+    });
+    tbody.appendChild(tr);
+  });
+
+  const now = new Date();
+  const timeStr = now.getUTCHours().toString().padStart(2,'0')+':'+now.getUTCMinutes().toString().padStart(2,'0')+' UTC';
+  if(status) status.textContent = `✅ ${results.length} pares escaneados`;
+  const scanEl = document.getElementById('mon-scan-time');
+  if(scanEl) scanEl.textContent = 'Último escaneo: '+timeStr+' · #'+monScanCount;
+}
 </script>
 
 <!-- LEGEND MODAL -->
