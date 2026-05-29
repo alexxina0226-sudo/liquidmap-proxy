@@ -26,7 +26,8 @@ const fetch = require('node-fetch');
 // ── CONFIG ──────────────────────────────────────────────────
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
-const FINNHUB_TOKEN        = 'd0qsf2hr01qgsn5hm2k0d0qsf2hr01qgsn5hm2kg';
+const FINNHUB_TOKEN        = 'd0qsf2hr01qgsn5hm2k0d0qsf2hr01qgsn5hm2kg'; // solo quote en vivo
+const POLYGON_KEY          = process.env.POLYGON_KEY || ''; // velas REALES (env var en Render)
 
 const STOCK_TICKERS = [
   'SPY', 'QQQ', 'NVDA', 'AAPL', 'AMZN',
@@ -71,7 +72,35 @@ const TF_TP_MULT = {
   '240': { sl:2.0,  tp1:3.0,  tp2:5.0,  tp3:9.0  },
   'D':   { sl:2.5,  tp1:4.0,  tp2:7.0,  tp3:12.0 },
 };
-function getATR(ticker, price, currentTF) {
+// ATR dinámico real — True Range EMA-14 Wilder (más preciso para SL/TP)
+function calcRealATR(candles, period = 14) {
+  if (!candles || candles.length < period + 1) return null;
+  const trList = [];
+  for (let i = 1; i < candles.length; i++) {
+    trList.push(Math.max(
+      candles[i].h - candles[i].l,
+      Math.abs(candles[i].h - candles[i-1].c),
+      Math.abs(candles[i].l - candles[i-1].c)
+    ));
+  }
+  let atr = trList.slice(0, period).reduce((a, v) => a + v, 0) / period;
+  for (let i = period; i < trList.length; i++) {
+    atr = atr * (period - 1) / period + trList[i] / period;
+  }
+  return atr > 0 ? atr : null;
+}
+
+function getATR(ticker, price, currentTF, candles) {
+  // Si hay velas suficientes, usar ATR real escalado al TF operativo
+  if (candles && candles.length >= 15) {
+    const realATR = calcRealATR(candles, 14);
+    if (realATR) {
+      const factor = TF_ATR_FACTOR[currentTF || '240'] || 0.60;
+      // El ATR real ya viene del TF de las velas; lo ajustamos suavemente
+      return realATR * (0.6 + factor * 0.4);
+    }
+  }
+  // Fallback estático — idéntico al mapa
   const basePct = ATR_PCT[ticker] || 0.015;
   const factor  = TF_ATR_FACTOR[currentTF || '240'] || 0.60;
   return price * basePct * factor;
@@ -117,50 +146,33 @@ function getNYSession() {
   };
 }
 
-// ── FETCH FINNHUB ────────────────────────────────────────────
-async function fetchFinnhubCandles(symbol, resolution, from, to) {
+// ── FETCH VELAS · POLYGON (reales SIP) ───────────────────────
+async function fetchPolygonCandles(symbol, mult, span, fromDays) {
+  if (!POLYGON_KEY) return [];
   try {
-    const url = `https://finnhub.io/api/v1/stock/candle?symbol=${symbol}&resolution=${resolution}&from=${from}&to=${to}&token=${FINNHUB_TOKEN}`;
-    const r   = await fetch(url, { timeout: 8000 });
-    const d   = await r.json();
-    if (!d || d.s === 'no_data' || !d.c) return [];
-    return d.t.map((t, i) => ({
-      t: t * 1000, o: d.o[i], h: d.h[i], l: d.l[i],
-      c: d.c[i],  v: d.v[i],
-    }));
+    const fmtDate = d => new Date(d).toISOString().slice(0, 10);
+    const to   = fmtDate(Date.now());
+    const from = fmtDate(Date.now() - fromDays * 86400000);
+    const url  = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/${mult}/${span}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${POLYGON_KEY}`;
+    const r = await fetch(url, { timeout: 10000 });
+    const d = await r.json();
+    if (d.status === 'ERROR' || d.error || !d.results || !d.results.length) return [];
+    // Polygon ya entrega t en ms — el monitor trabaja en ms internamente
+    return d.results.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 }));
   } catch { return []; }
 }
 
-function groupCandles(candles, n) {
-  const grouped = [];
-  for (let i = 0; i < candles.length; i += n) {
-    const g = candles.slice(i, i + n);
-    if (!g.length) continue;
-    grouped.push({
-      t: g[0].t,
-      o: g[0].o,
-      h: Math.max(...g.map(c => c.h)),
-      l: Math.min(...g.map(c => c.l)),
-      c: g[g.length - 1].c,
-      v: g.reduce((a, c) => a + c.v, 0),
-    });
-  }
-  return grouped;
-}
-
 async function fetchCandles(symbol, tf) {
-  const now = Math.floor(Date.now() / 1000);
-  let resolution, from;
+  // TF → config nativa de Polygon (4H es mult=4/hour real, sin agrupar)
+  let mult, span, days;
   switch (tf) {
-    case '1D':  resolution = 'D';   from = now - 86400 * 120; break;
-    case '4H':  resolution = '60';  from = now - 3600 * 200;  break;
-    case '1H':  resolution = '60';  from = now - 3600 * 100;  break;
-    case '15m': resolution = '15';  from = now - 900 * 100;   break;
-    default:    resolution = '60';  from = now - 3600 * 100;
+    case '1D':  mult = 1; span = 'day';    days = 200; break;
+    case '4H':  mult = 4; span = 'hour';   days = 300; break;
+    case '1H':  mult = 1; span = 'hour';   days = 90;  break;
+    case '15m': mult = 15; span = 'minute'; days = 25; break;
+    default:    mult = 1; span = 'hour';   days = 90;
   }
-  const raw = await fetchFinnhubCandles(symbol, resolution, from, now);
-  if (tf === '4H' && resolution === '60') return groupCandles(raw, 4);
-  return raw;
+  return await fetchPolygonCandles(symbol, mult, span, days);
 }
 
 async function fetchQuote(symbol) {
@@ -176,43 +188,29 @@ async function fetchQuote(symbol) {
 //  Idéntico al mapa v6: period=10, multiplier=3.0, peso=3pts
 // ════════════════════════════════════════════════════════════
 function calcSuperTrend(candles, period = 10, multiplier = 3.0) {
-  if (candles.length < period + 2) return null;
-
-  // ATR suavizado (EMA)
-  const atrRaw = [];
-  for (let i = 1; i < candles.length; i++) {
-    atrRaw.push(Math.max(
-      candles[i].h - candles[i].l,
-      Math.abs(candles[i].h - candles[i - 1].c),
-      Math.abs(candles[i].l - candles[i - 1].c)
-    ));
-  }
-  const atrSmooth = [];
-  let atrVal = atrRaw.slice(0, period).reduce((a, b) => a + b, 0) / period;
-  atrSmooth.push(atrVal);
-  for (let i = period; i < atrRaw.length; i++) {
-    atrVal = (atrVal * (period - 1) + atrRaw[i]) / period;
-    atrSmooth.push(atrVal);
-  }
-
-  let upperBand = 0, lowerBand = 0, trend = 1;
+  // IDÉNTICO al mapa HTML v6 — ATR = SMA deslizante de los últimos `period` TR
+  // recalculado barra por barra (no EMA Wilder), para que monitor y mapa
+  // generen el cruce de SuperTrend EXACTAMENTE en la misma vela.
+  if (!candles || candles.length < period + 1) return null;
   const result = [];
-
-  for (let i = 0; i < atrSmooth.length; i++) {
-    const ci  = i + period;
-    if (ci >= candles.length) break;
-    const hl2 = (candles[ci].h + candles[ci].l) / 2;
-    const ub  = hl2 + multiplier * atrSmooth[i];
-    const lb  = hl2 - multiplier * atrSmooth[i];
-    const prevC = candles[ci - 1]?.c || candles[ci].c;
-
-    upperBand = (ub < upperBand || prevC > upperBand) ? ub : upperBand;
-    lowerBand = (lb > lowerBand || prevC < lowerBand) ? lb : lowerBand;
-
-    if (candles[ci].c > upperBand) trend = 1;
-    if (candles[ci].c < lowerBand) trend = -1;
-
-    result.push({ value: trend === 1 ? lowerBand : upperBand, trend });
+  let prevUpper = 0, prevLower = 0, prevTrend = 1;
+  for (let i = period; i < candles.length; i++) {
+    const slice = candles.slice(i - period, i + 1);
+    const trList = slice.map((b, j) => {
+      if (j === 0) return b.h - b.l;
+      return Math.max(b.h - b.l, Math.abs(b.h - slice[j-1].c), Math.abs(b.l - slice[j-1].c));
+    });
+    const atr = trList.reduce((a, v) => a + v, 0) / period;
+    const hl2 = (candles[i].h + candles[i].l) / 2;
+    const upper = hl2 + multiplier * atr;
+    const lower = hl2 - multiplier * atr;
+    const finalUpper = (upper < prevUpper || candles[i-1].c > prevUpper) ? upper : prevUpper;
+    const finalLower = (lower > prevLower || candles[i-1].c < prevLower) ? lower : prevLower;
+    let trend = prevTrend;
+    if (candles[i].c > finalUpper) trend = 1;
+    else if (candles[i].c < finalLower) trend = -1;
+    result.push({ value: trend === 1 ? finalLower : finalUpper, trend });
+    prevUpper = finalUpper; prevLower = finalLower; prevTrend = trend;
   }
 
   if (result.length < 2) return null;
@@ -576,10 +574,10 @@ function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, sessio
 }
 
 // ── MENSAJE TELEGRAM ─────────────────────────────────────────
-function buildMessage(ticker, price, result, session, quote) {
+function buildMessage(ticker, price, result, session, quote, candles4H) {
   const isBuy  = result.direction === 'BUY';
   const _tf    = '240';  // monitor analiza en 4H — señales de swing
-  const atr    = getATR(ticker, price, _tf);
+  const atr    = getATR(ticker, price, _tf, candles4H);
   const _m     = getTPMult(_tf);
   const sl     = isBuy ? price - atr * _m.sl  : price + atr * _m.sl;
   const tp1    = isBuy ? price + atr * _m.tp1 : price - atr * _m.tp1;
@@ -654,6 +652,18 @@ async function scanTicker(ticker, session) {
     }
 
     const price  = quote?.c || candles4H[candles4H.length - 1].c;
+    // Overlay precio EN VIVO (Finnhub) sobre la última vela real de cada TF —
+    // compensa el delay de 15 min de Polygon Starter, idéntico al mapa v7.
+    if (quote?.c) {
+      for (const arr of [candles4H, candles1H, candles15m]) {
+        if (arr.length) {
+          const last = arr[arr.length - 1];
+          last.c = quote.c;
+          if (quote.h) last.h = Math.max(last.h, quote.h);
+          if (quote.l) last.l = Math.min(last.l, quote.l);
+        }
+      }
+    }
     const vp     = buildVolumeProfile(candles4H, 100);
     const result = evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, session });
 
@@ -684,7 +694,7 @@ async function scanTicker(ticker, session) {
     }
 
     console.log(`[${ticker}] ✅ SEÑAL BOLSA v2: ${result.direction} score=${result.score}/10`);
-    await sendTelegram(buildMessage(ticker, price, result, session, quote));
+    await sendTelegram(buildMessage(ticker, price, result, session, quote, candles4H));
 
     s.lastSignalDir = result.direction;
     s.lastSignalTs  = Date.now();
@@ -731,6 +741,13 @@ console.log('   CAPA 7    : Dark Pool estimado (1pt)');
 console.log('   CAPA 8    : 15m + Power Hour timing');
 console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10`);
 console.log('   Bot       : @liquidmapbolsa_bot');
+console.log('   Velas     : POLYGON.IO (SIP real) · Quote: Finnhub vivo');
+
+if (!POLYGON_KEY) {
+  console.error('⚠️  FALTA POLYGON_KEY — agregá la env var en Render (Environment → Add). El monitor no leerá velas reales sin ella.');
+} else {
+  console.log(`   Polygon   : ✅ key cargada (${POLYGON_KEY.slice(0,4)}…)`);
+}
 
 runScan();
 setInterval(runScan, SCAN_INTERVAL);
