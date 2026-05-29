@@ -213,13 +213,13 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 <!-- SETUP SCREEN -->
 <div id="setup-screen" class="hidden">
   <div class="setup-box">
-    <h1>CONFIGURAR API</h1>
-    <p>Necesitas una API Key gratuita de Finnhub para datos de mercado en tiempo real.</p>
-    <div class="step"><div class="step-n">1</div><div class="step-t">Ve a <a href="https://finnhub.io" target="_blank">finnhub.io</a> → crea cuenta gratuita</div></div>
-    <div class="step"><div class="step-n">2</div><div class="step-t">En el Dashboard copia tu <code>API Key</code></div></div>
-    <div class="step"><div class="step-n">3</div><div class="step-t">Pégala abajo y conecta</div></div>
+    <h1>CONFIGURAR POLYGON.IO</h1>
+    <p>Pega tu API Key de Polygon.io (plan Stocks Starter) para datos de mercado <b>reales</b> — velas SIP del 100% del volumen US.</p>
+    <div class="step"><div class="step-n">1</div><div class="step-t">Entra a <a href="https://polygon.io/dashboard/keys" target="_blank">polygon.io/dashboard/keys</a></div></div>
+    <div class="step"><div class="step-n">2</div><div class="step-t">Copia tu <code>API Key</code> (plan Acciones Starter activo)</div></div>
+    <div class="step"><div class="step-n">3</div><div class="step-t">Pégala abajo y conecta. Se guarda solo en tu navegador.</div></div>
     <div class="setup-row">
-      <input class="setup-input" id="api-input" placeholder="tu-api-key-finnhub" autocomplete="off">
+      <input class="setup-input" id="api-input" placeholder="tu-api-key-polygon" autocomplete="off">
       <button class="setup-btn" id="conn-btn" onclick="doConnect()">CONECTAR</button>
     </div>
     <div id="setup-msg"></div>
@@ -228,7 +228,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 
 <!-- TOPBAR -->
 <div id="topbar">
-  <div class="logo">LIQUIDMAP <span>PRO v6</span></div>
+  <div class="logo">LIQUIDMAP <span>PRO v7 · POLYGON</span></div>
   <div class="vsep"></div>
   <div id="sym-bar" style="display:flex;gap:3px;flex-wrap:wrap;">
     <button class="sym-btn active" data-sym="SPY" onclick="selectSym('SPY',this)">SPY</button>
@@ -248,6 +248,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
   <div class="vsep"></div>
   <div style="display:flex;gap:3px;">
     <button class="tf-btn" onclick="selectTF('5',this)">5m</button>
+    <button class="tf-btn" onclick="selectTF('15',this)">15m</button>
     <button class="tf-btn active" onclick="selectTF('60',this)">1H</button>
     <button class="tf-btn" onclick="selectTF('240',this)">4H</button>
     <button class="tf-btn" onclick="selectTF('D',this)">1D</button>
@@ -534,7 +535,8 @@ function showChangePass(){
 }
 
 // ── STATE ─────────────────────────────────────────────────────
-let API_KEY = localStorage.getItem('fh_key') || '';
+let API_KEY = localStorage.getItem('fh_key') || 'd0qsf2hr01qgsn5hm2k0d0qsf2hr01qgsn5hm2kg'; // Finnhub: precio EN VIVO (overlay)
+let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: velas REALES (estructura)
 let sym = 'SPY', tf = '60';
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
@@ -805,22 +807,23 @@ function getMPPrice(p){ const step = p<50?1:p<200?5:p<500?10:25; return Math.rou
 // ── SETUP ─────────────────────────────────────────────────────
 function showSetup(){ document.getElementById('setup-screen').classList.remove('hidden'); }
 function hideSetup(){ document.getElementById('setup-screen').classList.add('hidden'); }
-function resetAPI(){ localStorage.removeItem('fh_key'); API_KEY=''; showSetup(); }
-function initAfterLock(){ if(!API_KEY){ showSetup(); } else { initApp(); } }
+function resetAPI(){ localStorage.removeItem('poly_key'); POLY_KEY=''; showSetup(); }
+function initAfterLock(){ if(!POLY_KEY){ showSetup(); } else { initApp(); } }
 
 async function doConnect(){
   const key = document.getElementById('api-input').value.trim();
   const msg = document.getElementById('setup-msg'), btn = document.getElementById('conn-btn');
   if(!key || key.length < 8){ msg.textContent='❌ API Key inválida'; msg.className='err'; return; }
-  msg.textContent='⟳ Verificando...'; msg.className='ok'; btn.disabled=true; setBar(30);
+  msg.textContent='⟳ Verificando con Polygon...'; msg.className='ok'; btn.disabled=true; setBar(30);
   try{
-    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=SPY&token=${key}`);
+    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/SPY/prev?adjusted=true&apiKey=${key}`);
     const d = await r.json();
-    if(!d || !d.c || d.error) throw new Error('bad');
-    API_KEY = key; localStorage.setItem('fh_key', key);
+    const ok = (d.status==='OK' || d.status==='DELAYED' || (Array.isArray(d.results) && d.results.length));
+    if(!ok || d.error) throw new Error(d.error||d.message||'bad');
+    POLY_KEY = key; localStorage.setItem('poly_key', key);
     setBar(80); hideSetup(); await initApp(); setBar(0);
   } catch(e){
-    msg.textContent='❌ API Key inválida. Verifica en finnhub.io/dashboard'; msg.className='err'; btn.disabled=false; setBar(0);
+    msg.textContent='❌ Key inválida o sin plan Acciones (Stocks). Verifica en polygon.io/dashboard'; msg.className='err'; btn.disabled=false; setBar(0);
   }
 }
 function setBar(p){ document.getElementById('lbar').style.width = p+'%'; }
@@ -862,117 +865,61 @@ async function loadQuote(){
     if(!d || !d.c){ return; }
     quote = d;
     updateQuotePanel(); updateMktStatus();
-    if(d.o && d.h && d.l && d.c) bootstrapCandlesFromQuote(d);
+    // Overlay del precio EN VIVO de Finnhub sobre la última vela REAL de Polygon
+    // (compensa el delay de 15 min del plan Starter sin inventar nada)
+    if(candles.length){
+      const last = candles[candles.length-1];
+      last.c = d.c;
+      if(d.h) last.h = Math.max(last.h, d.h);
+      if(d.l) last.l = Math.min(last.l, d.l);
+      recomputeIndicators();
+    }
     drawAll();
   } catch(e){ console.warn('loadQuote error:', e); }
 }
 
-function bootstrapCandlesFromQuote(q){
-  if(!q.o || !q.h || !q.l || !q.c) return;
-  const intervalMins = {'5':5,'15':15,'60':60,'240':240,'D':1440}[tf]||60;
-  const nyNow = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
-  const nyHour = nyNow.getHours(), nyMin = nyNow.getMinutes();
-  const minsSinceOpen = Math.max(intervalMins, (nyHour*60+nyMin) - (9*60+30));
-  const barsSinceOpen = Math.max(3, Math.floor(minsSinceOpen / intervalMins));
-  const bars = [];
-  const totalRange = Math.max(q.h-q.l, q.c*0.005);
-  const trend = (q.c-q.o) / Math.max(barsSinceOpen-1, 1);
-  const volPer = (q.v||500000) / barsSinceOpen;
-  const openNY = new Date(nyNow); openNY.setHours(9,30,0,0);
-  const openUTC = openNY.getTime();
-  let price = q.o;
-  for(let i=0; i<barsSinceOpen; i++){
-    const t = Math.floor((openUTC + i*intervalMins*60000)/1000);
-    const isLast = (i===barsSinceOpen-1);
-    const noise = (Math.random()-0.48)*totalRange*0.15;
-    const o = price;
-    const c = isLast ? q.c : Math.max(q.l*0.999, Math.min(q.h*1.001, o+trend+noise));
-    bars.push({ t, o, h: isLast?q.h:Math.min(q.h, Math.max(o,c)+totalRange*0.05*Math.random()), l: isLast?q.l:Math.max(q.l, Math.min(o,c)-totalRange*0.05*Math.random()), c, v: Math.floor(volPer*(0.5+Math.random())) });
-    price = c;
-  }
-  candles = bars;
-  vp = buildVP(candles, Math.max(10, bars.length));
-  zones = buildZones(q.c);
-  cvd = bars.reduce((a,b) => a+(b.c>=b.o?b.v:-b.v), 0);
-  recomputeIndicators();
-  drawAll(); updatePanels();
-}
-
-function synthesizeHistoryDays(daily, intervalMins){
-  const bars = [], barsPerDay = Math.floor(390 / intervalMins);
-  daily.forEach(day => {
-    const range = day.h - day.l, trend = (day.c-day.o)/barsPerDay;
-    let price = day.o;
-    for(let i=0; i<barsPerDay; i++){
-      const t = day.t + i*intervalMins*60 + 9*3600 + 30*60;
-      const noise = (Math.random()-0.48)*range*0.12;
-      const o = price, c = Math.max(day.l*0.999, Math.min(day.h*1.001, o+trend+noise));
-      bars.push({ t, o, h:Math.min(day.h, Math.max(o,c)+range*0.04*Math.random()), l:Math.max(day.l, Math.min(o,c)-range*0.04*Math.random()), c, v:Math.floor(day.v/barsPerDay*(0.4+Math.random()*1.2)) });
-      price = c;
-    }
-  });
-  return bars;
-}
-
-function synthesizeFrom4H(daily){
-  const bars = [];
-  daily.forEach(day => {
-    const sessions = [{offset:0,frac:0.25},{offset:14400,frac:0.35}];
-    sessions.forEach(s => {
-      const t = day.t + s.offset + 9*3600 + 30*60;
-      const range = (day.h - day.l) * 0.6, mid = (day.o+day.c)/2;
-      const o = mid + (Math.random()-0.5)*range*0.3, c = mid + (Math.random()-0.5)*range*0.3;
-      bars.push({ t, o, h:Math.min(day.h, Math.max(o,c)+range*0.2), l:Math.max(day.l, Math.min(o,c)-range*0.2), c, v:Math.floor(day.v/2*(0.5+Math.random())) });
-    });
-  });
-  return bars;
-}
-
-function getTodayBars(intervalMins){
-  if(!quote.o || !quote.c) return [];
-  const nyNow = new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'}));
-  const minsSinceOpen = Math.max(intervalMins, (nyNow.getHours()*60+nyNow.getMinutes()) - (9*60+30));
-  const barsSinceOpen = Math.floor(minsSinceOpen / intervalMins);
-  if(barsSinceOpen < 1) return [];
-  const openNY = new Date(nyNow); openNY.setHours(9,30,0,0);
-  const openUTC = openNY.getTime();
-  const bars = [], q = quote;
-  const totalRange = Math.max(q.h-q.l, q.c*0.004), trend = (q.c-q.o)/Math.max(barsSinceOpen-1,1), volPer = (q.v||500000)/barsSinceOpen;
-  let price = q.o;
-  for(let i=0; i<barsSinceOpen; i++){
-    const t = Math.floor((openUTC + i*intervalMins*60000)/1000);
-    const isLast = (i===barsSinceOpen-1), noise = (Math.random()-0.48)*totalRange*0.15, o = price;
-    const c = isLast ? q.c : Math.max(q.l*0.999, Math.min(q.h*1.001, o+trend+noise));
-    bars.push({ t, o, h:isLast?q.h:Math.min(q.h, Math.max(o,c)+totalRange*0.05*Math.random()), l:isLast?q.l:Math.max(q.l, Math.min(o,c)-totalRange*0.05*Math.random()), c, v:Math.floor(volPer*(0.5+Math.random())) });
-    price = c;
-  }
-  return bars;
+// ── VELAS REALES · POLYGON.IO (sin nada sintético) ────────────
+// TF → config de aggregates Polygon. El 4H es nativo (mult 4 / hour).
+function tfToPolygon(t){
+  return ({
+    '5':  {mult:5,  span:'minute', days:10},
+    '15': {mult:15, span:'minute', days:25},
+    '60': {mult:1,  span:'hour',   days:90},
+    '240':{mult:4,  span:'hour',   days:300},
+    'D':  {mult:1,  span:'day',    days:500}
+  })[t] || {mult:1, span:'hour', days:90};
 }
 
 async function loadCandles(){
-  const now = Math.floor(Date.now()/1000), fromDaily = now - 500*86400;
+  if(!POLY_KEY){ console.warn('loadCandles: sin Polygon API key'); return; }
+  const cfg = tfToPolygon(tf);
+  const fmt = d => new Date(d).toISOString().slice(0,10);
+  const to = fmt(Date.now()), from = fmt(Date.now() - cfg.days*86400000);
+  const url = `https://api.polygon.io/v2/aggs/ticker/${sym}/range/${cfg.mult}/${cfg.span}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${POLY_KEY}`;
   try{
-    const rD = await fetch(`https://finnhub.io/api/v1/stock/candle?symbol=${sym}&resolution=D&from=${fromDaily}&to=${now}&token=${API_KEY}`);
-    const dD = await rD.json();
-    if(!dD || dD.s!=="ok" || !dD.c?.length){ return; }
-    const daily = dD.t.map((t,i) => ({t,o:dD.o[i],h:dD.h[i],l:dD.l[i],c:dD.c[i],v:dD.v[i]}));
-    if(tf === "D"){
-      candles = [...daily];
-      if(quote.c && candles.length > 0){ const last = candles[candles.length-1]; last.c=quote.c; if(quote.h) last.h=Math.max(last.h,quote.h); if(quote.l) last.l=Math.min(last.l,quote.l); }
-    } else if(tf === "240"){
-      candles = [...synthesizeFrom4H(daily.slice(-60)), ...getTodayBars(240)];
-    } else {
-      const intervalMins = {'5':5,'60':60}[tf]||60;
-      candles = [...synthesizeHistoryDays(daily.slice(-5), intervalMins), ...getTodayBars(intervalMins)];
+    const r = await fetch(url);
+    const d = await r.json();
+    if(d.status==='ERROR' || d.error){ console.warn('Polygon error:', d.error||d.message); return; }
+    if(!d.results || !d.results.length){ console.warn('Polygon sin velas para', sym, tf); return; }
+    // t de Polygon viene en ms → convertir a segundos para el resto del motor
+    candles = d.results.map(b => ({ t: Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
+    // Intradía: quedarnos con las últimas 300 velas (coincide con el cap del WS)
+    if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
+    // Overlay precio vivo (Finnhub) sobre la última vela real, compensa el delay de 15 min
+    if(quote.c && candles.length){
+      const last = candles[candles.length-1];
+      last.c = quote.c;
+      if(quote.h) last.h = Math.max(last.h, quote.h);
+      if(quote.l) last.l = Math.min(last.l, quote.l);
     }
-    if(!candles.length) return;
     vp = buildVP(candles, 60);
     const cp = quote.c || candles[candles.length-1].c;
     zones = buildZones(cp);
+    // CVD aproximado por dirección de vela (FASE 3 = trades reales por agresor)
     cvd = candles.slice(-30).reduce((a,b) => a+(b.c>=b.o?b.v:-b.v), 0);
     recomputeIndicators();
     updateVP(); updateCandleList(); drawAll();
-  } catch(e){ console.warn('loadCandles error:', e); }
+  } catch(e){ console.warn('loadCandles Polygon error:', e); }
 }
 
 // Recalculate all indicators after candle update
@@ -999,7 +946,7 @@ function startWS(){
           quote.v=(quote.v||0)+vol; cvd+=delta;
           buyV+=(delta>0?vol:0); sellV+=(delta<0?vol:0);
           if(candles.length > 0){
-            const intervalMins = {'5':5,'60':60,'240':240,'D':1440}[tf]||60;
+            const intervalMins = {'5':5,'15':15,'60':60,'240':240,'D':1440}[tf]||60;
             const nowTs = Math.floor(Date.now()/1000), barTs = Math.floor(nowTs/(intervalMins*60))*(intervalMins*60);
             const last = candles[candles.length-1];
             if(last.t===barTs){ last.c=tick.p; last.h=Math.max(last.h,tick.p); last.l=Math.min(last.l,tick.p); last.v+=vol; }
@@ -1049,8 +996,7 @@ function checkAlerts(p){
   // CHoCH/BOS
   if(struct.choch && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.3,'triangle'); showAlertPopup('🏗 '+struct.choch.label); sendTelegram('CHOCH',sym,p.toFixed(2),null,{note:struct.choch.label}); lastStructAlert=Date.now(); }
   else if(struct.bos && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.2,'triangle'); showAlertPopup('🏗 '+struct.bos.label); sendTelegram('BOS',sym,p.toFixed(2),null,{note:struct.bos.label}); lastStructAlert=Date.now(); }
-  // Dark Pool sim
-  if(Math.random()<0.002 && alertCfg.dp && Date.now()-lastDPAlert>60000){ playTone(770,0.2,'square',0.2); showAlertPopup('🌑 DARK POOL PRINT DETECTADO'); sendTelegram('DARK_POOL',sym,p.toFixed(2),null); lastDPAlert=Date.now(); }
+  // Dark Pool: DESACTIVADO — era Math.random() (fake). FASE 4: prints reales con Polygon trades.
 }
 
 function showAlertPopup(msg){ const el=document.getElementById('alert-popup'); el.textContent=msg; el.style.display='block'; setTimeout(()=>{ el.style.display='none'; },4000); }
@@ -1567,7 +1513,7 @@ function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.v
 function loadSavedSymbols(){ try{ const saved=localStorage.getItem('lm_syms'); if(saved){ JSON.parse(saved).forEach(s=>{ if(!DEFAULT_SYMS.includes(s)) createSymBtn(s,false); }); } }catch(e){} }
 
 async function selectSym(s,btn){
-  if(!API_KEY) return;
+  if(!POLY_KEY) return;
   sym=s; candles=[];zones=[];quote={};cvd=0;buyV=0;sellV=0;stResult=[];struct={choch:null,bos:null,swings:[]};whaleDetected=null;
   document.querySelectorAll('.sym-btn').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
@@ -1576,7 +1522,7 @@ async function selectSym(s,btn){
 }
 
 async function selectTF(t,btn){
-  if(!API_KEY) return;
+  if(!POLY_KEY) return;
   tf=t; candles=[]; stResult=[]; struct={choch:null,bos:null,swings:[]};
   document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
