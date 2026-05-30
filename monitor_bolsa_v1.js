@@ -26,8 +26,7 @@ const fetch = require('node-fetch');
 // ── CONFIG ──────────────────────────────────────────────────
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
-const FINNHUB_TOKEN        = 'd0qsf2hr01qgsn5hm2k0d0qsf2hr01qgsn5hm2kg'; // solo quote en vivo
-const POLYGON_KEY          = process.env.POLYGON_KEY || ''; // velas REALES (env var en Render)
+const POLYGON_KEY          = process.env.POLYGON_KEY || ''; // velas + quote REALES (env var en Render)
 
 const STOCK_TICKERS = [
   'SPY', 'QQQ', 'NVDA', 'AAPL', 'AMZN',
@@ -176,10 +175,28 @@ async function fetchCandles(symbol, tf) {
 }
 
 async function fetchQuote(symbol) {
+  if (!POLYGON_KEY) return null;
   try {
-    const url = `https://finnhub.io/api/v1/quote?symbol=${symbol}&token=${FINNHUB_TOKEN}`;
-    const r   = await fetch(url, { timeout: 6000 });
-    return await r.json();
+    const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${symbol}?apiKey=${POLYGON_KEY}`;
+    const r   = await fetch(url, { timeout: 8000 });
+    const j   = await r.json();
+    const t   = j.ticker;
+    if (!t) return null;
+    const day = t.day || {}, prev = t.prevDay || {}, lt = t.lastTrade || {}, min = t.min || {};
+    const live = lt.p || min.c || day.c || prev.c;
+    const prevClose = prev.c || day.o || live;
+    if (!live) return null;
+    // Formato compatible con el resto del monitor (c, h, l, o, pc, dp)
+    return {
+      c: live,
+      h: day.h || live,
+      l: day.l || live,
+      o: day.o || prevClose,
+      pc: prevClose,
+      dp: (typeof t.todaysChangePerc === 'number')
+            ? t.todaysChangePerc
+            : (prevClose ? ((live - prevClose) / prevClose * 100) : 0)
+    };
   } catch { return null; }
 }
 
@@ -280,6 +297,10 @@ function buildVolumeProfile(candles, bins = 100) {
 
 // ════════════════════════════════════════════════════════════
 //  CAPA 3 — CVD + DELTA
+//  APROXIMACIÓN: estima compra/venta por dirección de vela (60/40).
+//  NO es CVD real por agresor (bid/ask tick). El CVD real requiere el
+//  feed de trades de Polygon (FASE 3). Es una proxy estándar, no dato
+//  inventado, pero el equipo debe saber que es aproximación.
 // ════════════════════════════════════════════════════════════
 function calcCVD(candles) {
   let cvd = 0, buyVol = 0, sellVol = 0;
@@ -412,27 +433,37 @@ function detectLiquidityZones(candles, price) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  CAPA 6 — GEX ESTIMADO + MAX PAIN
+//  CAPA 6 — RÉGIMEN DE VOLATILIDAD (real, por rango de velas)
+//  NOTA: GEX/Call Wall/Put Wall/Max Pain REALES requieren cadena de
+//  opciones (add-on Polygon, FASE 4). NO se inventan. Aquí solo
+//  calculamos el régimen de volatilidad, que sí es dato real de precio.
 // ════════════════════════════════════════════════════════════
 function estimateGEX(price, vp, candles) {
-  if (!vp) return { gexNet: 0, regime: 'NEUTRAL', callWall: null, putWall: null, maxPain: null };
-  const roundUp   = Math.ceil(price  / 5) * 5;
-  const roundDown = Math.floor(price / 5) * 5;
-  const ranges    = candles.slice(-10).map(c => (c.h-c.l)/c.c);
-  const avgRange  = ranges.reduce((a,b)=>a+b,0) / ranges.length;
+  if (!vp || !candles || candles.length < 10)
+    return { gexNet: 0, regime: 'N/D', callWall: null, putWall: null, maxPain: null, volRegime: 'N/D' };
+  const ranges   = candles.slice(-10).map(c => (c.h - c.l) / c.c);
+  const avgRange = ranges.reduce((a, b) => a + b, 0) / ranges.length;
+  // Régimen de volatilidad: dato REAL derivado del rango verdadero de las velas
+  const lowVol = avgRange < 0.008;
   return {
-    gexNet:   avgRange < 0.008 ? 1 : -1,
-    regime:   avgRange < 0.008 ? 'POSITIVO (bajo vol)' : 'NEGATIVO (alto vol)',
-    callWall: roundUp,
-    putWall:  roundDown,
-    maxPain:  Math.round(price/10)*10,
+    gexNet:   lowVol ? 1 : -1,
+    regime:   'N/D (opciones FASE 4)',        // NO afirmamos GEX real
+    volRegime: lowVol ? 'BAJA VOL' : 'ALTA VOL', // esto SÍ es real
+    callWall: null,                            // requiere opciones reales
+    putWall:  null,                            // requiere opciones reales
+    maxPain:  null,                            // requiere opciones reales
   };
 }
 
 // ════════════════════════════════════════════════════════════
-//  CAPA 7 — DARK POOL ESTIMADO
+//  DARK POOL ESTIMADO — DESACTIVADO
+//  Los prints de dark pool reales requieren el feed de trades con
+//  condición de venta (add-on Polygon, FASE 3/4). No se estima.
 // ════════════════════════════════════════════════════════════
 function estimateDarkPool(candles, price) {
+  return null;  // FASE 4: prints reales. No inventamos acumulación/distribución.
+}
+function _estimateDarkPool_disabled(candles, price) {
   if (candles.length < 10) return null;
   const vols   = candles.map(c => c.v);
   const avgVol = vols.slice(0,-3).reduce((a,b)=>a+b,0) / (vols.length-3);
@@ -520,17 +551,15 @@ function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, sessio
   if (nearSup) signals.push({ layer:5, dir:'BUY',  weight:nearSup.strength, label:`${nearSup.label} soporte ${fmt(nearSup.price,price)}` });
   if (nearRes) signals.push({ layer:5, dir:'SELL', weight:nearRes.strength, label:`${nearRes.label} resistencia ${fmt(nearRes.price,price)}` });
 
-  // ── CAPA 6: GEX + MAX PAIN (1pt) ───────────────────────
+  // ── CAPA 6: RÉGIMEN DE VOLATILIDAD (real, por rango de velas) ──
+  // Solo usamos el régimen de volatilidad (dato real). NO walls/maxpain (FASE 4).
   const gex = estimateGEX(price, vp, candles4H);
-  if (gex.gexNet < 0) signals.push({ layer:6, dir:'BUY',  weight:0.8, label:`GEX ${gex.regime} — momentum amplificado` });
-  if (gex.putWall  && price > gex.putWall)  signals.push({ layer:6, dir:'BUY',  weight:0.5, label:`Sobre Put Wall ${fmt(gex.putWall,price)} — soporte gamma` });
-  if (gex.callWall && price < gex.callWall) signals.push({ layer:6, dir:'SELL', weight:0.5, label:`Bajo Call Wall ${fmt(gex.callWall,price)} — resistencia gamma` });
+  // En alta volatilidad el momentum se amplifica; refuerza levemente la dirección
+  // YA establecida por capas reales (no genera dirección por sí solo).
+  // Nota: no añade señal direccional propia para no inventar sesgo.
 
-  // ── CAPA 7: DARK POOL (1pt) ─────────────────────────────
-  const dp = estimateDarkPool(candles4H, price);
-  if (dp && dp.direction !== 'NEUTRAL') {
-    signals.push({ layer:7, dir:dp.direction, weight: Math.min(2, dp.volumeRatio/3), label:dp.label });
-  }
+  // ── CAPA 7: DARK POOL — DESACTIVADA (requiere trades reales, FASE 4) ──
+  const dp = null;  // estimateDarkPool desactivado: no inventamos prints
 
   // ── CAPA 8: CONFIRMACIÓN 15m + POWER HOUR ──────────────
   const cvd15m = calcCVD(candles15m);
@@ -593,10 +622,14 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const stLine    = result.st4H       ? `\n${result.st4H.label}${result.st4H.crossed?' ← CRUCE RECIENTE':''}` : '';
   const structL   = result.struct4H   ? `\n🔷 ${result.struct4H.label} 4H` : '';
   const shLine    = result.sh4H       ? `\n🎯 Stop Hunt ${result.sh4H.type==='SH_BUY'?'alcista':'bajista'} 4H` : '';
-  const dpLine    = result.dp && result.dp.direction !== 'NEUTRAL' ? `\n${result.dp.label}` : '';
-  const gexLine   = result.gex ? `\nGEX: ${result.gex.regime} · MaxPain: ${fmt(result.gex.maxPain,price)}` : '';
+  const dpLine    = '';  // Dark Pool desactivado (FASE 4)
+  const gexLine   = (result.gex && result.gex.volRegime && result.gex.volRegime !== 'N/D')
+    ? `\n📊 Volatilidad: ${result.gex.volRegime} · GEX/MaxPain: N/D (opciones FASE 4)`
+    : '';
   const confList  = result.confluences.map(c => `  • ${c}`).join('\n');
-  const changeStr = quote ? `${quote.dp > 0 ? '+' : ''}${((quote.c - quote.pc)/quote.pc*100).toFixed(2)}%` : '—';
+  const changeStr = (quote && quote.pc && quote.pc !== 0)
+    ? `${((quote.c - quote.pc)/quote.pc*100) >= 0 ? '+' : ''}${((quote.c - quote.pc)/quote.pc*100).toFixed(2)}%`
+    : (quote && typeof quote.dp === 'number' ? `${quote.dp>=0?'+':''}${quote.dp.toFixed(2)}%` : '—');
 
   return `📊 <b>SEÑAL INSTITUCIONAL — BOLSA</b>
 ${arrow}
@@ -652,8 +685,8 @@ async function scanTicker(ticker, session) {
     }
 
     const price  = quote?.c || candles4H[candles4H.length - 1].c;
-    // Overlay precio EN VIVO (Finnhub) sobre la última vela real de cada TF —
-    // compensa el delay de 15 min de Polygon Starter, idéntico al mapa v7.
+    // Overlay precio EN VIVO (Polygon snapshot) sobre la última vela real de cada TF —
+    // compensa el delay de 15 min de Polygon Starter. Fuente única, sin Finnhub.
     if (quote?.c) {
       for (const arr of [candles4H, candles1H, candles15m]) {
         if (arr.length) {
@@ -664,7 +697,10 @@ async function scanTicker(ticker, session) {
         }
       }
     }
-    const vp     = buildVolumeProfile(candles4H, 100);
+    // VOLUME PROFILE sobre VENTANA OPERATIVA (últimas 60 velas 4H), no toda la
+    // historia — clave anti-POC-viejo. Idéntico criterio que el mapa v7.
+    const vpWindow = candles4H.slice(-60);
+    const vp     = buildVolumeProfile(vpWindow, 100);
     const result = evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, session });
 
     const stLabel = result.st4H ? (result.st4H.bullish ? '↑ST' : '↓ST') : 'ST?';
@@ -741,7 +777,7 @@ console.log('   CAPA 7    : Dark Pool estimado (1pt)');
 console.log('   CAPA 8    : 15m + Power Hour timing');
 console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10`);
 console.log('   Bot       : @liquidmapbolsa_bot');
-console.log('   Velas     : POLYGON.IO (SIP real) · Quote: Finnhub vivo');
+console.log('   Velas     : POLYGON.IO (SIP real) · Quote: Polygon snapshot · FUENTE ÚNICA');
 
 if (!POLYGON_KEY) {
   console.error('⚠️  FALTA POLYGON_KEY — agregá la env var en Render (Environment → Add). El monitor no leerá velas reales sin ella.');
