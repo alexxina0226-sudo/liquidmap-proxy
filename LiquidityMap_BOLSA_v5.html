@@ -90,6 +90,17 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .sig-meta{display:flex;flex-direction:column;gap:2px;}
 #sig-sesgo{font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:2px;color:var(--muted);}
 #sig-quality{font-size:9px;font-family:'Space Mono',monospace;color:var(--accent);}
+/* ── CONFLUENCE METER PREMIUM ── */
+#conf-meter{display:none;gap:6px;flex-wrap:wrap;align-items:stretch;padding:7px 12px;background:linear-gradient(180deg,rgba(8,12,24,.6),rgba(8,12,24,.2));border-bottom:1px solid var(--border);}
+.cf-chip{display:flex;flex-direction:column;gap:3px;min-width:84px;flex:1;padding:5px 8px;border-radius:6px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);position:relative;overflow:hidden;}
+.cf-chip .cf-name{font-size:8px;font-family:'Space Mono',monospace;color:var(--muted);letter-spacing:.4px;text-transform:uppercase;white-space:nowrap;}
+.cf-chip .cf-val{font-size:11px;font-weight:700;display:flex;align-items:center;gap:4px;}
+.cf-chip .cf-track{height:3px;border-radius:2px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:1px;}
+.cf-chip .cf-bar{height:100%;border-radius:2px;transition:width .5s;}
+.cf-bull{color:var(--green);} .cf-bull .cf-bar{background:var(--green);}
+.cf-bear{color:var(--red);} .cf-bear .cf-bar{background:var(--red);}
+.cf-neut{color:var(--muted);} .cf-neut .cf-bar{background:var(--muted);}
+.cf-chip.lit{box-shadow:0 0 0 1px currentColor inset, 0 0 12px -4px currentColor;}
 .score-wrap{display:flex;flex-direction:column;gap:3px;min-width:120px;}
 .score-label{font-size:9px;color:var(--muted);font-family:'Space Mono',monospace;display:flex;justify-content:space-between;}
 .score-bar{height:8px;background:#0a1020;border-radius:4px;overflow:hidden;}
@@ -293,14 +304,17 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
   </div>
 </div>
 
+<!-- CONFLUENCE METER PREMIUM -->
+<div id="conf-meter"></div>
+
 <!-- LEGENDS -->
 <div id="legends">
   <div class="leg"><div class="ldot" style="background:#ffe000"></div>Liquidez fuerte</div>
   <div class="leg"><div class="ldot" style="background:#00ff9d"></div>Soporte</div>
   <div class="leg"><div class="ldot" style="background:#ff2d6b"></div>Resistencia</div>
-  <div class="leg"><div class="ldot" style="background:#b44dff;height:2px;width:14px"></div>VWAP/POC</div>
+  <div class="leg"><div class="ldot" style="background:#b44dff;height:2px;width:14px"></div>VWAP real</div>
   <div class="leg"><div class="ldot" style="background:#00e5ff"></div>SuperTrend</div>
-  <div class="leg"><div class="ldot" style="background:#ff8c00"></div>Max Pain</div>
+  <div class="leg"><div class="ldot" style="background:#00ff9d;height:2px;width:14px"></div>Value Area (VAH/VAL)</div>
   <div class="leg"><span style="color:#00ff9d;font-size:9px">━</span> BOS</div>
   <div class="leg"><span style="color:#ff2d6b;font-size:9px">┅</span> CHoCH</div>
 </div>
@@ -376,7 +390,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 
     <!-- GEX -->
     <div class="ps">
-      <h3>⚡ GEX Gamma</h3>
+      <h3>⚡ GEX Gamma <span style="font-size:7px;color:var(--muted);font-weight:400">· N/D FASE 4</span></h3>
       <div class="mr"><span class="lb">Net GEX</span><span class="vl" id="gex-net">—</span></div>
       <div class="gex-bar-wrap"><div class="gex-bar-fill" id="gex-bar" style="width:50%"></div></div>
       <div class="mr"><span class="lb">Call Wall</span><span class="vl g" id="gex-cw">—</span></div>
@@ -389,7 +403,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 
     <!-- MAX PAIN -->
     <div class="ps">
-      <h3>🎯 Max Pain</h3>
+      <h3>🎯 Max Pain <span style="font-size:7px;color:var(--muted);font-weight:400">· N/D FASE 4</span></h3>
       <div class="mpw">
         <div class="mplb" id="mplb" style="left:50%">—</div>
         <div class="mptr"></div>
@@ -499,8 +513,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <h2>🔔 Alertas</h2>
     <div class="am-row"><label>Señal BUY/SELL</label><div class="am-toggle on" id="al-buy" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>Zona liquidez</label><div class="am-toggle on" id="al-zone" onclick="toggleAL(this)"></div></div>
-    <div class="am-row"><label>Max Pain</label><div class="am-toggle on" id="al-mp" onclick="toggleAL(this)"></div></div>
-    <div class="am-row"><label>GEX Flip</label><div class="am-toggle on" id="al-gex" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>Max Pain <span style="font-size:8px;color:var(--muted)">(FASE 4)</span></label><div class="am-toggle" id="al-mp" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>GEX Flip <span style="font-size:8px;color:var(--muted)">(FASE 4)</span></label><div class="am-toggle" id="al-gex" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>Dark Pool</label><div class="am-toggle on" id="al-dp" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>Ballena detectada</label><div class="am-toggle on" id="al-whale" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>CHoCH / BOS</label><div class="am-toggle on" id="al-struct" onclick="toggleAL(this)"></div></div>
@@ -511,7 +525,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 <script>
 // ═══════════════════════════════════════════════════════════════
 //  LIQUIDMAP PRO v6 — NEURONAL INSTITUCIONAL
-//  6 Capas: SuperTrend + CHoCH/BOS + Vol/Whale + CVD + GEX + MaxPain
+//  6 Capas REALES: SuperTrend + VWAP + CVD + CHoCH/BOS + Presión + Value Area
+//  (GEX/MaxPain = FASE 4, requieren cadena de opciones real)
 // ═══════════════════════════════════════════════════════════════
 
 // ── PASSWORD ─────────────────────────────────────────────────
@@ -749,46 +764,53 @@ function detectStopHunt(candle){
 
 // ── NEURAL SCORE ───────────────────────────────────────────────
 function computeNeuralScore(p){
-  if(!p || !vp) return { type:'NEUTRAL', score:0, rawScore:0, conf:[], superTrendDir:0 };
+  if(!p || !vp) return { type:'NEUTRAL', score:0, rawScore:0, conf:[], superTrendDir:0, layers:[] };
   const conf = [];
+  const layers = [];
   let score = 0;
   const rawMax = 12.5;
+  const addL = (name, val, dir) => layers.push({ name, val, dir }); // dir: 1 bull, -1 bear, 0 neutral
 
   // CAPA 1 — SuperTrend JUEZ (3 pts máx)
   const stLast = stResult && stResult.length > 0 ? stResult[stResult.length - 1] : null;
   const stDir = stLast ? stLast.trend : 0;
-  if(stDir === 1)       { score += 3; conf.push('⚡ SuperTrend ALCISTA ✓'); }
-  else if(stDir === -1) { score -= 3; conf.push('⚡ SuperTrend BAJISTA ✗'); }
+  if(stDir === 1)       { score += 3; conf.push('⚡ SuperTrend ALCISTA ✓'); addL('SuperTrend', 3, 1); }
+  else if(stDir === -1) { score -= 3; conf.push('⚡ SuperTrend BAJISTA ✗'); addL('SuperTrend', 3, -1); }
+  else                  { addL('SuperTrend', 0, 0); }
 
-  // CAPA 2 — POC / VWAP (1.5 pts)
-  const poc = getPOC(vp);
-  if(p > poc) { score += 1.5; conf.push('📊 Precio > POC ✓'); }
-  else        { score -= 1.5; conf.push('📊 Precio < POC ✗'); }
+  // CAPA 2 — VWAP REAL (1.5 pts) — precio sobre/bajo VWAP ponderado por volumen
+  const vwWin2 = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
+  const vwObj = getVWAP(candles.slice(-vwWin2));
+  const vwapVal = vwObj ? vwObj.vwap : getPOC(vp);
+  if(p > vwapVal) { score += 1.5; conf.push('📐 Precio > VWAP ✓'); addL('VWAP', 1.5, 1); }
+  else            { score -= 1.5; conf.push('📐 Precio < VWAP ✗'); addL('VWAP', 1.5, -1); }
 
-  // CAPA 3 — CVD real (1.5 pts)
-  if(cvd > 0) { score += 1.5; conf.push('📈 CVD positivo ✓'); }
-  else        { score -= 1.5; conf.push('📈 CVD negativo ✗'); }
+  // CAPA 3 — CVD (1.5 pts)
+  if(cvd > 0) { score += 1.5; conf.push('📈 CVD positivo ✓'); addL('CVD', 1.5, 1); }
+  else        { score -= 1.5; conf.push('📈 CVD negativo ✗'); addL('CVD', 1.5, -1); }
 
-  // CAPA 4 — CHoCH / BOS (2 pts máx)
+  // CAPA 4 — CHoCH / BOS (estructura)
   if(struct.bos){
-    if(struct.bos.dir === 'BULL') { score += 3; conf.push('🏗 BOS ALCISTA ✓ — desplazamiento confirmado'); }
-    else                          { score -= 3; conf.push('🏗 BOS BAJISTA ✗ — desplazamiento bajista'); }
-  }
+    if(struct.bos.dir === 'BULL') { score += 3; conf.push('🏗 BOS ALCISTA ✓'); addL('BOS', 3, 1); }
+    else                          { score -= 3; conf.push('🏗 BOS BAJISTA ✗'); addL('BOS', 3, -1); }
+  } else { addL('BOS', 0, 0); }
   if(struct.choch){
-    if(struct.choch.dir === 'BULL') { score += 1.5; conf.push('⚡ CHoCH BULL — alerta temprana'); }
-    else                            { score -= 1.5; conf.push('⚡ CHoCH BEAR — alerta temprana'); }
+    if(struct.choch.dir === 'BULL') { score += 1.5; conf.push('⚡ CHoCH BULL'); addL('CHoCH', 1.5, 1); }
+    else                            { score -= 1.5; conf.push('⚡ CHoCH BEAR'); addL('CHoCH', 1.5, -1); }
   }
 
-  // CAPA 5 — Delta / Buy pressure (1 pt)
+  // CAPA 5 — Buy pressure (1 pt)
   const tot = buyV + sellV + 1;
   const bp = (buyV / tot) * 100;
-  if(bp > 60)      { score += 1; conf.push('💪 Buy pressure >60% ✓'); }
-  else if(bp < 40) { score -= 1; conf.push('💪 Sell pressure >60% ✗'); }
+  if(bp > 60)      { score += 1; conf.push('💪 Buy pressure >60% ✓'); addL('Presión', 1, 1); }
+  else if(bp < 40) { score -= 1; conf.push('💪 Sell pressure >60% ✗'); addL('Presión', 1, -1); }
+  else             { addL('Presión', 0, 0); }
 
-  // CAPA 6 — GEX regime (1 pt)
-  const gexPos = p > poc * 0.995;
-  if(gexPos) { score += 1; conf.push('⚡ GEX+ baja vol ✓'); }
-  else       { score -= 1; conf.push('⚡ GEX- alta vol ✗'); }
+  // CAPA 6 — Posición vs Value Area (1 pt) — VAH/VAL del volume profile real
+  const va = getVA(vp);
+  if(p > va.vah)      { score += 1; conf.push('📊 Precio sobre VAH ✓ — aceptación alcista'); addL('Value Area', 1, 1); }
+  else if(p < va.val) { score -= 1; conf.push('📊 Precio bajo VAL ✗ — rechazo bajista'); addL('Value Area', 1, -1); }
+  else                { addL('Value Area', 0, 0); }  // dentro del VA = neutral, sin sesgo
 
   // Kill Zone bonus
   const kz = getKillZone();
@@ -797,12 +819,33 @@ function computeNeuralScore(p){
   // Normalize 0-10
   const normalized = Math.round(Math.max(0, Math.min(10, ((score + rawMax) / (rawMax * 2)) * 10)));
   const type = score >= 3 ? 'BUY' : score <= -3 ? 'SELL' : 'NEUTRAL';
-  return { type, score: normalized, rawScore: score, conf, superTrendDir: stDir };
+  return { type, score: normalized, rawScore: score, conf, superTrendDir: stDir, layers };
 }
 
 // ── GEX / MAX PAIN ────────────────────────────────────────────
-function getGEXRegime(p){ if(!vp) return '—'; const poc = getPOC(vp); return p > poc*0.995 ? 'POSITIVO' : 'NEGATIVO'; }
-function getMPPrice(p){ const step = p<50?1:p<200?5:p<500?10:25; return Math.round(p/step)*step; }
+// Funciones de GEX/Max Pain ELIMINADAS: requieren cadena de opciones real
+// (add-on Polygon, FASE 4). No se calculan con aproximaciones de precio.
+
+// ── CONFLUENCE METER PREMIUM ──────────────────────────────────
+// Muestra cada capa institucional con su peso y dirección, visual.
+function renderConfMeter(sig){
+  const el = document.getElementById('conf-meter');
+  if(!el || !sig || !sig.layers || !sig.layers.length){ if(el) el.style.display='none'; return; }
+  el.style.display='flex';
+  const maxW = { 'SuperTrend':3, 'VWAP':1.5, 'CVD':1.5, 'BOS':3, 'CHoCH':1.5, 'Presión':1, 'Value Area':1 };
+  el.innerHTML = sig.layers.map(L => {
+    const cls = L.dir>0?'cf-bull':L.dir<0?'cf-bear':'cf-neut';
+    const arrow = L.dir>0?'▲':L.dir<0?'▼':'•';
+    const lit = L.val>0 ? 'lit' : '';
+    const pct = Math.min(100, (L.val / (maxW[L.name]||3)) * 100);
+    const valTxt = L.dir===0 ? '—' : (L.dir>0?'+':'−')+L.val;
+    return `<div class="cf-chip ${cls} ${lit}">
+      <span class="cf-name">${L.name}</span>
+      <span class="cf-val">${arrow} ${valTxt}</span>
+      <span class="cf-track"><span class="cf-bar" style="width:${pct}%"></span></span>
+    </div>`;
+  }).join('');
+}
 
 // ── SETUP ─────────────────────────────────────────────────────
 function showSetup(){ document.getElementById('setup-screen').classList.remove('hidden'); }
@@ -843,12 +886,12 @@ async function initApp(){
   resizeCanvas();
   loadSavedSymbols();
   await loadAll();
-  startWS();
+  // WebSocket Finnhub DESACTIVADO — fuente única Polygon. El snapshot da precio vivo.
   startTicker();
   setInterval(updateClock, 1000);
   setInterval(updateMktStatus, 5000);
   setInterval(async () => { await loadCandles(); recomputeIndicators(); drawAll(); updatePanels(); }, 60000);
-  setInterval(loadQuote, 15000);
+  setInterval(loadQuote, 8000);  // snapshot Polygon más frecuente (precio vivo)
   setInterval(() => { if(candles.length > 0){ recomputeIndicators(); drawAll(); } }, 5000);
   updateClock(); updateMktStatus();
   setTimeout(() => { resizeCanvas(); if(candles.length>0) drawAll(); }, 500);
@@ -859,23 +902,38 @@ async function initApp(){
 async function loadAll(){ await loadQuote(); drawAll(); await loadCandles(); recomputeIndicators(); updatePanels(); drawAll(); }
 
 async function loadQuote(){
+  if(!POLY_KEY) return;
   try{
-    const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${sym}&token=${API_KEY}`);
+    // Snapshot de Polygon: precio en vivo + día + día previo, todo real (sin Finnhub)
+    const r = await fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${sym}?apiKey=${POLY_KEY}`);
     const d = await r.json();
-    if(!d || !d.c){ return; }
-    quote = d;
+    const t = d.ticker;
+    if(!t){ return; }
+    const day = t.day || {}, prev = t.prevDay || {}, lt = t.lastTrade || {}, min = t.min || {};
+    // precio en vivo: último trade > min bar close > day close
+    const live = lt.p || min.c || day.c || prev.c;
+    const prevClose = prev.c || day.o || live;
+    if(!live){ return; }
+    quote = {
+      c: live,
+      o: day.o || prev.c || live,
+      h: day.h || live,
+      l: day.l || live,
+      pc: prevClose,
+      v: day.v || 0,
+      dp: prevClose ? ((live - prevClose) / prevClose * 100) : 0  // % real del día
+    };
     updateQuotePanel(); updateMktStatus();
-    // Overlay del precio EN VIVO de Finnhub sobre la última vela REAL de Polygon
-    // (compensa el delay de 15 min del plan Starter sin inventar nada)
+    // Overlay precio vivo sobre la última vela real
     if(candles.length){
       const last = candles[candles.length-1];
-      last.c = d.c;
-      if(d.h) last.h = Math.max(last.h, d.h);
-      if(d.l) last.l = Math.min(last.l, d.l);
+      last.c = live;
+      if(day.h) last.h = Math.max(last.h, day.h);
+      if(day.l) last.l = Math.min(last.l, day.l);
       recomputeIndicators();
     }
     drawAll();
-  } catch(e){ console.warn('loadQuote error:', e); }
+  } catch(e){ console.warn('loadQuote Polygon error:', e); }
 }
 
 // ── VELAS REALES · POLYGON.IO (sin nada sintético) ────────────
@@ -905,14 +963,17 @@ async function loadCandles(){
     candles = d.results.map(b => ({ t: Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
     // Intradía: quedarnos con las últimas 300 velas (coincide con el cap del WS)
     if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
-    // Overlay precio vivo (Finnhub) sobre la última vela real, compensa el delay de 15 min
+    // Overlay precio vivo (Polygon snapshot) sobre la última vela real
     if(quote.c && candles.length){
       const last = candles[candles.length-1];
       last.c = quote.c;
       if(quote.h) last.h = Math.max(last.h, quote.h);
       if(quote.l) last.l = Math.min(last.l, quote.l);
     }
-    vp = buildVP(candles, 60);
+    // VOLUME PROFILE sobre VENTANA OPERATIVA (no toda la historia) — clave anti-POC-viejo.
+    // Por TF: ventana proporcional a lo que el trader realmente opera.
+    const vpWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
+    vp = buildVP(candles.slice(-vpWin), 60);
     const cp = quote.c || candles[candles.length-1].c;
     zones = buildZones(cp);
     // CVD aproximado por dirección de vela (FASE 3 = trades reales por agresor)
@@ -932,35 +993,9 @@ function recomputeIndicators(){
 
 // ── WEBSOCKET ─────────────────────────────────────────────────
 function startWS(){
-  if(ws) ws.close();
-  ws = new WebSocket(`wss://ws.finnhub.io?token=${API_KEY}`);
-  ws.onopen = () => { document.getElementById('wsdot').className='live'; ws.send(JSON.stringify({type:'subscribe',symbol:sym})); };
-  ws.onmessage = e => {
-    try{
-      const msg = JSON.parse(e.data);
-      if(msg.type==='trade' && msg.data){
-        msg.data.forEach(tick => {
-          if(tick.s !== sym) return;
-          const prev = quote.c||tick.p, vol = tick.v||0, delta = tick.p>=prev?vol:-vol;
-          quote.c=tick.p; if(!quote.h||tick.p>quote.h) quote.h=tick.p; if(!quote.l||tick.p<quote.l) quote.l=tick.p;
-          quote.v=(quote.v||0)+vol; cvd+=delta;
-          buyV+=(delta>0?vol:0); sellV+=(delta<0?vol:0);
-          if(candles.length > 0){
-            const intervalMins = {'5':5,'15':15,'60':60,'240':240,'D':1440}[tf]||60;
-            const nowTs = Math.floor(Date.now()/1000), barTs = Math.floor(nowTs/(intervalMins*60))*(intervalMins*60);
-            const last = candles[candles.length-1];
-            if(last.t===barTs){ last.c=tick.p; last.h=Math.max(last.h,tick.p); last.l=Math.min(last.l,tick.p); last.v+=vol; }
-            else if(nowTs-last.t>intervalMins*60){ candles.push({t:barTs,o:tick.p,h:tick.p,l:tick.p,c:tick.p,v:vol}); if(candles.length>300) candles.shift(); vp=buildVP(candles,60); zones=buildZones(tick.p); }
-          }
-          recomputeIndicators();
-          checkAlerts(tick.p);
-          updateQuotePanel(); updateDerived(); drawAll();
-        });
-      }
-    } catch(e2){}
-  };
-  ws.onerror = () => { document.getElementById('wsdot').className=''; };
-  ws.onclose = () => { document.getElementById('wsdot').className=''; setTimeout(() => { if(API_KEY) startWS(); }, 6000); };
+  // WebSocket Finnhub ELIMINADO — fuente única Polygon (snapshot da el precio vivo
+  // cada 8s). El tiempo real por WS de Polygon requiere add-on; no se usa Finnhub.
+  return;
 }
 
 // ── ALERTS ────────────────────────────────────────────────────
@@ -979,17 +1014,13 @@ function checkAlerts(p){
   // Zone touch
   const nearZone = zones.find(z => Math.abs(z.price-p)/p < 0.0015 && z.strength > 0.70);
   if(nearZone && alertCfg.zone && Date.now()-lastZoneAlert>30000){ playTone(660,0.1,'triangle'); showAlertPopup('💧 ZONA LIQUIDEZ: $'+p.toFixed(2)); sendTelegram('ZONA_LIQ',sym,p.toFixed(2),null); lastZoneAlert=Date.now(); }
-  // Max pain
-  const mp = getMPPrice(p);
-  if(Math.abs(p-mp)<0.5 && alertCfg.mp && Date.now()-lastMPAlert>60000){ playTone(550,0.3,'sine'); showAlertPopup('🎯 PRECIO EN MAX PAIN $'+mp); sendTelegram('MAX_PAIN',sym,p.toFixed(2),null,{max_pain:mp}); lastMPAlert=Date.now(); }
+  // Max Pain alert: DESACTIVADO — Max Pain real requiere cadena de opciones (FASE 4). No alertamos sobre dato inventado.
   // Signal
   const sig = computeNeuralScore(p);
   if(sig.type==='BUY' && lastSignal!=='BUY' && alertCfg.buy){ playTone(880,0.4,'sine'); showAlertPopup('▲ BUY INSTITUCIONAL — Score '+sig.score+'/10'); sendTelegram('BUY',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='BUY'; }
   else if(sig.type==='SELL' && lastSignal!=='SELL' && alertCfg.buy){ playTone(220,0.4,'sine'); showAlertPopup('▼ SELL INSTITUCIONAL — Score '+sig.score+'/10'); sendTelegram('SELL',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='SELL'; }
   else if(sig.type==='NEUTRAL'){ lastSignal=''; }
-  // GEX flip
-  const gexPos = getGEXRegime(p)==='POSITIVO';
-  if(gexWasPos!==null && gexWasPos!==gexPos && alertCfg.gex){ playTone(990,0.3,'sine'); showAlertPopup('⚡ GEX FLIP — '+(gexPos?'POSITIVO baja vol':'NEGATIVO alta vol')); sendTelegram('GEX_FLIP',sym,p.toFixed(2),null); } gexWasPos=gexPos;
+  // GEX flip alert: DESACTIVADO — GEX real requiere opciones (FASE 4).
   // Whale
   const wh = detectWhale(candles, 3.0);
   if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(440,0.3,'square',0.2); showAlertPopup('🐋 BALLENA '+wh.dir+' ×'+wh.ratio+' vol promedio'); sendTelegram('WHALE_'+wh.dir,sym,p.toFixed(2),null,{vol_ratio:wh.ratio}); lastWhaleAlert=Date.now(); }
@@ -1011,12 +1042,14 @@ function updateQuotePanel(){
   const fmt=v=>v!=null?'$'+v.toFixed(2):'—';
   const set=(id,v,cls)=>{ const e=document.getElementById(id);if(e){e.textContent=v;if(cls)e.className='vl '+cls;} };
   set('rq-p',fmt(d.c),'g'); set('rq-o',fmt(d.o),'a'); set('rq-h',fmt(d.h),'g'); set('rq-l',fmt(d.l),'r'); set('rq-pc',fmt(d.pc),'');
-  const up=(d.d||0)>=0;
-  set('rq-d',(up?'+':'')+(d.d||0).toFixed(2),up?'g':'r');
-  set('rq-dp',(up?'+':'')+(d.dp||0).toFixed(2)+'%',up?'g':'r');
+  const chg=(d.pc!=null && d.pc!==0)?(d.c-d.pc):0;
+  const chgPct=(d.dp!=null)?d.dp:0;
+  const up=chg>=0;
+  set('rq-d',(up?'+':'')+chg.toFixed(2),up?'g':'r');
+  set('rq-dp',(up?'+':'')+chgPct.toFixed(2)+'%',up?'g':'r');
   document.getElementById('price-big').textContent=fmt(d.c);
   document.getElementById('price-big').style.color=up?'var(--green)':'var(--red)';
-  const cd=document.getElementById('chg-disp'); cd.textContent=(up?'+':'')+(d.dp||0).toFixed(2)+'%'; cd.className=up?'up':'dn';
+  const cd=document.getElementById('chg-disp'); cd.textContent=(up?'+':'')+chgPct.toFixed(2)+'%'; cd.className=up?'up':'dn';
   set('k-h',d.h?.toFixed(2)||'—',''); set('k-l',d.l?.toFixed(2)||'—','');
   set('k-vol',d.v?(d.v/1e6).toFixed(1)+'M':'—','');
 }
@@ -1042,6 +1075,7 @@ function updateDerived(){
   qualEl.textContent = sig.conf.slice(0,3).join(' · ');
   scoreValEl.textContent = sig.score+'/10';
   scoreFillEl.style.width = (sig.score*10)+'%';
+  renderConfMeter(sig);
   const sc = sig.score;
   scoreFillEl.style.background = sc>=8?'var(--green)':sc>=5?'var(--yellow)':sc>=3?'var(--orange)':'var(--red)';
   // Kill Zone badge
@@ -1079,7 +1113,7 @@ function updateDerived(){
     document.getElementById('sig-t2').textContent='TP2 —';
     document.getElementById('sig-t3').textContent='TP3 —';
   }
-  set('k-gex',getGEXRegime(p)==='POSITIVO'?'POS':'NEG',getGEXRegime(p)==='POSITIVO'?'g':'r');
+  set('k-gex','N/D','');  // GEX real requiere opciones (FASE 4)
   // SuperTrend panel
   const stLast = stResult.length>0 ? stResult[stResult.length-1] : null;
   if(stLast){
@@ -1115,35 +1149,28 @@ function updateDerived(){
   } else {
     set('wh-alert','No detectada',''); set('wh-ratio','—',''); set('wh-dir','—',''); set('wh-vol','—','');
   }
-  // GEX
-  const gexPos=getGEXRegime(p)==='POSITIVO';
-  const callW=p*1.015, putW=p*0.985, zeroG=p*(gexPos?0.998:1.002), volT=p*(gexPos?1.003:0.997);
-  set('gex-net',gexPos?'+ Long Gamma':'- Short Gamma',gexPos?'g':'r');
-  const gf=document.getElementById('gex-bar'); gf.style.width=gexPos?'70%':'30%'; gf.style.background=gexPos?'var(--green)':'var(--red)';
-  set('gex-cw','$'+callW.toFixed(2),'g'); set('gex-pw','$'+putW.toFixed(2),'r'); set('gex-zg','$'+zeroG.toFixed(2),'y'); set('gex-vt','$'+volT.toFixed(2),'o');
-  const gr=document.getElementById('gex-reg'); if(gr){ gr.textContent=gexPos?'✓ POSITIVO':'⚠ NEGATIVO'; gr.className='vl '+(gexPos?'g':'r'); }
-  const ge=document.getElementById('gex-explain'); if(ge) ge.textContent=gexPos?'Precio tiende a pinear. Ideal opciones vendidas / iron condor.':'Movimientos amplificados. Ideal compra de opciones direccional.';
-  set('k-mp','$'+getMPPrice(p),'');
-  // Max Pain
-  const mp2=getMPPrice(p), mpPct=vp?Math.max(0,Math.min(1,(mp2-vp.min)/(vp.max-vp.min))):0.5;
-  document.getElementById('mpnd').style.left=(mpPct*100)+'%'; document.getElementById('mplb').style.left=(mpPct*100)+'%'; document.getElementById('mplb').textContent='$'+mp2;
-  set('mp-p','$'+mp2.toFixed(2),'y'); const mpd=((p-mp2)/p*100); set('mp-d',(mpd>=0?'+':'')+mpd.toFixed(2)+'%',mpd>=0?'g':'r');
-  set('mp-pin',Math.abs(mpd)<0.5?'⚠ ALTO':Math.abs(mpd)<1.5?'MEDIO':'BAJO',Math.abs(mpd)<0.5?'y':'');
-  set('pcr-v',(0.85+Math.sin(p*0.007)*0.3).toFixed(2),parseFloat((0.85+Math.sin(p*0.007)*0.3).toFixed(2))<1?'g':'r');
-  // Dark Pool
-  const dpP=p*(1+(Math.sin(Date.now()/10000)*0.003)), dpSent=cvd>0?'ALCISTA':'BAJISTA';
-  set('dp-last',new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'}),'p');
-  set('dp-price','$'+dpP.toFixed(2),'p'); set('dp-sent',dpSent,cvd>0?'g':'r');
-  // Options Flow
-  const callS=(Math.abs(Math.sin(Date.now()/50000))*8+2).toFixed(1)+'M', putS=(Math.abs(Math.cos(Date.now()/50000))*6+1).toFixed(1)+'M';
-  const cpRat=(parseFloat(callS)/parseFloat(putS)).toFixed(2);
-  set('of-cs',callS,'g'); set('of-ps',putS,'r'); set('of-cp',cpRat,parseFloat(cpRat)>1?'g':'r');
-  set('of-uv',bp2>65||bp2<35?'⚠ SI':'NO',bp2>65||bp2<35?'y':'');
-  // VWAP
-  if(vp){
-    const poc2=getPOC(vp); set('vwap-v','$'+poc2.toFixed(2),'p');
-    set('vwap-up','$'+(poc2*1.008).toFixed(2),''); set('vwap-dn','$'+(poc2*0.992).toFixed(2),'');
-    const vd=((p-poc2)/poc2*100); set('vwap-dist',(vd>=0?'+':'')+vd.toFixed(2)+'%',vd>=0?'g':'r');
+  // GEX / Max Pain / Walls: REQUIEREN cadena de opciones real (add-on Polygon, FASE 4).
+  // No se inventan números. Se muestran como N/D para no inducir a error institucional.
+  set('gex-net','N/D — opciones','');
+  const gf=document.getElementById('gex-bar'); if(gf){ gf.style.width='0%'; gf.style.background='var(--muted)'; }
+  set('gex-cw','N/D',''); set('gex-pw','N/D',''); set('gex-zg','N/D',''); set('gex-vt','N/D','');
+  const gr=document.getElementById('gex-reg'); if(gr){ gr.textContent='N/D'; gr.className='vl'; }
+  const ge=document.getElementById('gex-explain'); if(ge) ge.textContent='Requiere add-on de opciones (cadena real). FASE 4.';
+  set('k-mp','N/D','');
+  set('mp-p','N/D',''); set('mp-d','—',''); set('mp-pin','N/D','');
+  const mpnd=document.getElementById('mpnd'), mplb=document.getElementById('mplb');
+  if(mpnd) mpnd.style.left='50%'; if(mplb){ mplb.style.left='50%'; mplb.textContent='N/D'; }
+  set('pcr-v','N/D','');
+  set('dp-last','N/D','');  set('dp-price','N/D',''); set('dp-sent','N/D','');
+  set('of-cs','N/D',''); set('of-ps','N/D',''); set('of-cp','N/D','');
+  set('of-uv', bp2>65||bp2<35?'⚠ VOL':'NORMAL', bp2>65||bp2<35?'y':'');
+  // VWAP REAL (precio típico ponderado por volumen sobre la ventana de sesión)
+  const vwWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
+  const vw = getVWAP(candles.slice(-vwWin));
+  if(vw){
+    set('vwap-v','$'+vw.vwap.toFixed(2),'p');
+    set('vwap-up','$'+vw.up.toFixed(2),''); set('vwap-dn','$'+vw.dn.toFixed(2),'');
+    const vd=((p-vw.vwap)/vw.vwap*100); set('vwap-dist',(vd>=0?'+':'')+vd.toFixed(2)+'%',vd>=0?'g':'r');
   }
 }
 
@@ -1190,7 +1217,7 @@ function buildZones(mid){
   for(let i=2; i<bars.length-2; i++){
     const b=bars[i], age=(bars.length-i)/bars.length;
     const tfIdx=age<0.25?3:age<0.5?2:age<0.75?1:0;
-    const typeIdx=b.v/mv>0.6?0:b.v/mv>0.4?1:b.v/mv>0.2?2:Math.floor(Math.random()*3)+2;
+    const typeIdx=b.v/mv>0.6?0:b.v/mv>0.4?1:b.v/mv>0.2?2:(i%3)+2;
     const st=Math.min(1,0.45+(1-age)*0.4+(b.v/mv)*0.15);
     if(b.h>=bars[i-1].h&&b.h>=bars[i-2].h&&b.h>=bars[i+1].h&&b.h>=bars[i+2].h&&st>0.55)
       z.push({price:b.h,strength:st,tf:tfs[tfIdx],type:types[typeIdx],side:b.h>mid?'above':'below',width:4+st*30});
@@ -1209,6 +1236,17 @@ function buildZones(mid){
 }
 
 // ── VOL PROFILE ───────────────────────────────────────────────
+// VWAP REAL: precio típico (H+L+C)/3 ponderado por volumen sobre la ventana de sesión
+function getVWAP(bars){
+  if(!bars || !bars.length) return null;
+  let pv=0, vol=0;
+  for(const b of bars){ const tp=(b.h+b.l+b.c)/3; pv += tp*(b.v||0); vol += (b.v||0); }
+  if(vol<=0) return null;
+  const vwap = pv/vol;
+  let varSum=0; for(const b of bars){ const tp=(b.h+b.l+b.c)/3; varSum += (b.v||0)*Math.pow(tp-vwap,2); }
+  const sd = Math.sqrt(varSum/vol);
+  return { vwap, up: vwap+sd, dn: vwap-sd };
+}
 function buildVP(bars,n){
   if(!bars.length) return null;
   const mn=Math.min(...bars.map(b=>b.l)), mx=Math.max(...bars.map(b=>b.h));
@@ -1267,30 +1305,8 @@ function drawAll(){
     if(s>0.75){ ctx.fillStyle=col+'0.65)'; ctx.font='8px Space Mono,monospace'; ctx.fillText('$'+z.price.toFixed(2),4,y-3); }
   });
 
-  // GEX levels
-  if(quote.c){
-    const p2=quote.c,callW=p2*1.015,putW=p2*0.985;
-    ctx.strokeStyle='rgba(0,255,157,.3)'; ctx.lineWidth=1.2; ctx.setLineDash([6,4]);
-    ctx.beginPath();ctx.moveTo(0,pY(callW));ctx.lineTo(W-63,pY(callW));ctx.stroke();
-    ctx.strokeStyle='rgba(255,45,107,.3)';
-    ctx.beginPath();ctx.moveTo(0,pY(putW));ctx.lineTo(W-63,pY(putW));ctx.stroke();
-    ctx.setLineDash([]); ctx.font='8px Space Mono,monospace';
-    ctx.fillStyle='rgba(0,255,157,.55)'; ctx.fillText('CALL $'+callW.toFixed(0),4,pY(callW)-3);
-    ctx.fillStyle='rgba(255,45,107,.55)'; ctx.fillText('PUT $'+putW.toFixed(0),4,pY(putW)-3);
-  }
-
-  // Dark Pool prints
-  if(quote.c&&candles.length>5){
-    for(let i=0;i<3;i++){
-      const rc=candles[candles.length-1-i*8]; if(!rc) continue;
-      const dpP=rc.c*(1+(Math.sin(rc.t)*0.003));
-      const y=pY(dpP),x=(bars.length-1-i*8+1)*bw;
-      if(x<0||x>W) continue;
-      ctx.beginPath();ctx.arc(x,y,4,0,Math.PI*2);
-      ctx.fillStyle='rgba(180,77,255,.5)'; ctx.fill();
-      ctx.strokeStyle='rgba(180,77,255,.8)'; ctx.lineWidth=1; ctx.stroke();
-    }
-  }
+  // GEX walls / Dark Pool prints: ELIMINADOS — requieren cadena de opciones y trades
+  // reales (add-on opciones Polygon, FASE 4). No se dibujan niveles inventados.
 
   // Volume Profile
   if(vp){
@@ -1342,20 +1358,23 @@ function drawAll(){
     ctx.setLineDash([]);
   }
 
-  // VWAP line (purple)
-  if(vp){
-    const poc=getPOC(vp);
-    ctx.strokeStyle='rgba(180,77,255,.8)'; ctx.lineWidth=1.5; ctx.setLineDash([]);
-    ctx.beginPath();
-    bars.forEach((b,i)=>{ const x=(i+1)*bw,y=pY(poc); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
-    ctx.stroke();
-    [1.008,.992].forEach(m=>{
-      ctx.strokeStyle='rgba(180,77,255,.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+  // VWAP line (purple) — VWAP REAL ponderado por volumen
+  {
+    const vwWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
+    const vw = getVWAP(candles.slice(-vwWin));
+    if(vw){
+      ctx.strokeStyle='rgba(180,77,255,.8)'; ctx.lineWidth=1.5; ctx.setLineDash([]);
       ctx.beginPath();
-      bars.forEach((b,i)=>{ const x=(i+1)*bw,y=pY(poc*m); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+      bars.forEach((b,i)=>{ const x=(i+1)*bw,y=pY(vw.vwap); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
       ctx.stroke();
-    });
-    ctx.setLineDash([]);
+      [vw.up,vw.dn].forEach(band=>{
+        ctx.strokeStyle='rgba(180,77,255,.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+        ctx.beginPath();
+        bars.forEach((b,i)=>{ const x=(i+1)*bw,y=pY(band); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+    }
   }
 
   // CHoCH / BOS lines on chart
@@ -1400,12 +1419,8 @@ function drawAll(){
     }
   }
 
-  // Max Pain line
+  // Max Pain line: ELIMINADA — Max Pain real requiere cadena de opciones (FASE 4).
   if(quote.c){
-    const mp2=getMPPrice(quote.c),mpy=pY(mp2);
-    ctx.strokeStyle='rgba(255,140,0,.8)'; ctx.lineWidth=1.5; ctx.setLineDash([6,3]);
-    ctx.beginPath();ctx.moveTo(0,mpy);ctx.lineTo(W-63,mpy);ctx.stroke(); ctx.setLineDash([]);
-    ctx.fillStyle='#ff8c00'; ctx.font='bold 9px Space Mono,monospace'; ctx.fillText('MAX PAIN $'+mp2,6,mpy-3);
 
     // Current price tag
     const cp=quote.c,cpy=pY(cp),bull2=(quote.d||0)>=0;
@@ -1449,9 +1464,15 @@ function drawOF(bars){
   const W=62,H=ofc.height; ofctx.clearRect(0,0,W,H);
   if(!bars?.length) return;
   const steps=12;
+  const recent=bars.slice(-steps);
   for(let i=0;i<steps;i++){
     const y=H-(i/steps)*H*.8-H*.08;
-    const b=Math.random(),s=Math.random();
+    const bar=recent[i]||recent[recent.length-1];
+    // BID/ASK derivado de dirección real de la vela y su volumen relativo
+    const mv=Math.max(...recent.map(c=>c.v||1));
+    const vr=(bar?.v||0)/mv;
+    const bull=bar && bar.c>=bar.o;
+    const b=bull?vr:vr*0.35, s=bull?vr*0.35:vr;
     ofctx.fillStyle=`rgba(0,255,157,${.15+b*.3})`;ofctx.fillRect(2,y-3,b*26,6);
     ofctx.fillStyle=`rgba(255,45,107,${.15+s*.3})`;ofctx.fillRect(36,y-3,s*22,6);
   }
@@ -1533,8 +1554,13 @@ async function selectTF(t,btn){
 function startTicker(){
   setInterval(async()=>{
     const s=TICKERS[tickIdx%TICKERS.length]; tickIdx++;
-    try{ const r=await fetch(`https://finnhub.io/api/v1/quote?symbol=${s}&token=${API_KEY}`); const d=await r.json(); if(d&&d.c) tickerCache[s]=d; renderTicker(); } catch(e){}
-  },2000);
+    if(!POLY_KEY) return;
+    try{
+      const r=await fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${s}?apiKey=${POLY_KEY}`);
+      const j=await r.json(); const t=j.ticker;
+      if(t){ const live=t.lastTrade?.p||t.min?.c||t.day?.c||t.prevDay?.c; const dp=t.todaysChangePerc; if(live) tickerCache[s]={c:live,dp:dp||0}; renderTicker(); }
+    } catch(e){}
+  },2500);
 }
 function renderTicker(){ const html=Object.entries(tickerCache).map(([s,d])=>{ const up=(d.dp||0)>=0; return `<span class="ti ${up?'up':'dn'}">${s} $${d.c?.toFixed(2)} (${up?'+':''}${d.dp?.toFixed(2)}%)</span>`; }).join(''); document.getElementById('ticker-wrap').innerHTML=html||'<span style="color:var(--muted)">Cargando...</span>'; }
 
