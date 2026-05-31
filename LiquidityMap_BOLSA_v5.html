@@ -271,8 +271,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
   <div class="kpi"><span class="k">H </span><span class="v" id="k-h">—</span></div>
   <div class="kpi"><span class="k">L </span><span class="v" id="k-l">—</span></div>
   <div class="kpi"><span class="k">VOL </span><span class="v" id="k-vol">—</span></div>
-  <div class="kpi"><span class="k">GEX </span><span class="v" id="k-gex">—</span></div>
-  <div class="kpi"><span class="k">MAX PAIN </span><span class="v" id="k-mp">—</span></div>
+  <div class="kpi"><span class="k">RÉGIMEN </span><span class="v" id="k-gex">—</span></div>
+  <div class="kpi"><span class="k">IMÁN POC </span><span class="v" id="k-mp">—</span></div>
   <div class="vsep"></div>
   <div id="wsdot"></div>
   <span id="mkst" class="closed">○ CLOSED</span>
@@ -388,51 +388,50 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div style="margin-top:4px;font-size:8px;color:var(--muted)">Vol >3× promedio = acumulación inst.</div>
     </div>
 
-    <!-- GEX -->
+    <!-- RÉGIMEN DE VOLATILIDAD (rol del GEX, 100% real desde aggregates) -->
     <div class="ps">
-      <h3>⚡ GEX Gamma <span style="font-size:7px;color:var(--muted);font-weight:400">· N/D FASE 4</span></h3>
-      <div class="mr"><span class="lb">Net GEX</span><span class="vl" id="gex-net">—</span></div>
-      <div class="gex-bar-wrap"><div class="gex-bar-fill" id="gex-bar" style="width:50%"></div></div>
-      <div class="mr"><span class="lb">Call Wall</span><span class="vl g" id="gex-cw">—</span></div>
-      <div class="mr"><span class="lb">Put Wall</span><span class="vl r" id="gex-pw">—</span></div>
-      <div class="mr"><span class="lb">Zero Gamma</span><span class="vl y" id="gex-zg">—</span></div>
-      <div class="mr"><span class="lb">Vol Trigger</span><span class="vl o" id="gex-vt">—</span></div>
-      <div class="mr"><span class="lb">Régimen</span><span class="vl" id="gex-reg">—</span></div>
-      <div style="margin-top:4px;font-size:8px;color:var(--muted);line-height:1.5" id="gex-explain">—</div>
+      <h3>📊 Régimen de Volatilidad <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· REAL</span></h3>
+      <div class="mr"><span class="lb">Régimen</span><span class="vl" id="fl-reg">—</span></div>
+      <div class="gex-bar-wrap"><div class="gex-bar-fill" id="fl-reg-bar" style="width:50%"></div></div>
+      <div class="mr"><span class="lb">Vol. realizada</span><span class="vl a" id="fl-vol">—</span></div>
+      <div class="mr"><span class="lb">ATR(14)</span><span class="vl a" id="fl-atr">—</span></div>
+      <div class="mr"><span class="lb">Expansión</span><span class="vl" id="fl-exp">—</span></div>
+      <div class="mr"><span class="lb">Reacción POC</span><span class="vl" id="fl-react">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted);line-height:1.5" id="fl-reg-note">—</div>
     </div>
 
-    <!-- MAX PAIN -->
+    <!-- IMÁN DE VOLUMEN (rol del Max Pain, 100% real: POC + VWAP) -->
     <div class="ps">
-      <h3>🎯 Max Pain <span style="font-size:7px;color:var(--muted);font-weight:400">· N/D FASE 4</span></h3>
+      <h3>🧲 Imán de Volumen <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· REAL</span></h3>
       <div class="mpw">
         <div class="mplb" id="mplb" style="left:50%">—</div>
         <div class="mptr"></div>
         <div class="mpnd" id="mpnd" style="left:50%;top:10px"></div>
       </div>
-      <div class="mr"><span class="lb">Max Pain</span><span class="vl y" id="mp-p">—</span></div>
-      <div class="mr"><span class="lb">Dist. precio</span><span class="vl" id="mp-d">—</span></div>
-      <div class="mr"><span class="lb">Pin Risk</span><span class="vl y" id="mp-pin">—</span></div>
-      <div class="mr"><span class="lb">Put/Call Est.</span><span class="vl" id="pcr-v">—</span></div>
+      <div class="mr"><span class="lb">Imán POC</span><span class="vl y" id="fl-poc">—</span></div>
+      <div class="mr"><span class="lb">Dist. precio</span><span class="vl" id="fl-pocd">—</span></div>
+      <div class="mr"><span class="lb">Fuerza imán</span><span class="vl y" id="fl-magnet">—</span></div>
+      <div class="mr"><span class="lb">VWAP anclado</span><span class="vl p" id="fl-vwap">—</span></div>
     </div>
 
-    <!-- DARK POOL -->
+    <!-- POOLS DE LIQUIDEZ (rol de las walls, 100% real: equal highs/lows) -->
     <div class="ps">
-      <h3>🌑 Dark Pool Est.</h3>
-      <div class="mr"><span class="lb">Último print</span><span class="vl p" id="dp-last">—</span></div>
-      <div class="mr"><span class="lb">Precio DP</span><span class="vl p" id="dp-price">—</span></div>
-      <div class="mr"><span class="lb">Sentimiento</span><span class="vl" id="dp-sent">—</span></div>
-      <div style="margin-top:4px;font-size:8px;color:var(--muted)">Estimado por divergencia vol/precio</div>
+      <h3>💎 Pools de Liquidez <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· REAL</span></h3>
+      <div class="mr"><span class="lb">Pool resistencia</span><span class="vl g" id="fl-res">—</span></div>
+      <div class="mr"><span class="lb">Pool soporte</span><span class="vl r" id="fl-sup">—</span></div>
+      <div class="mr"><span class="lb">Objetivo cercano</span><span class="vl" id="fl-target">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">Equal highs/lows = stops acumulados (imán de precio)</div>
     </div>
 
-    <!-- OPTIONS FLOW -->
+    <!-- FLUJO & BALLENAS (RVOL real + capas que se activan con Developer $79) -->
     <div class="ps">
-      <h3>🌊 Options Flow</h3>
-      <div class="mr"><span class="lb">Call Sweep</span><span class="vl g" id="of-cs">—</span></div>
-      <div class="mr"><span class="lb">Put Sweep</span><span class="vl r" id="of-ps">—</span></div>
-      <div class="mr"><span class="lb">Ratio C/P</span><span class="vl" id="of-cp">—</span></div>
-      <div class="mr"><span class="lb">Unusual Vol.</span><span class="vl y" id="of-uv">—</span></div>
-      <div class="mr"><span class="lb">Premium neto</span><span class="vl" id="of-prem">—</span></div>
-      <div style="margin-top:4px;font-size:8px;color:var(--muted)">Est. intraday · C=alcista P=bajista</div>
+      <h3>🐋 Flujo &amp; Ballenas</h3>
+      <div class="mr"><span class="lb">RVOL (huella)</span><span class="vl y" id="fl-rvol">—</span></div>
+      <div class="mr"><span class="lb">Dirección huella</span><span class="vl" id="fl-foot">—</span></div>
+      <div class="mr"><span class="lb">Prints &gt;$1M</span><span class="vl" id="fl-prints" style="color:var(--muted)">🔒 Developer $79</span></div>
+      <div class="mr"><span class="lb">Dark Pool real</span><span class="vl" id="fl-dpool" style="color:var(--muted)">🔒 Developer $79</span></div>
+      <div class="mr"><span class="lb">CVD por agresor</span><span class="vl" id="fl-cvdagg" style="color:var(--muted)">🔒 Developer $79</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">RVOL real (huella de vol.). Print-level/dark pool/CVD agresor requieren endpoint Trades (Developer $79).</div>
     </div>
 
     <!-- ZONAS LIQUIDEZ -->
@@ -513,9 +512,9 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <h2>🔔 Alertas</h2>
     <div class="am-row"><label>Señal BUY/SELL</label><div class="am-toggle on" id="al-buy" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>Zona liquidez</label><div class="am-toggle on" id="al-zone" onclick="toggleAL(this)"></div></div>
-    <div class="am-row"><label>Max Pain <span style="font-size:8px;color:var(--muted)">(FASE 4)</span></label><div class="am-toggle" id="al-mp" onclick="toggleAL(this)"></div></div>
-    <div class="am-row"><label>GEX Flip <span style="font-size:8px;color:var(--muted)">(FASE 4)</span></label><div class="am-toggle" id="al-gex" onclick="toggleAL(this)"></div></div>
-    <div class="am-row"><label>Dark Pool</label><div class="am-toggle on" id="al-dp" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>Régimen vol. <span style="font-size:8px;color:var(--muted)">(contexto)</span></label><div class="am-toggle" id="al-mp" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>RVOL ballena <span style="font-size:8px;color:var(--muted)">(contexto)</span></label><div class="am-toggle" id="al-gex" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>Dark Pool <span style="font-size:8px;color:var(--muted)">($79)</span></label><div class="am-toggle" id="al-dp" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>Ballena detectada</label><div class="am-toggle on" id="al-whale" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>CHoCH / BOS</label><div class="am-toggle on" id="al-struct" onclick="toggleAL(this)"></div></div>
     <button class="am-close" onclick="toggleAlertModal()">CERRAR</button>
@@ -746,6 +745,118 @@ function detectWhale(bars, threshold){
   return null;
 }
 
+// ── FLUJO REAL ─────────────────────────────────────────────────
+// Mide los EFECTOS observables que el GEX / Max Pain / walls producen,
+// usando datos 100% reales de aggregates (autorizados por el plan Starter).
+// NO inventa la cadena de opciones. NO vota dirección ni suma al score:
+// es CONTEXTO que modula la lectura (condición anti-ruido del proyecto).
+function computeFlow(bars, vprofile, price, timeframe){
+  if(!bars || bars.length < 20 || !price) return null;
+  // True Range / ATR real (volatilidad realizada)
+  const tr = [];
+  for(let i=1;i<bars.length;i++){
+    const pc=bars[i-1].c;
+    tr.push(Math.max(bars[i].h-bars[i].l, Math.abs(bars[i].h-pc), Math.abs(bars[i].l-pc)));
+  }
+  const atrN = (arr,n)=> arr.length ? arr.slice(-Math.min(n,arr.length)).reduce((a,v)=>a+v,0)/Math.min(n,arr.length) : 0;
+  const atr14 = atrN(tr,14), atrFast = atrN(tr,7), atrSlow = atrN(tr,21);
+  const realizedVolPct = (atr14/price)*100;
+  // Régimen: el rol del GEX → ¿el precio se fija (mean-reversion) o rompe (momentum)?
+  const expRatio = atrSlow>0 ? atrFast/atrSlow : 1;
+  let regime, regimeNote;
+  if(expRatio >= 1.15){ regime='EXPANSIÓN'; regimeNote='Momentum — el precio tiende a romper niveles. Favorece continuación; cuidado con reversión a la media.'; }
+  else if(expRatio <= 0.85){ regime='COMPRESIÓN'; regimeNote='Fijación — rango estrecho, el precio gravita al imán (POC/VWAP). Favorece reversión, no ruptura.'; }
+  else { regime='NEUTRAL'; regimeNote='Volatilidad estable — sin sesgo de régimen claro.'; }
+  // Imán de volumen: el rol del Max Pain → POC + concentración + reacción
+  let poc=null, vah=null, val=null, magnetStrength=null, pocReact='—', pocDist=null;
+  if(vprofile){
+    poc = getPOC(vprofile);
+    const va = getVA(vprofile); vah=va.vah; val=va.val;
+    const tot = vprofile.profile.reduce((a,b)=>a+b,0) || 1;
+    magnetStrength = (Math.max(...vprofile.profile)/tot)*100;
+    pocDist = ((price-poc)/poc)*100;
+    const recent = bars.slice(-6);
+    const crossed = recent.some(b=>b.l<=poc) && recent.some(b=>b.h>=poc);
+    if(crossed) pocReact = bars[bars.length-1].c>poc ? 'Atraviesa ▲' : 'Atraviesa ▼';
+    else pocReact = price>poc ? 'Sostiene arriba' : 'Sostiene abajo';
+  }
+  // VWAP anclado a la sesión visible
+  const vwWin = ({'5':78,'15':52,'60':60,'240':60,'D':60})[timeframe] || 60;
+  const vwo = getVWAP(bars.slice(-vwWin));
+  const vwap = vwo ? vwo.vwap : null;
+  // RVOL real (huella de volumen — la única "ballena" posible sin endpoint Trades)
+  const avg20 = bars.slice(-21,-1).reduce((a,b)=>a+(b.v||0),0)/20;
+  const lastV = bars[bars.length-1].v||0;
+  const rvol = avg20>0 ? lastV/avg20 : 0;
+  return { atr14, realizedVolPct, expRatio, regime, regimeNote, poc, vah, val, magnetStrength, pocReact, pocDist, vwap, rvol };
+}
+
+// Pools de liquidez: el rol de las "walls" → clusters de equal highs/lows (stops acumulados).
+// 100% real, derivado de los swings de estructura.
+function findLiquidityPools(swings, price){
+  if(!swings || !swings.length || !price) return { res:null, sup:null };
+  const highs = swings.filter(s=>s.type==='HH').map(s=>s.price);
+  const lows  = swings.filter(s=>s.type==='LL').map(s=>s.price);
+  const above = highs.filter(h=>h>price).sort((a,b)=>a-b);   // resistencias más cercanas primero
+  const below = lows.filter(l=>l<price).sort((a,b)=>b-a);     // soportes más cercanos primero
+  const cluster = (arr)=>{
+    if(!arr.length) return null;
+    const base = arr[0];
+    const grp = arr.filter(v=>Math.abs(v-base)/base <= 0.004); // equal H/L = dentro de 0.4%
+    return { price: grp.reduce((a,v)=>a+v,0)/grp.length, count: grp.length };
+  };
+  return { res: cluster(above), sup: cluster(below) };
+}
+
+// ── TP/SL ESTRUCTURALES ────────────────────────────────────────
+// TP precisos anclados a niveles REALES (VWAP, POC, VAH/VAL, pools de liquidez,
+// máx/mín del día, proyección medida desde el impulso/BOS). El ATR es solo relleno
+// cuando faltan niveles. Pensado para salidas precisas en opciones.
+function computeStructuralTargets(p, sigType, flow, pools, quote, struct, atr){
+  if((sigType!=='BUY' && sigType!=='SELL') || !p || !atr) return null;
+  const isBuy = sigType==='BUY';
+  const cand = [];
+  const add = (price, label)=>{ if(price!=null && isFinite(price) && (isBuy ? price>p : price<p)) cand.push({price, label}); };
+  if(flow){ add(flow.vwap,'VWAP'); add(flow.poc,'POC'); add(isBuy?flow.vah:flow.val, isBuy?'VAH':'VAL'); }
+  if(pools){ add(isBuy ? (pools.res&&pools.res.price) : (pools.sup&&pools.sup.price), 'Pool liq.'); }
+  if(quote){ add(isBuy?quote.h:quote.l, isBuy?'Máx día':'Mín día'); }
+  // Proyección medida (measured move): rango del último impulso swing proyectado
+  if(struct && struct.swings && struct.swings.length>=2){
+    const hh=struct.swings.filter(s=>s.type==='HH'), ll=struct.swings.filter(s=>s.type==='LL');
+    if(hh.length && ll.length){
+      const rng=Math.abs(hh[hh.length-1].price - ll[ll.length-1].price);
+      if(rng>0) add(isBuy ? p+rng : p-rng, 'Proy. BOS');
+    }
+  }
+  // Ordeno por cercanía y deduplico niveles a <0.15%
+  cand.sort((a,b)=> isBuy ? a.price-b.price : b.price-a.price);
+  const uniq=[];
+  for(const c of cand){ if(!uniq.some(u=>Math.abs(u.price-c.price)/p < 0.0015)) uniq.push(c); }
+  // Relleno con proyección ATR si faltan niveles para 3 TP
+  const atrMults=[1.0,1.8,2.6]; let mi=0;
+  while(uniq.length<3 && mi<atrMults.length){
+    const proj = isBuy ? p+atr*atrMults[mi] : p-atr*atrMults[mi];
+    if(!uniq.some(u=>Math.abs(u.price-proj)/p < 0.0015)) uniq.push({price:proj, label:'Proy. ATR'});
+    mi++;
+  }
+  const tps = uniq.slice(0,3);
+  // SL: invalidación estructural del lado opuesto + buffer ATR; con distancia mínima sensata
+  const slCand=[];
+  const addSL=(price,label)=>{ if(price!=null&&isFinite(price)&&(isBuy?price<p:price>p)) slCand.push({price,label}); };
+  addSL(isBuy ? (pools&&pools.sup&&pools.sup.price) : (pools&&pools.res&&pools.res.price), 'Pool');
+  addSL(isBuy ? (flow&&flow.val) : (flow&&flow.vah), isBuy?'VAL':'VAH');
+  addSL(isBuy ? (quote&&quote.l) : (quote&&quote.h), isBuy?'Mín día':'Máx día');
+  slCand.sort((a,b)=> isBuy ? b.price-a.price : a.price-b.price);
+  let slPrice, slLabel;
+  const buffer=atr*0.4;
+  if(slCand.length){ slPrice = isBuy ? slCand[0].price-buffer : slCand[0].price+buffer; slLabel=slCand[0].label; }
+  else { slPrice = isBuy ? p-atr*1.2 : p+atr*1.2; slLabel='ATR'; }
+  const minSL=atr*0.6;
+  if(isBuy && (p-slPrice)<minSL) slPrice=p-minSL;
+  if(!isBuy && (slPrice-p)<minSL) slPrice=p+minSL;
+  return { tps, sl:{ price:slPrice, label:slLabel } };
+}
+
 // ── STOP HUNT ─────────────────────────────────────────────────
 function detectStopHunt(candle){
   if(!candle) return null;
@@ -767,7 +878,7 @@ function computeNeuralScore(p){
   const conf = [];
   const layers = [];
   let score = 0;
-  const rawMax = 12.5;
+  const rawMax = 11.5; // ST3 + VWAP1.5 + CVD1.5 + BOS3 + CHoCH0.5 + Presión1 + ValueArea1
   const addL = (name, val, dir) => layers.push({ name, val, dir }); // dir: 1 bull, -1 bear, 0 neutral
 
   // CAPA 1 — SuperTrend JUEZ (3 pts máx)
@@ -788,15 +899,20 @@ function computeNeuralScore(p){
   if(cvd > 0) { score += 1.5; conf.push('📈 CVD positivo ✓'); addL('CVD', 1.5, 1); }
   else        { score -= 1.5; conf.push('📈 CVD negativo ✗'); addL('CVD', 1.5, -1); }
 
-  // CAPA 4 — CHoCH / BOS (estructura)
-  if(struct.bos){
-    if(struct.bos.dir === 'BULL') { score += 3; conf.push('🏗 BOS ALCISTA ✓'); addL('BOS', 3, 1); }
-    else                          { score -= 3; conf.push('🏗 BOS BAJISTA ✗'); addL('BOS', 3, -1); }
-  } else { addL('BOS', 0, 0); }
-  if(struct.choch){
-    if(struct.choch.dir === 'BULL') { score += 1.5; conf.push('⚡ CHoCH BULL'); addL('CHoCH', 1.5, 1); }
-    else                            { score -= 1.5; conf.push('⚡ CHoCH BEAR'); addL('CHoCH', 1.5, -1); }
-  }
+  // CAPA 4 — ESTRUCTURA (BOS lidera; CHoCH confirma sin duplicar)
+  // BOS = movimiento confirmado (señal principal para salidas en opciones) → peso completo.
+  // CHoCH solo = reversa temprana → peso medio. CHoCH junto al BOS = confirma, no duplica.
+  const bosDir   = struct.bos   ? (struct.bos.dir   === 'BULL' ? 1 : -1) : 0;
+  const chochDir = struct.choch ? (struct.choch.dir === 'BULL' ? 1 : -1) : 0;
+  if(bosDir !== 0){
+    score += 3 * bosDir; conf.push(bosDir>0?'🏗 BOS ALCISTA ✓':'🏗 BOS BAJISTA ✗'); addL('BOS', 3, bosDir);
+    if(chochDir !== 0){
+      score += 0.5 * chochDir; conf.push(chochDir>0?'⚡ CHoCH confirma alcista':'⚡ CHoCH confirma bajista'); addL('CHoCH', 0.5, chochDir);
+    } else { addL('CHoCH', 0, 0); }
+  } else if(chochDir !== 0){
+    score += 1.5 * chochDir; conf.push(chochDir>0?'⚡ CHoCH ALCISTA (reversa temprana)':'⚡ CHoCH BAJISTA (reversa temprana)'); addL('CHoCH', 1.5, chochDir);
+    addL('BOS', 0, 0);
+  } else { addL('BOS', 0, 0); addL('CHoCH', 0, 0); }
 
   // CAPA 5 — Buy pressure (1 pt)
   const tot = buyV + sellV + 1;
@@ -1096,27 +1212,21 @@ function updateDerived(){
   const wh = detectWhale(candles, 3.0);
   if(wh){ wBadge.textContent='🐋 BALLENA '+wh.dir+' ×'+wh.ratio; wBadge.style.display=''; }
   else { wBadge.style.display='none'; }
-  // SL/TP
+  // Flujo real + pools de liquidez (se calculan UNA vez; los usan los TP y el panel)
+  const flow = computeFlow(candles, vp, p, tf);
+  const pools = findLiquidityPools(struct.swings, p);
+  // SL/TP ESTRUCTURALES (niveles reales; ATR solo de relleno)
   const atr = getATR(sym, p, tf);
-  const _m  = getTPMult(tf);
-  const slD = atr*_m.sl, tp1D = atr*_m.tp1, tp2D = atr*_m.tp2, tp3D = atr*_m.tp3;
-  if(sig.type==='BUY'){
-    document.getElementById('sig-stop').textContent='SL $'+(p-slD).toFixed(2);
-    document.getElementById('sig-t1').textContent='TP1 $'+(p+tp1D).toFixed(2);
-    document.getElementById('sig-t2').textContent='TP2 $'+(p+tp2D).toFixed(2);
-    document.getElementById('sig-t3').textContent='TP3 $'+(p+tp3D).toFixed(2);
-  } else if(sig.type==='SELL'){
-    document.getElementById('sig-stop').textContent='SL $'+(p+slD).toFixed(2);
-    document.getElementById('sig-t1').textContent='TP1 $'+(p-tp1D).toFixed(2);
-    document.getElementById('sig-t2').textContent='TP2 $'+(p-tp2D).toFixed(2);
-    document.getElementById('sig-t3').textContent='TP3 $'+(p-tp3D).toFixed(2);
+  const tgt = computeStructuralTargets(p, sig.type, flow, pools, quote, struct, atr);
+  const setTP=(id,txt)=>{ const e=document.getElementById(id); if(e) e.textContent=txt; };
+  if(tgt){
+    setTP('sig-stop','SL $'+tgt.sl.price.toFixed(2)+' · '+tgt.sl.label);
+    tgt.tps.forEach((t,i)=> setTP('sig-t'+(i+1),'TP'+(i+1)+' $'+t.price.toFixed(2)+' · '+t.label));
+    for(let i=tgt.tps.length;i<3;i++) setTP('sig-t'+(i+1),'TP'+(i+1)+' —');
   } else {
-    document.getElementById('sig-stop').textContent='SL —';
-    document.getElementById('sig-t1').textContent='TP1 —';
-    document.getElementById('sig-t2').textContent='TP2 —';
-    document.getElementById('sig-t3').textContent='TP3 —';
+    setTP('sig-stop','SL —'); setTP('sig-t1','TP1 —'); setTP('sig-t2','TP2 —'); setTP('sig-t3','TP3 —');
   }
-  set('k-gex','N/D','');  // GEX real requiere opciones (FASE 4)
+  // k-gex / k-mp se setean en el bloque de Flujo Real (régimen + imán POC, datos reales)
   // SuperTrend panel
   const stLast = stResult.length>0 ? stResult[stResult.length-1] : null;
   if(stLast){
@@ -1152,21 +1262,57 @@ function updateDerived(){
   } else {
     set('wh-alert','No detectada',''); set('wh-ratio','—',''); set('wh-dir','—',''); set('wh-vol','—','');
   }
-  // GEX / Max Pain / Walls: REQUIEREN cadena de opciones real (add-on Polygon, FASE 4).
-  // No se inventan números. Se muestran como N/D para no inducir a error institucional.
-  set('gex-net','N/D — opciones','');
-  const gf=document.getElementById('gex-bar'); if(gf){ gf.style.width='0%'; gf.style.background='var(--muted)'; }
-  set('gex-cw','N/D',''); set('gex-pw','N/D',''); set('gex-zg','N/D',''); set('gex-vt','N/D','');
-  const gr=document.getElementById('gex-reg'); if(gr){ gr.textContent='N/D'; gr.className='vl'; }
-  const ge=document.getElementById('gex-explain'); if(ge) ge.textContent='Requiere add-on de opciones (cadena real). FASE 4.';
-  set('k-mp','N/D','');
-  set('mp-p','N/D',''); set('mp-d','—',''); set('mp-pin','N/D','');
-  const mpnd=document.getElementById('mpnd'), mplb=document.getElementById('mplb');
-  if(mpnd) mpnd.style.left='50%'; if(mplb){ mplb.style.left='50%'; mplb.textContent='N/D'; }
-  set('pcr-v','N/D','');
-  set('dp-last','N/D','');  set('dp-price','N/D',''); set('dp-sent','N/D','');
-  set('of-cs','N/D',''); set('of-ps','N/D',''); set('of-cp','N/D','');
-  set('of-uv', bp2>65||bp2<35?'⚠ VOL':'NORMAL', bp2>65||bp2<35?'y':'');
+  // ── PANEL DE FLUJO REAL (reemplaza el N/D FASE 4) ──
+  // Todo derivado de aggregates reales. NO suma al score (contexto que modula).
+  // GEX/Max Pain/cadena de opciones reales se montan encima al activar el add-on $199.
+  // (flow y pools ya calculados arriba, junto con los TP estructurales)
+  if(flow){
+    // Régimen de volatilidad (rol del GEX)
+    const regBull = flow.regime==='EXPANSIÓN', regNeu = flow.regime==='NEUTRAL';
+    set('fl-reg', flow.regime, regBull?'g':(regNeu?'':'y'));
+    const rb=document.getElementById('fl-reg-bar');
+    if(rb){ rb.style.width=Math.min(100,Math.max(8,flow.expRatio*55)).toFixed(0)+'%'; rb.style.background=regBull?'var(--gex-pos)':(regNeu?'var(--muted)':'var(--yellow)'); }
+    set('fl-vol', flow.realizedVolPct.toFixed(2)+'%','a');
+    set('fl-atr', '$'+flow.atr14.toFixed(2),'a');
+    set('fl-exp', flow.expRatio.toFixed(2)+'×', flow.expRatio>=1.15?'g':(flow.expRatio<=0.85?'y':''));
+    set('fl-react', flow.pocReact, flow.pocReact.includes('▲')?'g':(flow.pocReact.includes('▼')?'r':''));
+    const fn=document.getElementById('fl-reg-note'); if(fn) fn.textContent=flow.regimeNote;
+    set('k-gex', flow.regime, regBull?'':'');
+    // Imán de volumen (rol del Max Pain)
+    if(flow.poc!=null){
+      set('fl-poc','$'+flow.poc.toFixed(2),'y');
+      set('fl-pocd',(flow.pocDist>=0?'+':'')+flow.pocDist.toFixed(2)+'%', flow.pocDist>=0?'g':'r');
+      set('fl-magnet', flow.magnetStrength.toFixed(0)+'%','y');
+      set('k-mp','$'+flow.poc.toFixed(2),'');
+      // Visual: posición del precio respecto a VAL↔VAH (imán = POC)
+      const mpnd=document.getElementById('mpnd'), mplb=document.getElementById('mplb');
+      if(flow.val!=null && flow.vah!=null && flow.vah>flow.val){
+        const rng=flow.vah-flow.val;
+        const pricePct=Math.min(100,Math.max(0,((p-flow.val)/rng)*100));
+        const pocPct=Math.min(100,Math.max(0,((flow.poc-flow.val)/rng)*100));
+        if(mpnd){ mpnd.style.left=pricePct.toFixed(0)+'%'; }
+        if(mplb){ mplb.style.left=pocPct.toFixed(0)+'%'; mplb.textContent='POC'; }
+      }
+    }
+    if(flow.vwap!=null) set('fl-vwap','$'+flow.vwap.toFixed(2),'p');
+    // Pools de liquidez (rol de las walls) — pools ya calculado arriba
+    if(pools.res){ set('fl-res','$'+pools.res.price.toFixed(2)+(pools.res.count>1?' ('+pools.res.count+'×)':''),'g'); }
+    else set('fl-res','—','');
+    if(pools.sup){ set('fl-sup','$'+pools.sup.price.toFixed(2)+(pools.sup.count>1?' ('+pools.sup.count+'×)':''),'r'); }
+    else set('fl-sup','—','');
+    if(pools.res && pools.sup){
+      const dRes=Math.abs(pools.res.price-p), dSup=Math.abs(p-pools.sup.price);
+      set('fl-target', dRes<dSup?'▲ Resistencia':'▼ Soporte', dRes<dSup?'g':'r');
+    } else if(pools.res){ set('fl-target','▲ Resistencia','g'); }
+    else if(pools.sup){ set('fl-target','▼ Soporte','r'); }
+    else set('fl-target','—','');
+    // Flujo & Ballenas: RVOL real (huella de volumen)
+    set('fl-rvol', flow.rvol.toFixed(2)+'×', flow.rvol>=3?'y':(flow.rvol>=1.5?'g':''));
+    const whF = detectWhale(candles, 3.0);
+    if(whF){ set('fl-foot', whF.dir==='BUY'?'▲ COMPRADORA':'▼ VENDEDORA', whF.dir==='BUY'?'g':'r'); }
+    else set('fl-foot','Normal','');
+    // fl-prints / fl-dpool / fl-cvdagg quedan en "🔒 Developer $79" (se activan con endpoint Trades)
+  }
   // VWAP REAL (precio típico ponderado por volumen sobre la ventana de sesión)
   const vwWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
   const vw = getVWAP(candles.slice(-vwWin));
