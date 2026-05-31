@@ -550,8 +550,7 @@ function showChangePass(){
 }
 
 // ── STATE ─────────────────────────────────────────────────────
-let API_KEY = localStorage.getItem('fh_key') || 'd0qsf2hr01qgsn5hm2k0d0qsf2hr01qgsn5hm2kg'; // Finnhub: precio EN VIVO (overlay)
-let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: velas REALES (estructura)
+let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: única fuente (velas + precio)
 let sym = 'SPY', tf = '60';
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
@@ -886,12 +885,12 @@ async function initApp(){
   resizeCanvas();
   loadSavedSymbols();
   await loadAll();
-  // WebSocket Finnhub DESACTIVADO — fuente única Polygon. El snapshot da precio vivo.
+  // WebSocket Finnhub DESACTIVADO — fuente única Polygon (aggregates).
   startTicker();
   setInterval(updateClock, 1000);
   setInterval(updateMktStatus, 5000);
   setInterval(async () => { await loadCandles(); recomputeIndicators(); drawAll(); updatePanels(); }, 60000);
-  setInterval(loadQuote, 8000);  // snapshot Polygon más frecuente (precio vivo)
+  setInterval(loadQuote, 8000);  // refresca precio/día desde aggregates Polygon
   setInterval(() => { if(candles.length > 0){ recomputeIndicators(); drawAll(); } }, 5000);
   updateClock(); updateMktStatus();
   setTimeout(() => { resizeCanvas(); if(candles.length>0) drawAll(); }, 500);
@@ -904,36 +903,40 @@ async function loadAll(){ await loadQuote(); drawAll(); await loadCandles(); rec
 async function loadQuote(){
   if(!POLY_KEY) return;
   try{
-    // Snapshot de Polygon: precio en vivo + día + día previo, todo real (sin Finnhub)
-    const r = await fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${sym}?apiKey=${POLY_KEY}`);
+    // SIN snapshot (el plan Starter no lo autoriza → 401). Precio del día + día previo
+    // desde aggregates diarios, que el plan SÍ autoriza. Una sola fuente: Polygon.
+    const to   = new Date().toISOString().slice(0,10);
+    const from = new Date(Date.now() - 7*86400000).toISOString().slice(0,10); // 7d cubre findes/feriados
+    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/${sym}/range/1/day/${from}/${to}?adjusted=true&sort=asc&limit=10&apiKey=${POLY_KEY}`);
     const d = await r.json();
-    const t = d.ticker;
-    if(!t){ return; }
-    const day = t.day || {}, prev = t.prevDay || {}, lt = t.lastTrade || {}, min = t.min || {};
-    // precio en vivo: último trade > min bar close > day close
-    const live = lt.p || min.c || day.c || prev.c;
-    const prevClose = prev.c || day.o || live;
+    if(d.status==='ERROR' || d.error || !d.results || !d.results.length){ console.warn('loadQuote: sin datos diarios', d.error||d.message||''); return; }
+    const bars = d.results;
+    const dayBar  = bars[bars.length-1];               // sesión más reciente (hoy si abrió, o último día hábil)
+    const prevBar = bars.length>=2 ? bars[bars.length-2] : dayBar;
+    // precio en vivo = cierre de la última vela intradía cargada (más reciente); fallback al cierre diario
+    const live = (candles.length ? candles[candles.length-1].c : null) || dayBar.c;
+    const prevClose = prevBar.c;
     if(!live){ return; }
     quote = {
       c: live,
-      o: day.o || prev.c || live,
-      h: day.h || live,
-      l: day.l || live,
+      o: dayBar.o,
+      h: Math.max(dayBar.h, live),
+      l: Math.min(dayBar.l, live),
       pc: prevClose,
-      v: day.v || 0,
-      dp: prevClose ? ((live - prevClose) / prevClose * 100) : 0  // % real del día
+      v: dayBar.v || 0,
+      dp: prevClose ? ((live - prevClose) / prevClose * 100) : 0  // % real del día (vs cierre previo real)
     };
     updateQuotePanel(); updateMktStatus();
     // Overlay precio vivo sobre la última vela real
     if(candles.length){
       const last = candles[candles.length-1];
       last.c = live;
-      if(day.h) last.h = Math.max(last.h, day.h);
-      if(day.l) last.l = Math.min(last.l, day.l);
+      last.h = Math.max(last.h, live);
+      last.l = Math.min(last.l, live);
       recomputeIndicators();
     }
     drawAll();
-  } catch(e){ console.warn('loadQuote Polygon error:', e); }
+  } catch(e){ console.warn('loadQuote error:', e); }
 }
 
 // ── VELAS REALES · POLYGON.IO (sin nada sintético) ────────────
@@ -963,7 +966,7 @@ async function loadCandles(){
     candles = d.results.map(b => ({ t: Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
     // Intradía: quedarnos con las últimas 300 velas (coincide con el cap del WS)
     if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
-    // Overlay precio vivo (Polygon snapshot) sobre la última vela real
+    // Overlay precio vivo (último cierre Polygon) sobre la última vela real
     if(quote.c && candles.length){
       const last = candles[candles.length-1];
       last.c = quote.c;
@@ -993,8 +996,8 @@ function recomputeIndicators(){
 
 // ── WEBSOCKET ─────────────────────────────────────────────────
 function startWS(){
-  // WebSocket Finnhub ELIMINADO — fuente única Polygon (snapshot da el precio vivo
-  // cada 8s). El tiempo real por WS de Polygon requiere add-on; no se usa Finnhub.
+  // WebSocket Finnhub ELIMINADO — fuente única Polygon (aggregates, refresco cada 8s).
+  // El tiempo real por WS de Polygon requiere add-on; no se usa Finnhub.
   return;
 }
 
@@ -1027,7 +1030,7 @@ function checkAlerts(p){
   // CHoCH/BOS
   if(struct.choch && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.3,'triangle'); showAlertPopup('🏗 '+struct.choch.label); sendTelegram('CHOCH',sym,p.toFixed(2),null,{note:struct.choch.label}); lastStructAlert=Date.now(); }
   else if(struct.bos && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.2,'triangle'); showAlertPopup('🏗 '+struct.bos.label); sendTelegram('BOS',sym,p.toFixed(2),null,{note:struct.bos.label}); lastStructAlert=Date.now(); }
-  // Dark Pool: DESACTIVADO — era Math.random() (fake). FASE 4: prints reales con Polygon trades.
+  // Dark Pool: DESACTIVADO — antes usaba un valor aleatorio (fake). FASE 4: prints reales con Polygon trades.
 }
 
 function showAlertPopup(msg){ const el=document.getElementById('alert-popup'); el.textContent=msg; el.style.display='block'; setTimeout(()=>{ el.style.display='none'; },4000); }
@@ -1556,9 +1559,17 @@ function startTicker(){
     const s=TICKERS[tickIdx%TICKERS.length]; tickIdx++;
     if(!POLY_KEY) return;
     try{
-      const r=await fetch(`https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${s}?apiKey=${POLY_KEY}`);
-      const j=await r.json(); const t=j.ticker;
-      if(t){ const live=t.lastTrade?.p||t.min?.c||t.day?.c||t.prevDay?.c; const dp=t.todaysChangePerc; if(live) tickerCache[s]={c:live,dp:dp||0}; renderTicker(); }
+      // SIN snapshot (401 en plan Starter). Últimos 2 días hábiles desde aggregates (autorizado).
+      const to   = new Date().toISOString().slice(0,10);
+      const from = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+      const r=await fetch(`https://api.polygon.io/v2/aggs/ticker/${s}/range/1/day/${from}/${to}?adjusted=true&sort=desc&limit=2&apiKey=${POLY_KEY}`);
+      const j=await r.json();
+      if(j.results && j.results.length){
+        const live=j.results[0].c;
+        const prev=j.results.length>1 ? j.results[1].c : j.results[0].o;
+        const dp=prev ? ((live-prev)/prev*100) : 0;
+        if(live){ tickerCache[s]={c:live,dp}; renderTicker(); }
+      }
     } catch(e){}
   },2500);
 }
