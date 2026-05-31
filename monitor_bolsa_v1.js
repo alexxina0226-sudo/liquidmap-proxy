@@ -177,25 +177,27 @@ async function fetchCandles(symbol, tf) {
 async function fetchQuote(symbol) {
   if (!POLYGON_KEY) return null;
   try {
-    const url = `https://api.polygon.io/v2/snapshot/locale/us/markets/stocks/tickers/${symbol}?apiKey=${POLYGON_KEY}`;
-    const r   = await fetch(url, { timeout: 8000 });
-    const j   = await r.json();
-    const t   = j.ticker;
-    if (!t) return null;
-    const day = t.day || {}, prev = t.prevDay || {}, lt = t.lastTrade || {}, min = t.min || {};
-    const live = lt.p || min.c || day.c || prev.c;
-    const prevClose = prev.c || day.o || live;
+    // SIN snapshot (el plan Starter no lo autoriza → 401). Día actual + día previo
+    // desde aggregates diarios, autorizado por el plan. Fuente única: Polygon.
+    const to   = new Date().toISOString().slice(0, 10);
+    const from = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10); // 7d cubre findes/feriados
+    const url  = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}?adjusted=true&sort=desc&limit=2&apiKey=${POLYGON_KEY}`;
+    const r    = await fetch(url);
+    const j    = await r.json();
+    if (j.status === 'ERROR' || j.error || !j.results || !j.results.length) return null;
+    const dayBar  = j.results[0];                               // sesión más reciente
+    const prevBar = j.results.length > 1 ? j.results[1] : null; // día previo
+    const live      = dayBar.c;
+    const prevClose = prevBar ? prevBar.c : dayBar.o;
     if (!live) return null;
     // Formato compatible con el resto del monitor (c, h, l, o, pc, dp)
     return {
-      c: live,
-      h: day.h || live,
-      l: day.l || live,
-      o: day.o || prevClose,
+      c:  live,
+      h:  dayBar.h || live,
+      l:  dayBar.l || live,
+      o:  dayBar.o || prevClose,
       pc: prevClose,
-      dp: (typeof t.todaysChangePerc === 'number')
-            ? t.todaysChangePerc
-            : (prevClose ? ((live - prevClose) / prevClose * 100) : 0)
+      dp: prevClose ? ((live - prevClose) / prevClose * 100) : 0
     };
   } catch { return null; }
 }
@@ -685,8 +687,8 @@ async function scanTicker(ticker, session) {
     }
 
     const price  = quote?.c || candles4H[candles4H.length - 1].c;
-    // Overlay precio EN VIVO (Polygon snapshot) sobre la última vela real de cada TF —
-    // compensa el delay de 15 min de Polygon Starter. Fuente única, sin Finnhub.
+    // Overlay precio del último cierre (Polygon, delay 15 min en Starter) sobre la
+    // última vela real de cada TF. Fuente única, sin Finnhub.
     if (quote?.c) {
       for (const arr of [candles4H, candles1H, candles15m]) {
         if (arr.length) {
@@ -777,7 +779,7 @@ console.log('   CAPA 7    : Dark Pool estimado (1pt)');
 console.log('   CAPA 8    : 15m + Power Hour timing');
 console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10`);
 console.log('   Bot       : @liquidmapbolsa_bot');
-console.log('   Velas     : POLYGON.IO (SIP real) · Quote: Polygon snapshot · FUENTE ÚNICA');
+console.log('   Velas     : POLYGON.IO (SIP real) · Quote: aggregates diarios · FUENTE ÚNICA');
 
 if (!POLYGON_KEY) {
   console.error('⚠️  FALTA POLYGON_KEY — agregá la env var en Render (Environment → Add). El monitor no leerá velas reales sin ella.');
