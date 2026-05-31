@@ -573,21 +573,10 @@ const ATR_MAP = {
 };
 // Factor ATR por timeframe — distancias reales según TF activo
 const TF_ATR_FACTOR = {'5':0.10,'15':0.18,'60':0.35,'240':0.60,'D':1.00};
-// Multiplicadores SL/TP por TF — R:R ajustado al tipo de operación
-const TF_TP_MULT = {
-  '5':   {sl:0.8,  tp1:1.2,  tp2:2.0,  tp3:3.0},
-  '15':  {sl:1.0,  tp1:1.5,  tp2:2.5,  tp3:4.0},
-  '60':  {sl:1.5,  tp1:2.0,  tp2:3.5,  tp3:6.0},
-  '240': {sl:2.0,  tp1:3.0,  tp2:5.0,  tp3:9.0},
-  'D':   {sl:2.5,  tp1:4.0,  tp2:7.0,  tp3:12.0},
-};
 function getATR(ticker, price, currentTF){
   const pct    = ATR_MAP[(ticker||'').toUpperCase()] || 0.015;
   const factor = TF_ATR_FACTOR[currentTF || tf || '60'] || 0.35;
   return parseFloat(price) * pct * factor;
-}
-function getTPMult(currentTF){
-  return TF_TP_MULT[currentTF || tf || '60'] || TF_TP_MULT['60'];
 }
 
 // ── TELEGRAM DIRECTO — LiquidMap BOLSA ────────────────────────
@@ -609,12 +598,15 @@ async function sendTelegram(signal, ticker, price, score, extra){
   const isBuy  = signal === 'BUY';
   const isSell = signal === 'SELL';
   const isMain = isBuy || isSell;
-  const atr  = getATR(t, p);
-  const mult = getTPMult(tf);
-  const sl   = isMain ? (isBuy ? p - atr*mult.sl  : p + atr*mult.sl ).toFixed(2) : '—';
-  const tp1  = isMain ? (isBuy ? p + atr*mult.tp1 : p - atr*mult.tp1).toFixed(2) : '—';
-  const tp2  = isMain ? (isBuy ? p + atr*mult.tp2 : p - atr*mult.tp2).toFixed(2) : '—';
-  const tp3  = isMain ? (isBuy ? p + atr*mult.tp3 : p - atr*mult.tp3).toFixed(2) : '—';
+  const tg   = isMain ? getTargets(p, signal, tf, t) : null;
+  const sl   = tg ? tg.sl.price.toFixed(2) : '—';
+  const tp1  = (tg && tg.tps[0]) ? tg.tps[0].price.toFixed(2) : '—';
+  const tp2  = (tg && tg.tps[1]) ? tg.tps[1].price.toFixed(2) : '—';
+  const tp3  = (tg && tg.tps[2]) ? tg.tps[2].price.toFixed(2) : '—';
+  const slLb = tg ? ' · '+tg.sl.label : '';
+  const t1Lb = (tg && tg.tps[0]) ? ' · '+tg.tps[0].label : '';
+  const t2Lb = (tg && tg.tps[1]) ? ' · '+tg.tps[1].label : '';
+  const t3Lb = (tg && tg.tps[2]) ? ' · '+tg.tps[2].label : '';
   const kz   = getKillZone();
   const tfLabel = {'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'}[tf] || tf;
   const arrow   = isBuy ? '▲ BUY — COMPRA 🟢' : isSell ? '▼ SELL — VENTA 🔴' : '⚡ ALERTA';
@@ -636,10 +628,10 @@ ${arrow}
 ⭐ Score: ${score ? score+'/10' : '—'} · ${quality}
 🌐 Origen: 🖥️ LiquidMap PRO · Bolsa${extraNote}${confStr}
 
-🛑 SL:  ${fmtP(sl)}
-✅ TP1: ${fmtP(tp1)} · cerrar 50%
-✅ TP2: ${fmtP(tp2)} · cerrar 30%
-🔶 TP3: ${fmtP(tp3)} · dejar 20%
+🛑 SL:  ${fmtP(sl)}${slLb}
+✅ TP1: ${fmtP(tp1)}${t1Lb} · cerrar 50%
+✅ TP2: ${fmtP(tp2)}${t2Lb} · cerrar 30%
+🔶 TP3: ${fmtP(tp3)}${t3Lb} · dejar 20%
 📌 Al llegar a TP1 → mover SL a breakeven
 
 ⚡ LiquidMap PRO · Bolsa v6`;
@@ -839,6 +831,7 @@ function computeStructuralTargets(p, sigType, flow, pools, quote, struct, atr){
     if(!uniq.some(u=>Math.abs(u.price-proj)/p < 0.0015)) uniq.push({price:proj, label:'Proy. ATR'});
     mi++;
   }
+  uniq.sort((a,b)=> isBuy ? a.price-b.price : b.price-a.price); // re-orden tras el relleno ATR (evita TP3<TP2)
   const tps = uniq.slice(0,3);
   // SL: invalidación estructural del lado opuesto + buffer ATR; con distancia mínima sensata
   const slCand=[];
@@ -855,6 +848,17 @@ function computeStructuralTargets(p, sigType, flow, pools, quote, struct, atr){
   if(isBuy && (p-slPrice)<minSL) slPrice=p-minSL;
   if(!isBuy && (slPrice-p)<minSL) slPrice=p+minSL;
   return { tps, sl:{ price:slPrice, label:slLabel } };
+}
+
+// Fuente ÚNICA de TP/SL estructurales — la usan el panel, el chart y la alerta de Telegram.
+// Garantiza que los tres muestren exactamente los mismos niveles (no pueden divergir).
+function getTargets(price, sigType, timeframe, ticker){
+  if(!candles || !candles.length || !vp || !price) return null;
+  const st = detectStructure(candles);
+  const fl = computeFlow(candles, vp, price, timeframe);
+  const pl = findLiquidityPools(st.swings, price);
+  const atr = getATR(ticker||sym, price, timeframe);
+  return computeStructuralTargets(price, sigType, fl, pl, quote, st, atr);
 }
 
 // ── STOP HUNT ─────────────────────────────────────────────────
@@ -1581,15 +1585,19 @@ function drawAll(){
     // SL/TP lines
     const sig2=computeNeuralScore(cp);
     if(sig2&&sig2.type!=='NEUTRAL'&&quote.h&&quote.l){
-      const atrE=getATR(sym,cp,tf), _mC=getTPMult(tf), slD2=atrE*_mC.sl, tp1D2=atrE*_mC.tp1, tp2D2=atrE*_mC.tp2;
-      const isBuy2=sig2.type==='BUY';
-      const slP2=isBuy2?cp-slD2:cp+slD2, tp1P2=isBuy2?cp+tp1D2:cp-tp1D2, tp2P2=isBuy2?cp+tp2D2:cp-tp2D2;
-      [[slP2,'rgba(255,45,107,.8)',[4,3],'SL'],[tp1P2,'rgba(0,255,157,.8)',[6,3],'TP1'],[tp2P2,'rgba(255,224,0,.75)',[6,3],'TP2']].forEach(([price2,color2,dash2,lbl2])=>{
-        const y2=pY(price2); if(y2<2||y2>H-2) return;
-        ctx.strokeStyle=color2; ctx.lineWidth=1.2; ctx.setLineDash(dash2);
-        ctx.beginPath();ctx.moveTo(0,y2);ctx.lineTo(W-65,y2);ctx.stroke(); ctx.setLineDash([]);
-        ctx.fillStyle=color2; ctx.font='bold 9px Space Mono,monospace'; ctx.fillText(lbl2+' $'+price2.toFixed(2),4,y2-3);
-      });
+      const tg2=getTargets(cp, sig2.type, tf, sym);
+      if(tg2){
+        const lines=[[tg2.sl.price,'rgba(255,45,107,.8)',[4,3],'SL']];
+        if(tg2.tps[0]) lines.push([tg2.tps[0].price,'rgba(0,255,157,.8)',[6,3],'TP1']);
+        if(tg2.tps[1]) lines.push([tg2.tps[1].price,'rgba(255,224,0,.75)',[6,3],'TP2']);
+        if(tg2.tps[2]) lines.push([tg2.tps[2].price,'rgba(255,140,0,.7)',[6,3],'TP3']);
+        lines.forEach(([price2,color2,dash2,lbl2])=>{
+          const y2=pY(price2); if(y2<2||y2>H-2) return;
+          ctx.strokeStyle=color2; ctx.lineWidth=1.2; ctx.setLineDash(dash2);
+          ctx.beginPath();ctx.moveTo(0,y2);ctx.lineTo(W-65,y2);ctx.stroke(); ctx.setLineDash([]);
+          ctx.fillStyle=color2; ctx.font='bold 9px Space Mono,monospace'; ctx.fillText(lbl2+' $'+price2.toFixed(2),4,y2-3);
+        });
+      }
     }
   }
 
