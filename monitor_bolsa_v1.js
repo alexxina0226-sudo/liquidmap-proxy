@@ -1,5 +1,5 @@
 // ============================================================
-//  monitor_bolsa_v2.js — LiquidMap PRO · BOLSA
+//  monitor_bolsa.js — LiquidMap PRO · BOLSA v6
 //  Sistema Neuronal Institucional — SINCRONIZADO con Mapa v6
 //
 //  CAPA 1 — SUPERTREND JUEZ (3pts) — igual al mapa v6
@@ -7,9 +7,13 @@
 //  CAPA 3 — CVD real + divergencia (1.5pts)
 //  CAPA 4 — CHoCH + BOS (2pts) — 2 cierres confirmados
 //  CAPA 5 — Stop Hunt + Order Blocks + EQH/EQL (1pt)
-//  CAPA 6 — GEX estimado + MaxPain (1pt)
-//  CAPA 7 — Dark Pool estimado (1pt)
+//  CAPA 6 — Régimen de Volatilidad (REAL, contexto · 0pts al score)
+//  CAPA 7 — Dark Pool DESACTIVADA (requiere endpoint Trades · Developer $79)
 //  CAPA 8 — Confirmación 15m + Power Hour timing
+//
+//  GEX/MaxPain: N/D — requieren cadena de opciones; NO afectan el score.
+//  TP/SL: ESTRUCTURALES (POC/VWAP/VAH-VAL/pools/máx-mín/proy) — idéntico al mapa.
+//  El score nace SOLO de capas con datos reales de Polygon SIP. Cero sintético.
 //
 //  Reglas:
 //  - Solo opera en sesión NY (9:30–16:00 ET) y pre-market desde 9:00 ET
@@ -61,16 +65,8 @@ function fmt(n, ref) {
   return (+n).toFixed(3);
 }
 
-// Factor ATR según timeframe — distancias proporcionales al TF operativo
+// Factor ATR según timeframe — usado solo como relleno de TP cuando faltan niveles reales
 const TF_ATR_FACTOR = { '5':0.10, '15':0.18, '60':0.35, '240':0.60, 'D':1.00 };
-// Multiplicadores SL/TP por TF — scalp vs swing vs posicional
-const TF_TP_MULT = {
-  '5':   { sl:0.8,  tp1:1.2,  tp2:2.0,  tp3:3.0  },
-  '15':  { sl:1.0,  tp1:1.5,  tp2:2.5,  tp3:4.0  },
-  '60':  { sl:1.5,  tp1:2.0,  tp2:3.5,  tp3:6.0  },
-  '240': { sl:2.0,  tp1:3.0,  tp2:5.0,  tp3:9.0  },
-  'D':   { sl:2.5,  tp1:4.0,  tp2:7.0,  tp3:12.0 },
-};
 // ATR dinámico real — True Range EMA-14 Wilder (más preciso para SL/TP)
 function calcRealATR(candles, period = 14) {
   if (!candles || candles.length < period + 1) return null;
@@ -95,18 +91,69 @@ function getATR(ticker, price, currentTF, candles) {
     const realATR = calcRealATR(candles, 14);
     if (realATR) {
       const factor = TF_ATR_FACTOR[currentTF || '240'] || 0.60;
-      // El ATR real ya viene del TF de las velas; lo ajustamos suavemente
       return realATR * (0.6 + factor * 0.4);
     }
   }
-  // Fallback estático — idéntico al mapa
+  // Fallback estático
   const basePct = ATR_PCT[ticker] || 0.015;
   const factor  = TF_ATR_FACTOR[currentTF || '240'] || 0.60;
   return price * basePct * factor;
 }
-function getTPMult(currentTF) {
-  return TF_TP_MULT[currentTF || '240'] || TF_TP_MULT['240'];
+
+// ── TP/SL ESTRUCTURALES (idéntico al mapa v6) ────────────────
+// TP anclados a niveles REALES: VWAP, POC, VAH/VAL, pools de liquidez (equal H/L),
+// máx/mín del día, proyección medida del impulso (BOS). ATR solo de relleno.
+function computeStructuralTargets(price, dir, vp, zones, quote, struct, atr) {
+  if ((dir !== 'BUY' && dir !== 'SELL') || !price || !atr) return null;
+  const isBuy = dir === 'BUY';
+  const cand = [];
+  const add = (p, label) => { if (p != null && isFinite(p) && (isBuy ? p > price : p < price)) cand.push({ price: p, label }); };
+  if (vp) { add(vp.vwap, 'VWAP'); add(vp.poc, 'POC'); add(isBuy ? vp.vah : vp.val, isBuy ? 'VAH' : 'VAL'); }
+  // Pool de liquidez del lado del objetivo (equal highs/lows)
+  if (zones && zones.nearZones) {
+    const poolSide = isBuy ? 'above' : 'below';
+    const pool = zones.nearZones.find(z => z.side === poolSide && (z.type === 'EQH' || z.type === 'EQL'));
+    if (pool) add(pool.price, 'Pool liq.');
+  }
+  if (quote) add(isBuy ? quote.h : quote.l, isBuy ? 'Máx día' : 'Mín día');
+  // Proyección medida (measured move): rango de la sesión del día proyectado desde el precio
+  if (quote && quote.h != null && quote.l != null && quote.h > quote.l) {
+    const rng = quote.h - quote.l;
+    add(isBuy ? price + rng : price - rng, 'Proy. BOS');
+  }
+  cand.sort((a, b) => isBuy ? a.price - b.price : b.price - a.price);
+  const uniq = [];
+  for (const c of cand) { if (!uniq.some(u => Math.abs(u.price - c.price) / price < 0.0015)) uniq.push(c); }
+  // Relleno con proyección ATR si faltan niveles para 3 TP
+  const atrMults = [1.0, 1.8, 2.6]; let mi = 0;
+  while (uniq.length < 3 && mi < atrMults.length) {
+    const proj = isBuy ? price + atr * atrMults[mi] : price - atr * atrMults[mi];
+    if (!uniq.some(u => Math.abs(u.price - proj) / price < 0.0015)) uniq.push({ price: proj, label: 'Proy. ATR' });
+    mi++;
+  }
+  uniq.sort((a, b) => isBuy ? a.price - b.price : b.price - a.price); // re-orden tras relleno (evita TP3<TP2)
+  const tps = uniq.slice(0, 3);
+  // SL: invalidación estructural del lado opuesto + buffer ATR, con distancia mínima
+  const slCand = [];
+  const addSL = (p, label) => { if (p != null && isFinite(p) && (isBuy ? p < price : p > price)) slCand.push({ price: p, label }); };
+  if (zones && zones.nearZones) {
+    const slSide = isBuy ? 'below' : 'above';
+    const slPool = zones.nearZones.find(z => z.side === slSide);
+    if (slPool) addSL(slPool.price, 'Pool');
+  }
+  addSL(isBuy ? (vp && vp.val) : (vp && vp.vah), isBuy ? 'VAL' : 'VAH');
+  addSL(isBuy ? (quote && quote.l) : (quote && quote.h), isBuy ? 'Mín día' : 'Máx día');
+  slCand.sort((a, b) => isBuy ? b.price - a.price : a.price - b.price);
+  const buffer = atr * 0.4;
+  let slPrice, slLabel;
+  if (slCand.length) { slPrice = isBuy ? slCand[0].price - buffer : slCand[0].price + buffer; slLabel = slCand[0].label; }
+  else { slPrice = isBuy ? price - atr * 1.2 : price + atr * 1.2; slLabel = 'ATR'; }
+  const minSL = atr * 0.6;
+  if (isBuy && (price - slPrice) < minSL) slPrice = price - minSL;
+  if (!isBuy && (slPrice - price) < minSL) slPrice = price + minSL;
+  return { tps, sl: { price: slPrice, label: slLabel } };
 }
+
 
 function isDST(date) {
   const jan = new Date(date.getFullYear(), 0, 1).getTimezoneOffset();
@@ -609,11 +656,17 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const isBuy  = result.direction === 'BUY';
   const _tf    = '240';  // monitor analiza en 4H — señales de swing
   const atr    = getATR(ticker, price, _tf, candles4H);
-  const _m     = getTPMult(_tf);
-  const sl     = isBuy ? price - atr * _m.sl  : price + atr * _m.sl;
-  const tp1    = isBuy ? price + atr * _m.tp1 : price - atr * _m.tp1;
-  const tp2    = isBuy ? price + atr * _m.tp2 : price - atr * _m.tp2;
-  const tp3    = isBuy ? price + atr * _m.tp3 : price - atr * _m.tp3;
+  // TP/SL ESTRUCTURALES (niveles reales: POC/VWAP/VAH-VAL/pools/máx-mín día/proy). ATR solo relleno.
+  const zones4H = detectLiquidityZones(candles4H, price);
+  const tgt = computeStructuralTargets(price, result.direction, result.vp, zones4H, quote, result.struct4H, atr);
+  const sl  = tgt ? tgt.sl.price : (isBuy ? price - atr*1.5 : price + atr*1.5);
+  const slLb  = tgt ? ' · ' + tgt.sl.label : '';
+  const tp1 = tgt && tgt.tps[0] ? tgt.tps[0].price : null;
+  const tp2 = tgt && tgt.tps[1] ? tgt.tps[1].price : null;
+  const tp3 = tgt && tgt.tps[2] ? tgt.tps[2].price : null;
+  const t1Lb = tgt && tgt.tps[0] ? ' · ' + tgt.tps[0].label : '';
+  const t2Lb = tgt && tgt.tps[1] ? ' · ' + tgt.tps[1].label : '';
+  const t3Lb = tgt && tgt.tps[2] ? ' · ' + tgt.tps[2].label : '';
 
   const arrow   = isBuy ? '▲ BUY — COMPRA 🟢' : '▼ SELL — VENTA 🔴';
   const quality = result.score >= 8 ? '🔥 MÁXIMA CALIDAD'
@@ -647,12 +700,13 @@ ${confList}${structL}${shLine}${dpLine}${gexLine}
 📈 CVD: ${result.cvd4H.cvd>0?'▲ Positivo':'▼ Negativo'} · ${result.cvd4H.buyPct.toFixed(0)}% Buy
 📐 POC: ${result.vp?fmt(result.vp.poc,price):'—'} · VWAP: ${result.vp?fmt(result.vp.vwap,price):'—'}
 
-🛑 SL:  ${fmt(sl,price)}
-✅ TP1: ${fmt(tp1,price)} · R:R 1:2
-✅ TP2: ${fmt(tp2,price)} · R:R 1:3
-🔶 TP3: ${fmt(tp3,price)} · R:R 1:5
+🛑 SL:  ${fmt(sl,price)}${slLb}
+✅ TP1: ${tp1!=null?fmt(tp1,price)+t1Lb:'—'} · cerrar 50%
+✅ TP2: ${tp2!=null?fmt(tp2,price)+t2Lb:'—'} · cerrar 30%
+🔶 TP3: ${tp3!=null?fmt(tp3,price)+t3Lb:'—'} · dejar 20%
+📌 Al llegar a TP1 → mover SL a breakeven
 
-⚡ LiquidMap PRO · Bolsa v2`;
+⚡ LiquidMap PRO · Bolsa v6`;
 }
 
 // ── ENVIAR TELEGRAM ──────────────────────────────────────────
@@ -731,7 +785,7 @@ async function scanTicker(ticker, session) {
       return;
     }
 
-    console.log(`[${ticker}] ✅ SEÑAL BOLSA v2: ${result.direction} score=${result.score}/10`);
+    console.log(`[${ticker}] ✅ SEÑAL BOLSA v6: ${result.direction} score=${result.score}/10`);
     await sendTelegram(buildMessage(ticker, price, result, session, quote, candles4H));
 
     s.lastSignalDir = result.direction;
@@ -756,28 +810,30 @@ async function runScan() {
     return;
   }
 
-  console.log(`\n[BOLSA SCAN v2] ${now} · ${session.sessionName} ${session.powerHour ? `· ${session.powerHour.name}` : ''}`);
+  console.log(`\n[BOLSA SCAN v6] ${now} · ${session.sessionName} ${session.powerHour ? `· ${session.powerHour.name}` : ''}`);
 
   for (const ticker of STOCK_TICKERS) {
     await scanTicker(ticker, session);
     await new Promise(r => setTimeout(r, 1000));
   }
 
-  console.log('[BOLSA SCAN v2] Completo.');
+  console.log('[BOLSA SCAN v6] Completo.');
 }
 
 // ── ARRANQUE ──────────────────────────────────────────────────
-console.log('📊 LiquidMap PRO Monitor BOLSA v2 — Sincronizado con Mapa v6');
+console.log('📊 LiquidMap PRO Monitor BOLSA v6 — Sincronizado con Mapa v6');
 console.log(`   Tickers   : ${STOCK_TICKERS.join(', ')}`);
-console.log('   CAPA 1    : SuperTrend JUEZ (3pts) — NUEVO v2');
+console.log('   CAPA 1    : SuperTrend JUEZ (3pts)');
 console.log('   CAPA 2    : POC / VWAP (1.5pts)');
 console.log('   CAPA 3    : CVD real + divergencia (1.5pts)');
 console.log('   CAPA 4    : CHoCH + BOS con 2 cierres (2pts)');
 console.log('   CAPA 5    : Stop Hunt + OB + EQH/EQL (1pt)');
-console.log('   CAPA 6    : GEX + MaxPain (1pt)');
-console.log('   CAPA 7    : Dark Pool estimado (1pt)');
+console.log('   CAPA 6    : Régimen de Volatilidad (REAL · contexto, 0pts al score)');
+console.log('   CAPA 7    : Dark Pool — DESACTIVADA (requiere endpoint Trades · Developer $79)');
 console.log('   CAPA 8    : 15m + Power Hour timing');
-console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10`);
+console.log('   GEX/MaxPain: N/D — requieren cadena de opciones (no afectan el score)');
+console.log('   TP/SL     : ESTRUCTURALES (POC/VWAP/VAH-VAL/pools/máx-mín/proy) — idéntico al mapa v6');
+console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10 · SOLO capas reales`);
 console.log('   Bot       : @liquidmapbolsa_bot');
 console.log('   Velas     : POLYGON.IO (SIP real) · Quote: aggregates diarios · FUENTE ÚNICA');
 
