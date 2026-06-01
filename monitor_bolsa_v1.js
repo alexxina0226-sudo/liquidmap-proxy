@@ -254,29 +254,44 @@ async function fetchQuote(symbol) {
 //  Idéntico al mapa v6: period=10, multiplier=3.0, peso=3pts
 // ════════════════════════════════════════════════════════════
 function calcSuperTrend(candles, period = 10, multiplier = 3.0) {
-  // IDÉNTICO al mapa HTML v6 — ATR = SMA deslizante de los últimos `period` TR
-  // recalculado barra por barra (no EMA Wilder), para que monitor y mapa
-  // generen el cruce de SuperTrend EXACTAMENTE en la misma vela.
+  // CALIBRADO = mapa HTML v6 = Pine: ATR Wilder (RMA) + giro contra banda de la vela PREVIA.
+  // Mismo cálculo en monitor, mapa y TradingView → misma dirección y mismo cruce.
   if (!candles || candles.length < period + 1) return null;
+  // True Range
+  const tr = [];
+  for (let i = 0; i < candles.length; i++) {
+    if (i === 0) tr.push(candles[i].h - candles[i].l);
+    else tr.push(Math.max(
+      candles[i].h - candles[i].l,
+      Math.abs(candles[i].h - candles[i-1].c),
+      Math.abs(candles[i].l - candles[i-1].c)
+    ));
+  }
+  // ATR Wilder (RMA), idéntico a ta.atr() del Pine
+  const atrArr = new Array(candles.length).fill(NaN);
+  let atrPrev = 0, seed = 0;
+  for (let i = 0; i < candles.length; i++) {
+    if (i < period) { seed += tr[i]; if (i === period - 1) { atrPrev = seed / period; atrArr[i] = atrPrev; } }
+    else { atrPrev = (atrPrev * (period - 1) + tr[i]) / period; atrArr[i] = atrPrev; }
+  }
   const result = [];
-  let prevUpper = 0, prevLower = 0, prevTrend = 1;
-  for (let i = period; i < candles.length; i++) {
-    const slice = candles.slice(i - period, i + 1);
-    const trList = slice.map((b, j) => {
-      if (j === 0) return b.h - b.l;
-      return Math.max(b.h - b.l, Math.abs(b.h - slice[j-1].c), Math.abs(b.l - slice[j-1].c));
-    });
-    const atr = trList.reduce((a, v) => a + v, 0) / period;
+  let finalUpperPrev = 0, finalLowerPrev = 0, trendPrev = 1, started = false;
+  for (let i = period - 1; i < candles.length; i++) {
+    const atr = atrArr[i];
+    if (isNaN(atr)) continue;
     const hl2 = (candles[i].h + candles[i].l) / 2;
     const upper = hl2 + multiplier * atr;
     const lower = hl2 - multiplier * atr;
-    const finalUpper = (upper < prevUpper || candles[i-1].c > prevUpper) ? upper : prevUpper;
-    const finalLower = (lower > prevLower || candles[i-1].c < prevLower) ? lower : prevLower;
-    let trend = prevTrend;
-    if (candles[i].c > finalUpper) trend = 1;
-    else if (candles[i].c < finalLower) trend = -1;
+    let finalUpper, finalLower, trend;
+    if (!started) {
+      finalUpper = upper; finalLower = lower; trend = candles[i].c >= hl2 ? 1 : -1; started = true;
+    } else {
+      finalUpper = (upper < finalUpperPrev || candles[i-1].c > finalUpperPrev) ? upper : finalUpperPrev;
+      finalLower = (lower > finalLowerPrev || candles[i-1].c < finalLowerPrev) ? lower : finalLowerPrev;
+      trend = candles[i].c > finalUpperPrev ? 1 : candles[i].c < finalLowerPrev ? -1 : trendPrev;
+    }
     result.push({ value: trend === 1 ? finalLower : finalUpper, trend });
-    prevUpper = finalUpper; prevLower = finalLower; prevTrend = trend;
+    finalUpperPrev = finalUpper; finalLowerPrev = finalLower; trendPrev = trend;
   }
 
   if (result.length < 2) return null;
