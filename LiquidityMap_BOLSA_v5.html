@@ -1011,7 +1011,7 @@ async function initApp(){
   setInterval(updateMktStatus, 5000);
   setInterval(async () => { await loadCandles(); recomputeIndicators(); drawAll(); updatePanels(); }, 60000);
   setInterval(loadQuote, 8000);  // refresca precio/día desde aggregates Polygon
-  setInterval(() => { if(candles.length > 0){ recomputeIndicators(); drawAll(); } }, 5000);
+  setInterval(() => { if(candles.length > 0){ recomputeIndicators(); drawAll(); updatePanels(); } }, 5000);
   updateClock(); updateMktStatus();
   setTimeout(() => { resizeCanvas(); if(candles.length>0) drawAll(); }, 500);
   setTimeout(() => { resizeCanvas(); if(candles.length>0) drawAll(); }, 1500);
@@ -1056,6 +1056,9 @@ async function loadQuote(){
       recomputeIndicators();
     }
     drawAll();
+    // Dispara alertas a Telegram (BUY/SELL, Stop Hunt, BOS/CHoCH, ballenas) con el precio fresco.
+    // Cada tipo tiene su propio cooldown interno + COOLDOWN_MS por señal → sin spam aunque corra cada 8s.
+    if(candles.length) checkAlerts(live);
   } catch(e){ console.warn('loadQuote error:', e); }
 }
 
