@@ -550,11 +550,11 @@ function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, sessio
 
   // ── CAPA 2: POC / VWAP (1.5pts) ────────────────────────
   if (vp) {
-    if (price > vp.vwap) signals.push({ layer:2, dir:'BUY',  weight:1.5, label:`Precio > VWAP (${fmt(vp.vwap,price)}) — alcista intradía` });
-    else                 signals.push({ layer:2, dir:'SELL', weight:1.5, label:`Precio < VWAP (${fmt(vp.vwap,price)}) — bajista intradía` });
+    if (price > vp.vwap) signals.push({ layer:2, dir:'BUY',  weight:1.5, label:`Precio sobre VWAP (${fmt(vp.vwap,price)}) — alcista intradía` });
+    else                 signals.push({ layer:2, dir:'SELL', weight:1.5, label:`Precio bajo VWAP (${fmt(vp.vwap,price)}) — bajista intradía` });
 
-    if (price > vp.poc)  signals.push({ layer:2, dir:'BUY',  weight:0.5, label:`Precio > POC (${fmt(vp.poc,price)})` });
-    else                 signals.push({ layer:2, dir:'SELL', weight:0.5, label:`Precio < POC (${fmt(vp.poc,price)})` });
+    if (price > vp.poc)  signals.push({ layer:2, dir:'BUY',  weight:0.5, label:`Precio sobre POC (${fmt(vp.poc,price)})` });
+    else                 signals.push({ layer:2, dir:'SELL', weight:0.5, label:`Precio bajo POC (${fmt(vp.poc,price)})` });
 
     if (price > vp.vah)  signals.push({ layer:2, dir:'SELL', weight:0.5, label:'Sobre VAH — resistencia de valor' });
     else if (price < vp.val) signals.push({ layer:2, dir:'BUY', weight:0.5, label:'Bajo VAL — soporte de valor' });
@@ -681,7 +681,8 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const gexLine   = (result.gex && result.gex.volRegime && result.gex.volRegime !== 'N/D')
     ? `\n📊 Volatilidad: ${result.gex.volRegime} · GEX/MaxPain: N/D (opciones FASE 4)`
     : '';
-  const confList  = result.confluences.map(c => `  • ${c}`).join('\n');
+  const escHTML  = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const confList  = result.confluences.map(c => `  • ${escHTML(c)}`).join('\n');
   const changeStr = (quote && quote.pc && quote.pc !== 0)
     ? `${((quote.c - quote.pc)/quote.pc*100) >= 0 ? '+' : ''}${((quote.c - quote.pc)/quote.pc*100).toFixed(2)}%`
     : (quote && typeof quote.dp === 'number' ? `${quote.dp>=0?'+':''}${quote.dp.toFixed(2)}%` : '—');
