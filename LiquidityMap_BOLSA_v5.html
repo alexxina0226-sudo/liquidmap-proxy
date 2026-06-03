@@ -1151,26 +1151,26 @@ function checkAlerts(p){
     const sh = detectStopHunt(candles[candles.length-1]);
     if(sh && Date.now()-lastZoneAlert>30000){
       playTone(660,0.1,'triangle'); showAlertPopup((sh.type==='SH_BUY'?'🟢':'🔴')+' '+sh.label);
-      sendTelegram(sh.type, sym, p.toFixed(2), null, {note: sh.label});
+      // VIEW-ONLY: evento sin niveles → solo popup en el mapa, NO a Telegram
       lastZoneAlert=Date.now();
     }
   }
   // Zone touch
   const nearZone = zones.find(z => Math.abs(z.price-p)/p < 0.0015 && z.strength > 0.70);
-  if(nearZone && alertCfg.zone && Date.now()-lastZoneAlert>30000){ playTone(660,0.1,'triangle'); showAlertPopup('💧 ZONA LIQUIDEZ: $'+p.toFixed(2)); sendTelegram('ZONA_LIQ',sym,p.toFixed(2),null); lastZoneAlert=Date.now(); }
+  if(nearZone && alertCfg.zone && Date.now()-lastZoneAlert>30000){ playTone(660,0.1,'triangle'); showAlertPopup('💧 ZONA LIQUIDEZ: $'+p.toFixed(2)); /* VIEW-ONLY: no a Telegram */ lastZoneAlert=Date.now(); }
   // Max Pain alert: DESACTIVADO — Max Pain real requiere cadena de opciones (FASE 4). No alertamos sobre dato inventado.
   // Signal
   const sig = computeNeuralScore(p);
-  if(sig.type==='BUY' && lastSignal!=='BUY' && alertCfg.buy){ playTone(880,0.4,'sine'); showAlertPopup('▲ BUY INSTITUCIONAL — Score '+sig.score+'/10'); sendTelegram('BUY',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='BUY'; }
-  else if(sig.type==='SELL' && lastSignal!=='SELL' && alertCfg.buy){ playTone(220,0.4,'sine'); showAlertPopup('▼ SELL INSTITUCIONAL — Score '+sig.score+'/10'); sendTelegram('SELL',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='SELL'; }
+  if(sig.type==='BUY' && lastSignal!=='BUY' && alertCfg.buy){ playTone(880,0.4,'sine'); showAlertPopup('▲ BUY INSTITUCIONAL — Score '+sig.score+'/10'); if(sig.score>=7) sendTelegram('BUY',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='BUY'; }
+  else if(sig.type==='SELL' && lastSignal!=='SELL' && alertCfg.buy){ playTone(220,0.4,'sine'); showAlertPopup('▼ SELL INSTITUCIONAL — Score '+sig.score+'/10'); if(sig.score>=7) sendTelegram('SELL',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='SELL'; }
   else if(sig.type==='NEUTRAL'){ lastSignal=''; }
   // GEX flip alert: DESACTIVADO — GEX real requiere opciones (FASE 4).
   // Whale
   const wh = detectWhale(candles, 3.0);
-  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(440,0.3,'square',0.2); showAlertPopup('🐋 BALLENA '+wh.dir+' ×'+wh.ratio+' vol promedio'); sendTelegram('WHALE_'+wh.dir,sym,p.toFixed(2),null,{vol_ratio:wh.ratio}); lastWhaleAlert=Date.now(); }
+  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(440,0.3,'square',0.2); showAlertPopup('🐋 BALLENA '+wh.dir+' ×'+wh.ratio+' vol promedio'); /* VIEW-ONLY: no a Telegram */ lastWhaleAlert=Date.now(); }
   // CHoCH/BOS
-  if(struct.choch && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.3,'triangle'); showAlertPopup('🏗 '+struct.choch.label); sendTelegram('CHOCH',sym,p.toFixed(2),null,{note:struct.choch.label}); lastStructAlert=Date.now(); }
-  else if(struct.bos && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.2,'triangle'); showAlertPopup('🏗 '+struct.bos.label); sendTelegram('BOS',sym,p.toFixed(2),null,{note:struct.bos.label}); lastStructAlert=Date.now(); }
+  if(struct.choch && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.3,'triangle'); showAlertPopup('🏗 '+struct.choch.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
+  else if(struct.bos && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.2,'triangle'); showAlertPopup('🏗 '+struct.bos.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
   // Dark Pool: DESACTIVADO — antes usaba un valor aleatorio (fake). FASE 4: prints reales con Polygon trades.
 }
 
