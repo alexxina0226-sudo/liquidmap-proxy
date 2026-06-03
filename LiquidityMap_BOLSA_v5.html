@@ -826,7 +826,10 @@ function computeStructuralTargets(p, sigType, flow, pools, quote, struct, atr){
   if((sigType!=='BUY' && sigType!=='SELL') || !p || !atr) return null;
   const isBuy = sigType==='BUY';
   const cand = [];
-  const add = (price, label)=>{ if(price!=null && isFinite(price) && (isBuy ? price>p : price<p)) cand.push({price, label}); };
+  // Distancia mínima del TP al precio: que NO se pegue (evita R:R invertido, ej. TP1 a +0.04%).
+  // Idéntico al monitor. El "Máx/Mín día" o "Pool" que cae justo en el precio se descarta.
+  const minTP = Math.max(atr*0.8, p*0.004);
+  const add = (price, label)=>{ if(price!=null && isFinite(price) && (isBuy ? price>p : price<p) && Math.abs(price-p)>=minTP) cand.push({price, label}); };
   if(flow){ add(flow.vwap,'VWAP'); add(flow.poc,'POC'); add(isBuy?flow.vah:flow.val, isBuy?'VAH':'VAL'); }
   if(pools){ add(isBuy ? (pools.res&&pools.res.price) : (pools.sup&&pools.sup.price), 'Pool liq.'); }
   if(quote){ add(isBuy?quote.h:quote.l, isBuy?'Máx día':'Mín día'); }
