@@ -107,7 +107,10 @@ function computeStructuralTargets(price, dir, vp, zones, quote, struct, atr) {
   if ((dir !== 'BUY' && dir !== 'SELL') || !price || !atr) return null;
   const isBuy = dir === 'BUY';
   const cand = [];
-  const add = (p, label) => { if (p != null && isFinite(p) && (isBuy ? p > price : p < price)) cand.push({ price: p, label }); };
+  // Distancia mínima del TP al precio: que NO se pegue (evita el R:R invertido, ej. TP1 a +0.04%).
+  // El "Máx/Mín día" que cae justo en el precio queda descartado; entra el siguiente nivel real o ATR.
+  const minTP = Math.max(atr * 0.8, price * 0.004);
+  const add = (p, label) => { if (p != null && isFinite(p) && (isBuy ? p > price : p < price) && Math.abs(p - price) >= minTP) cand.push({ price: p, label }); };
   if (vp) { add(vp.vwap, 'VWAP'); add(vp.poc, 'POC'); add(isBuy ? vp.vah : vp.val, isBuy ? 'VAH' : 'VAL'); }
   // Pool de liquidez del lado del objetivo (equal highs/lows)
   if (zones && zones.nearZones) {
@@ -313,6 +316,15 @@ function calcSuperTrend(candles, period = 10, multiplier = 3.0) {
 // ════════════════════════════════════════════════════════════
 //  CAPA 2 — VOLUME PROFILE: POC, VWAP, VAH, VAL
 // ════════════════════════════════════════════════════════════
+// Velas de la SESIÓN actual (reset diario, como el VWAP de TradingView).
+// Compara la fecha en horario de Nueva York del último candle.
+function currentSessionCandles(candles) {
+  if (!candles || !candles.length) return [];
+  const etDate = ts => new Date(ts).toLocaleDateString('en-US', { timeZone: 'America/New_York' });
+  const lastDate = etDate(candles[candles.length - 1].t);
+  return candles.filter(c => etDate(c.t) === lastDate);
+}
+
 function buildVolumeProfile(candles, bins = 100) {
   const mn = Math.min(...candles.map(c => c.l));
   const mx = Math.max(...candles.map(c => c.h));
@@ -769,9 +781,11 @@ async function scanTicker(ticker, session) {
         }
       }
     }
-    // VOLUME PROFILE sobre VENTANA OPERATIVA (últimas 60 velas 4H), no toda la
-    // historia — clave anti-POC-viejo. Idéntico criterio que el mapa v7.
-    const vpWindow = candles4H.slice(-60);
+    // VWAP/POC ANCLADOS A LA SESIÓN (reset diario, como TradingView): se calculan
+    // sobre las velas de 15m de la sesión actual — NO sobre 60 velas 4H (~1.5 meses).
+    // Esto evita el VWAP a la deriva (ej. QQQ daba VWAP a −$141 del precio).
+    let vpWindow = currentSessionCandles(candles15m);
+    if (vpWindow.length < 6) vpWindow = (candles15m.length ? candles15m : candles4H).slice(-26); // respaldo: ~1 sesión
     const vp     = buildVolumeProfile(vpWindow, 100);
     const result = evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, session });
 
