@@ -792,7 +792,7 @@ function computeFlow(bars, vprofile, price, timeframe){
   }
   // VWAP anclado a la sesión visible
   const vwWin = ({'5':78,'15':52,'60':60,'240':60,'D':60})[timeframe] || 60;
-  const vwo = getVWAP(bars.slice(-vwWin));
+  const vwo = getVWAP(sessionBars(bars, timeframe, vwWin));
   const vwap = vwo ? vwo.vwap : null;
   // RVOL real (huella de volumen — la única "ballena" posible sin endpoint Trades)
   const avg20 = bars.slice(-21,-1).reduce((a,b)=>a+(b.v||0),0)/20;
@@ -915,7 +915,7 @@ function computeNeuralScore(p){
 
   // CAPA 2 — VWAP REAL (1.5 pts) — precio sobre/bajo VWAP ponderado por volumen
   const vwWin2 = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
-  const vwObj = getVWAP(candles.slice(-vwWin2));
+  const vwObj = getVWAP(sessionBars(candles, tf, vwWin2));
   const vwapVal = vwObj ? vwObj.vwap : getPOC(vp);
   if(p > vwapVal) { score += 1.5; conf.push('📐 Precio sobre VWAP ✓'); addL('VWAP', 1.5, 1); }
   else            { score -= 1.5; conf.push('📐 Precio bajo VWAP ✗'); addL('VWAP', 1.5, -1); }
@@ -1120,7 +1120,7 @@ async function loadCandles(){
     // VOLUME PROFILE sobre VENTANA OPERATIVA (no toda la historia) — clave anti-POC-viejo.
     // Por TF: ventana proporcional a lo que el trader realmente opera.
     const vpWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
-    vp = buildVP(candles.slice(-vpWin), 60);
+    vp = buildVP(sessionBars(candles, tf, vpWin), 60);
     const cp = quote.c || candles[candles.length-1].c;
     zones = buildZones(cp);
     // CVD aproximado por dirección de vela (FASE 3 = trades reales por agresor)
@@ -1343,7 +1343,7 @@ function updateDerived(){
   }
   // VWAP REAL (precio típico ponderado por volumen sobre la ventana de sesión)
   const vwWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
-  const vw = getVWAP(candles.slice(-vwWin));
+  const vw = getVWAP(sessionBars(candles, tf, vwWin));
   if(vw){
     set('vwap-v','$'+vw.vwap.toFixed(2),'p');
     set('vwap-up','$'+vw.up.toFixed(2),''); set('vwap-dn','$'+vw.dn.toFixed(2),'');
@@ -1414,6 +1414,16 @@ function buildZones(mid){
 
 // ── VOL PROFILE ───────────────────────────────────────────────
 // VWAP REAL: precio típico (H+L+C)/3 ponderado por volumen sobre la ventana de sesión
+// VWAP/POC ANCLADOS A LA SESIÓN (reset diario, como TradingView). El mapa guarda
+// el timestamp en SEGUNDOS. En intradía usa las velas de hoy (fecha ET); en Diario
+// mantiene la ventana rodante (en diario "sesión" = 1 vela, no aplica reset).
+function sessionBars(bars, tf, fallbackN){
+  if(tf === 'D' || !bars || !bars.length) return bars ? bars.slice(-fallbackN) : [];
+  const etDate = t => new Date(t*1000).toLocaleDateString('en-US',{timeZone:'America/New_York'});
+  const lastDate = etDate(bars[bars.length-1].t);
+  const sess = bars.filter(b => etDate(b.t) === lastDate);
+  return sess.length >= 6 ? sess : bars.slice(-fallbackN);
+}
 function getVWAP(bars){
   if(!bars || !bars.length) return null;
   let pv=0, vol=0;
@@ -1538,7 +1548,7 @@ function drawAll(){
   // VWAP line (purple) — VWAP REAL ponderado por volumen
   {
     const vwWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
-    const vw = getVWAP(candles.slice(-vwWin));
+    const vw = getVWAP(sessionBars(candles, tf, vwWin));
     if(vw){
       ctx.strokeStyle='rgba(180,77,255,.8)'; ctx.lineWidth=1.5; ctx.setLineDash([]);
       ctx.beginPath();
