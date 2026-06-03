@@ -1422,7 +1422,7 @@ function sessionBars(bars, tf, fallbackN){
   const etDate = t => new Date(t*1000).toLocaleDateString('en-US',{timeZone:'America/New_York'});
   const lastDate = etDate(bars[bars.length-1].t);
   const sess = bars.filter(b => etDate(b.t) === lastDate);
-  return sess.length >= 6 ? sess : bars.slice(-fallbackN);
+  return sess.length >= 4 ? sess : bars.slice(-fallbackN);
 }
 function getVWAP(bars){
   if(!bars || !bars.length) return null;
