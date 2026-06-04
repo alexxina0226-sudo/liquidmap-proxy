@@ -24,12 +24,146 @@ app.get('/crypto', (req, res) => {
   res.sendFile(path.join(__dirname, 'LiquidityMap_CRYPTO_v6_2.html'));
 });
 
-// ── PROXY BINANCE + FINNHUB (endurecido: ya no crashea con HTML/451) ──
+// ═══════════════════════════════════════════════════════════
+// ADAPTADOR BINANCE → BYBIT
+// Binance devuelve 418 (IP baneado por exceso de peso) desde Render.
+// Bybit responde ok:true desde la misma región (confirmado en /diag).
+// El mapa crypto sigue pidiendo "en idioma Binance"; aquí traducimos
+// la llamada a Bybit y devolvemos la respuesta con la FORMA que el
+// mapa ya espera. Así el mapa HTML NO se toca (cero riesgo).
+// ═══════════════════════════════════════════════════════════
+const BYBIT = 'https://api.bybit.com';
+
+// Binance interval → Bybit interval
+const BYBIT_INTERVAL = {
+  '1m':'1','3m':'3','5m':'5','15m':'15','30m':'30',
+  '1h':'60','2h':'120','4h':'240','6h':'360','12h':'720',
+  '1d':'D','3d':'D','1w':'W','1M':'M'
+};
+// duración de vela en ms (para reconstruir closeTime estilo Binance)
+const KLINE_DUR_MS = {
+  '1m':60000,'3m':180000,'5m':300000,'15m':900000,'30m':1800000,
+  '1h':3600000,'2h':7200000,'4h':14400000,'6h':21600000,'12h':43200000,
+  '1d':86400000,'3d':259200000,'1w':604800000
+};
+
+async function bybitGet(url){
+  const r = await fetch(url, {
+    headers: { 'Accept':'application/json', 'User-Agent':'Mozilla/5.0 (LiquidMap)' },
+    timeout: 10000
+  });
+  const text = await r.text();
+  let j;
+  try { j = JSON.parse(text); }
+  catch (e) { return { ok:false, status:r.status, raw:text.slice(0,160) }; }
+  return { ok: r.ok && j.retCode === 0, status:r.status, j };
+}
+
+// Devuelve { data } si traduce, { error, status } si el upstream falló,
+// o null si el path NO es un endpoint crypto conocido (→ fallback Binance/Finnhub).
+async function bybitAdapter(apiPath, q){
+  const symbol = (q.symbol || '').toUpperCase();
+
+  // ── SPOT · ticker 24h ──────────────────────────
+  if (apiPath === '/api/v3/ticker/24hr'){
+    const res = await bybitGet(`${BYBIT}/v5/market/tickers?category=spot&symbol=${symbol}`);
+    const t = res.j && res.j.result && res.j.result.list && res.j.result.list[0];
+    if (!res.ok || !t) return { error:true, status:res.status };
+    const last = parseFloat(t.lastPrice), prev = parseFloat(t.prevPrice24h);
+    return { data: {
+      symbol:             t.symbol,
+      lastPrice:          t.lastPrice,
+      highPrice:          t.highPrice24h,
+      lowPrice:           t.lowPrice24h,
+      openPrice:          t.prevPrice24h,
+      volume:             t.volume24h,      // base
+      quoteVolume:        t.turnover24h,    // quote
+      priceChangePercent: (parseFloat(t.price24hPcnt) * 100).toFixed(2),
+      priceChange:        (last - prev).toFixed(8),
+      count:              0                 // Bybit spot no expone nº de trades
+    }};
+  }
+
+  // ── SPOT · último precio ───────────────────────
+  if (apiPath === '/api/v3/ticker/price'){
+    const res = await bybitGet(`${BYBIT}/v5/market/tickers?category=spot&symbol=${symbol}`);
+    const t = res.j && res.j.result && res.j.result.list && res.j.result.list[0];
+    if (!res.ok || !t) return { error:true, status:res.status };
+    return { data: { symbol, price: t.lastPrice } };
+  }
+
+  // ── SPOT · klines ──────────────────────────────
+  if (apiPath === '/api/v3/klines'){
+    const interval = BYBIT_INTERVAL[q.interval] || '15';
+    let limit = parseInt(q.limit) || 200; if (limit > 1000) limit = 1000;
+    const res = await bybitGet(`${BYBIT}/v5/market/kline?category=spot&symbol=${symbol}&interval=${interval}&limit=${limit}`);
+    const list = res.j && res.j.result && res.j.result.list;
+    if (!res.ok || !Array.isArray(list)) return { error:true, status:res.status };
+    const dur = KLINE_DUR_MS[q.interval] || 900000;
+    // Bybit entrega newest-first → invertir a oldest-first (como Binance).
+    // Formato Binance: [openTime, o, h, l, c, vol, closeTime, quoteVol, trades, takerBuyBase, takerBuyQuote, ignore]
+    const rows = list.slice().reverse().map(k => {
+      const start = parseInt(k[0]);
+      return [ start, k[1], k[2], k[3], k[4], k[5], start + dur - 1, k[6], 0, "0", "0", "0" ];
+    });
+    return { data: rows };
+  }
+
+  // ── SPOT · aggTrades (recent-trade) ────────────
+  if (apiPath === '/api/v3/aggTrades'){
+    let limit = parseInt(q.limit) || 60; if (limit > 60) limit = 60; // Bybit spot máx 60
+    const res = await bybitGet(`${BYBIT}/v5/market/recent-trade?category=spot&symbol=${symbol}&limit=${limit}`);
+    const list = res.j && res.j.result && res.j.result.list;
+    if (!res.ok || !Array.isArray(list)) return { error:true, status:res.status };
+    // Binance aggTrade: { p, q, T, m }  (m = buyer es maker → agresor vendió)
+    const rows = list.map(t => ({
+      a: t.execId,
+      p: t.price,
+      q: t.size,
+      T: parseInt(t.time),
+      m: t.side === 'Sell'        // taker SELL ↔ Binance m=true
+    }));
+    return { data: rows };
+  }
+
+  // ── FUTUROS · funding + OI (Bybit linear tickers) ──
+  if (apiPath === '/fapi/v1/premiumIndex' || apiPath === '/fapi/v1/openInterest'){
+    const res = await bybitGet(`${BYBIT}/v5/market/tickers?category=linear&symbol=${symbol}`);
+    const t = res.j && res.j.result && res.j.result.list && res.j.result.list[0];
+    if (!res.ok || !t) return { error:true, status:res.status };
+    if (apiPath === '/fapi/v1/premiumIndex'){
+      return { data: {
+        symbol,
+        lastFundingRate: t.fundingRate     || "0",
+        nextFundingTime: t.nextFundingTime || "0",
+        markPrice:       t.markPrice       || t.lastPrice
+      }};
+    }
+    return { data: { symbol, openInterest: t.openInterest || "0", time: Date.now() } };
+  }
+
+  return null; // no es endpoint crypto conocido → fallback
+}
+
+// ── PROXY (adaptador Bybit + fallback Binance/Finnhub endurecido) ──
 app.get('/proxy', async (req, res) => {
   try {
     const apiPath = req.query.path;
-    const futures = req.query.futures === '1';
     if (!apiPath) return res.status(400).json({ error: 'Missing path param' });
+
+    // 1) Intentar el adaptador Bybit para endpoints crypto conocidos
+    try {
+      const adapted = await bybitAdapter(apiPath, req.query);
+      if (adapted){
+        if (adapted.error) return res.status(502).json({ error:'bybit_unavailable', upstream_status: adapted.status });
+        return res.json(adapted.data);
+      }
+    } catch (e) {
+      return res.status(502).json({ error:'bybit_adapter_error', message: e.message });
+    }
+
+    // 2) Fallback: comportamiento original (Binance / Finnhub) — intacto
+    const futures = req.query.futures === '1';
     const params = Object.entries(req.query)
       .filter(([k]) => k !== 'path' && k !== 'futures')
       .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
@@ -46,9 +180,6 @@ app.get('/proxy', async (req, res) => {
     const r    = await fetch(fullUrl, { headers: { 'Accept': 'application/json' }, timeout: 10000 });
     const ct   = r.headers.get('content-type') || '';
     const text = await r.text();
-
-    // Guard: si el upstream no responde OK o no es JSON (ej. página 451/403 en HTML),
-    // devolvemos un error LIMPIO en vez de crashear con un 500 genérico.
     if (!r.ok || !ct.includes('json')) {
       return res.status(502).json({
         error:           'upstream_unavailable',
@@ -67,14 +198,12 @@ app.get('/proxy', async (req, res) => {
 });
 
 // ── DIAGNÓSTICO DE RED ────────────────────────────
-// Abrí /diag en el navegador. Dice qué exchanges puede ALCANZAR este servidor.
-// El que devuelva "ok":true y un sample con JSON real → ese es el que sirve.
-// 451/403 = geobloqueo desde la región de Render.
 app.get('/diag', async (req, res) => {
   const targets = [
     { name: 'binance_spot', url: 'https://api.binance.com/api/v3/ticker/price?symbol=BTCUSDT' },
     { name: 'binance_fut',  url: 'https://fapi.binance.com/fapi/v1/openInterest?symbol=BTCUSDT' },
     { name: 'bybit',        url: 'https://api.bybit.com/v5/market/tickers?category=spot&symbol=BTCUSDT' },
+    { name: 'bybit_linear', url: 'https://api.bybit.com/v5/market/tickers?category=linear&symbol=BTCUSDT' },
     { name: 'okx',          url: 'https://www.okx.com/api/v5/market/ticker?instId=BTC-USDT' },
     { name: 'coinbase',     url: 'https://api.exchange.coinbase.com/products/BTC-USD/ticker' },
     { name: 'kraken',       url: 'https://api.kraken.com/0/public/Ticker?pair=XBTUSDT' },
