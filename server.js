@@ -142,6 +142,59 @@ async function bybitAdapter(apiPath, q){
     return { data: { symbol, openInterest: t.openInterest || "0", time: Date.now() } };
   }
 
+  // ── FUTUROS · historial de funding (Bybit funding/history) ──
+  if (apiPath === '/fapi/v1/fundingRate'){
+    let limit = parseInt(q.limit) || 3; if (limit > 200) limit = 200;
+    const res = await bybitGet(`${BYBIT}/v5/market/funding/history?category=linear&symbol=${symbol}&limit=${limit}`);
+    const list = res.j && res.j.result && res.j.result.list;
+    if (!res.ok || !Array.isArray(list)) return { error:true, status:res.status };
+    // Bybit entrega newest-first → Binance ascendente. Item Binance: {symbol, fundingRate, fundingTime}
+    const rows = list.slice().reverse().map(x => ({
+      symbol,
+      fundingRate: x.fundingRate,
+      fundingTime: parseInt(x.fundingRateTimestamp)
+    }));
+    return { data: rows };
+  }
+
+  // ── FUTUROS · historial de Open Interest (Bybit open-interest) ──
+  if (apiPath === '/futures/data/openInterestHist'){
+    const PERIOD = { '5m':'5min','15m':'15min','30m':'30min','1h':'1h','4h':'4h','1d':'1d' };
+    const intervalTime = PERIOD[q.period] || '4h';
+    let limit = parseInt(q.limit) || 10; if (limit > 200) limit = 200;
+    const res = await bybitGet(`${BYBIT}/v5/market/open-interest?category=linear&symbol=${symbol}&intervalTime=${intervalTime}&limit=${limit}`);
+    const list = res.j && res.j.result && res.j.result.list;
+    if (!res.ok || !Array.isArray(list)) return { error:true, status:res.status };
+    // Bybit newest-first → Binance ascendente. Item Binance: {sumOpenInterest, sumOpenInterestValue, timestamp}
+    const rows = list.slice().reverse().map(x => ({
+      sumOpenInterest:      x.openInterest,
+      sumOpenInterestValue: "0",
+      timestamp:            parseInt(x.timestamp)
+    }));
+    return { data: rows };
+  }
+
+  // ── FUTUROS · long/short ratio (Bybit account-ratio) ──
+  if (apiPath === '/futures/data/globalLongShortAccountRatio'){
+    const PERIOD = { '5m':'5min','15m':'15min','30m':'30min','1h':'1h','4h':'4h','1d':'1d' };
+    const period = PERIOD[q.period] || '4h';
+    let limit = parseInt(q.limit) || 5; if (limit > 200) limit = 200;
+    const res = await bybitGet(`${BYBIT}/v5/market/account-ratio?category=linear&symbol=${symbol}&period=${period}&limit=${limit}`);
+    const list = res.j && res.j.result && res.j.result.list;
+    if (!res.ok || !Array.isArray(list)) return { error:true, status:res.status };
+    // Bybit newest-first → Binance ascendente. Item Binance: {longAccount, shortAccount, longShortRatio, timestamp}
+    const rows = list.slice().reverse().map(x => {
+      const buy = parseFloat(x.buyRatio), sell = parseFloat(x.sellRatio);
+      return {
+        longAccount:    String(buy),
+        shortAccount:   String(sell),
+        longShortRatio: sell > 0 ? String(buy / sell) : "1",
+        timestamp:      parseInt(x.timestamp)
+      };
+    });
+    return { data: rows };
+  }
+
   return null; // no es endpoint crypto conocido → fallback
 }
 
