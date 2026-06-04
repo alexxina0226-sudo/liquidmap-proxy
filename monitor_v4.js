@@ -12,6 +12,8 @@
 //  Regla máxima: NUNCA dispara por cumplir — solo cuando
 //  todas las capas convergen en la misma dirección.
 //  Si hay duda → silencio. Si hay señal → es real.
+//
+//  DATA: velas/funding/OI/L-S vía proxy Render → Bybit (Binance 418 baneado).
 // ============================================================
 
 'use strict';
@@ -20,6 +22,7 @@ const fetch = require('node-fetch');
 // ── CONFIG ─────────────────────────────────────────────────
 const TELEGRAM_TOKEN = '8676337394:AAEVIwDY2xGwAmE7hMWcjjAMedjws_vjzSU';
 const CHAT_IDS       = ['1218461753', '1373309702'];
+const PROXY          = 'https://liquidmap-proxy.onrender.com/proxy';
 
 // Tickers activos — agregar aquí cuando se quiera activar uno nuevo
 const CRYPTO_TICKERS = [
@@ -49,16 +52,6 @@ const SCAN_INTERVAL = 5 * 60 * 1000;
 // ── ESTADO NEURONAL ─────────────────────────────────────────
 // Memoria de cada ticker — el sistema aprende entre scans
 const STATE = {};
-// STATE[ticker] = {
-//   lastSignalDir   : 'BUY'|'SELL'|null
-//   lastSignalTs    : timestamp
-//   lastStructure   : 'BULLISH'|'BEARISH'|'NEUTRAL'
-//   lastCVDDir      : 'positive'|'negative'|'neutral'
-//   lastOITrend     : 'rising'|'falling'|'neutral'
-//   consecutiveNeutral: number
-//   lastProcessedCandle4H: openTime — para no re-procesar misma vela
-//   lastProcessedCandle1H: openTime
-// }
 
 function getState(ticker) {
   if (!STATE[ticker]) {
@@ -161,10 +154,10 @@ function getSession() {
   return 'Cierre';
 }
 
-// ── FETCH BINANCE ───────────────────────────────────────────
+// ── FETCH (vía proxy Render → Bybit) ────────────────────────
 async function fetchCandles(symbol, interval, limit = 100) {
-  // Usar proxy de Render para evitar bloqueos de Binance por IP/región
-  const url = `https://liquidmap-proxy.onrender.com/proxy?path=/api/v3/klines&symbol=${symbol}&interval=${interval}&limit=${limit}`;
+  // Usar proxy de Render → traduce a Bybit (Binance da 418 desde Render)
+  const url = `${PROXY}?path=/api/v3/klines&symbol=${symbol}&interval=${interval}&limit=${limit}`;
   const r   = await fetch(url, { timeout: 10000 });
   const raw = await r.json();
   if (!Array.isArray(raw)) return [];
@@ -181,7 +174,7 @@ async function fetchCandles(symbol, interval, limit = 100) {
 // Funding Rate — clave en crypto, contrarian institucional
 async function fetchFundingRate(symbol) {
   try {
-    const url = `https://fapi.binance.com/fapi/v1/fundingRate?symbol=${symbol}&limit=3`;
+    const url = `${PROXY}?path=/fapi/v1/fundingRate&symbol=${symbol}&limit=3`;
     const r   = await fetch(url, { timeout: 6000 });
     const d   = await r.json();
     if (!Array.isArray(d) || !d.length) return { current: 0, trend: 'neutral' };
@@ -197,7 +190,7 @@ async function fetchFundingRate(symbol) {
 // Open Interest — confirma convicción institucional
 async function fetchOpenInterest(symbol) {
   try {
-    const url = `https://fapi.binance.com/fapi/v1/openInterest?symbol=${symbol}`;
+    const url = `${PROXY}?path=/fapi/v1/openInterest&symbol=${symbol}&futures=1`;
     const r   = await fetch(url, { timeout: 6000 });
     const d   = await r.json();
     return d.openInterest ? parseFloat(d.openInterest) : 0;
@@ -207,7 +200,7 @@ async function fetchOpenInterest(symbol) {
 // OI histórico para detectar tendencia
 async function fetchOIHistory(symbol) {
   try {
-    const url = `https://fapi.binance.com/futures/data/openInterestHist?symbol=${symbol}&period=4h&limit=10`;
+    const url = `${PROXY}?path=/futures/data/openInterestHist&symbol=${symbol}&period=4h&limit=10`;
     const r   = await fetch(url, { timeout: 6000 });
     const d   = await r.json();
     if (!Array.isArray(d) || d.length < 2) return { trend: 'neutral', change: 0 };
@@ -222,7 +215,7 @@ async function fetchOIHistory(symbol) {
 // Long/Short Ratio — sentimiento del mercado
 async function fetchLSRatio(symbol) {
   try {
-    const url = `https://fapi.binance.com/futures/data/globalLongShortAccountRatio?symbol=${symbol}&period=4h&limit=5`;
+    const url = `${PROXY}?path=/futures/data/globalLongShortAccountRatio&symbol=${symbol}&period=4h&limit=5`;
     const r   = await fetch(url, { timeout: 6000 });
     const d   = await r.json();
     if (!Array.isArray(d) || !d.length) return { ratio: 1, longs: 50, shorts: 50 };
@@ -912,6 +905,7 @@ console.log(`   Capas    : POC·CVD·OI·FR·CHoCH·BOS·SH·Zonas·Ballenas·L/
 console.log(`   Score    : mínimo ${MIN_SCORE}/10 · mínimo 3 capas concordantes`);
 console.log(`   Cooldown : 4H (se rompe si hay CHoCH)`);
 console.log(`   Kill Zones: London·NY·Overlap ponderadas`);
+console.log(`   Data     : proxy Render → Bybit (klines/FR/OI/L-S)`);
 console.log(`   Scan     : cada 5 min — dispara solo cuando hay calidad real`);
 
 runScan();
