@@ -52,7 +52,7 @@ const SCAN_INTERVAL = 5 * 60 * 1000;
 const STATE = {};
 function getState(ticker) {
   if (!STATE[ticker]) {
-    STATE[ticker] = { lastSignalDir: null, lastSignalTs: 0 };
+    STATE[ticker] = { lastSignalDir: null, lastSignalTs: 0, lastStructSig: null, lastCandle4H: null };
   }
   return STATE[ticker];
 }
@@ -769,6 +769,7 @@ async function scanTicker(ticker, session) {
     }
 
     const price  = quote?.c || candles4H[candles4H.length - 1].c;
+    const candle4HId = candles4H[candles4H.length - 1].t;
     // Overlay precio del último cierre (Polygon, delay 15 min en Starter) sobre la
     // última vela real de cada TF. Fuente única, sin Finnhub.
     if (quote?.c) {
@@ -805,13 +806,31 @@ async function scanTicker(ticker, session) {
       return;
     }
 
-    const hasChoch = result.struct4H?.type?.includes('CHOCH') || result.struct4H?.type?.includes('BOS');
-    const inCooldown = s.lastSignalDir === result.direction
+    // ── ANTI-SPAM (FIX) ───────────────────────────────────
+    // Antes: cualquier scan con un CHoCH/BOS presente en 4H rompía el cooldown y
+    // reenviaba cada 5 min por horas → +1000 notificaciones repetidas (el 90% iguales).
+    // Ahora: el evento estructural solo cuenta como NUEVO una vez (firma por tipo),
+    // y solo se permite UNA señal por vela 4H por dirección (el 4H no varía entre
+    // scans). Resultado: 1–2 señales por activo, como pediste.
+    const structSig   = result.struct4H ? result.struct4H.type : null;   // CHOCH_*/BOS_* o null
+    const isNewStruct = structSig !== null && structSig !== s.lastStructSig;
+    const sameDir     = s.lastSignalDir === result.direction;
+    const sameCandle  = s.lastCandle4H === candle4HId;
+
+    // REGLA: una señal por vela 4H por dirección (mata el spam de 5-min)
+    if (sameDir && sameCandle && !isNewStruct) {
+      console.log(`[${ticker}] Ya señalado ${result.direction} en esta vela 4H — silencio (anti-spam)`);
+      return;
+    }
+
+    // REGLA: cooldown por tiempo (misma dirección), roto SOLO por estructura NUEVA
+    // (antes lo rompía la simple PRESENCIA de CHoCH/BOS → esa era la fuga del spam)
+    const inCooldown = sameDir
                     && (Date.now() - s.lastSignalTs) < COOLDOWN_MS
-                    && !hasChoch;
+                    && !isNewStruct;
     if (inCooldown) {
       const h = ((COOLDOWN_MS - (Date.now() - s.lastSignalTs)) / 3600000).toFixed(1);
-      console.log(`[${ticker}] Cooldown — ${h}h restantes`);
+      console.log(`[${ticker}] Cooldown ${h}h — misma dir sin estructura nueva — silencio`);
       return;
     }
 
@@ -820,6 +839,8 @@ async function scanTicker(ticker, session) {
 
     s.lastSignalDir = result.direction;
     s.lastSignalTs  = Date.now();
+    s.lastStructSig = structSig;   // recuerda el evento estructural ya disparado (no repetir)
+    s.lastCandle4H  = candle4HId;
 
   } catch(e) {
     console.error(`[${ticker}] Error:`, e.message);
@@ -864,6 +885,7 @@ console.log('   CAPA 8    : 15m + Power Hour timing');
 console.log('   GEX/MaxPain: N/D — requieren cadena de opciones (no afectan el score)');
 console.log('   TP/SL     : ESTRUCTURALES (POC/VWAP/VAH-VAL/pools/máx-mín/proy) — idéntico al mapa v6');
 console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10 · SOLO capas reales`);
+console.log('   Anti-spam : 1 señal por vela 4H · cooldown roto solo por estructura NUEVA');
 console.log('   Bot       : @liquidmapbolsa_bot');
 console.log('   Velas     : POLYGON.IO (SIP real) · Quote: aggregates diarios · FUENTE ÚNICA');
 
