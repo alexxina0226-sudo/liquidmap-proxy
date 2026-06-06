@@ -58,6 +58,8 @@ function getState(ticker) {
     STATE[ticker] = {
       lastSignalDir: null,
       lastSignalTs: 0,
+      lastSignalPrice: 0,
+      lastChochSig: null,
       lastStructure: 'NEUTRAL',
       lastCVDDir: 'neutral',
       lastOITrend: 'neutral',
@@ -833,21 +835,41 @@ async function scanTicker(ticker) {
       return;
     }
 
-    // REGLA 3: Cooldown — no repetir la misma dirección
-    // EXCEPTO si hay CHoCH (cambio de estructura = nueva señal válida)
-    const hasChoch = result.struct4H?.type?.includes('CHOCH');
-    const inCooldown = s.lastSignalDir === result.direction
-                    && (Date.now() - s.lastSignalTs) < COOLDOWN_MS
-                    && !hasChoch;
-    if (inCooldown) {
-      const horasRestantes = ((COOLDOWN_MS - (Date.now() - s.lastSignalTs)) / 3600000).toFixed(1);
-      console.log(`[${ticker}] Cooldown activo — misma dirección, ${horasRestantes}h restantes`);
+    // ── ANTI-SPAM (FIX) ───────────────────────────────────
+    // Antes: CUALQUIER scan con un CHoCH presente rompía el cooldown y
+    // reenviaba (cada 5 min, por horas) → +1000 notificaciones repetidas.
+    // Ahora: el CHoCH solo cuenta como NUEVO si cambió su tipo o su nivel,
+    // y además solo se permite UNA señal por vela 4H por dirección
+    // (el 4H casi no varía entre scans). Resultado: 1–2 señales por activo.
+
+    // Firma del CHoCH actual (tipo + nivel). Si es igual a la última disparada,
+    // NO se considera nuevo → no rompe el cooldown.
+    const chochSig = (result.struct4H && result.struct4H.type.includes('CHOCH'))
+      ? `${result.struct4H.type}@${(result.struct4H.level || 0).toFixed(2)}`
+      : null;
+    const isNewChoch = chochSig !== null && chochSig !== s.lastChochSig;
+
+    const sameDir    = s.lastSignalDir === result.direction;
+    const sameCandle = s.lastProcessedCandle4H === candle4HId;
+
+    // REGLA 3: una señal por VELA 4H por dirección (mata el spam de 5-min)
+    if (sameDir && sameCandle && !isNewChoch) {
+      console.log(`[${ticker}] Ya señalado ${result.direction} en esta vela 4H — silencio (anti-spam)`);
       return;
     }
 
-    // REGLA 4: Si hay CHoCH en dirección opuesta → señal de reversión
-    // en este caso SÍ dispara aunque haya cooldown (cambio de tendencia)
-    if (hasChoch) {
+    // REGLA 4: Cooldown por tiempo (misma dirección), roto SOLO por CHoCH NUEVO
+    const inCooldown = sameDir
+                    && (Date.now() - s.lastSignalTs) < COOLDOWN_MS
+                    && !isNewChoch;
+    if (inCooldown) {
+      const horasRestantes = ((COOLDOWN_MS - (Date.now() - s.lastSignalTs)) / 3600000).toFixed(1);
+      console.log(`[${ticker}] Cooldown activo — misma dir sin CHoCH nuevo, ${horasRestantes}h restantes`);
+      return;
+    }
+
+    // REGLA 5: Si hay CHoCH en dirección opuesta → contradice, silencio
+    if (result.struct4H && result.struct4H.type.includes('CHOCH')) {
       const chochDir = result.struct4H.type.includes('BUY') ? 'BUY' : 'SELL';
       if (chochDir !== result.direction) {
         console.log(`[${ticker}] CHoCH contradice dirección — silencio`);
@@ -855,7 +877,7 @@ async function scanTicker(ticker) {
       }
     }
 
-    // REGLA 5: Confluencia mínima de capas — al menos 3 capas deben concordar
+    // REGLA 6: Confluencia mínima de capas — al menos 3 capas deben concordar
     const layersInDirection = new Set(
       result.signals
         .filter(sig => sig.dir === result.direction)
@@ -875,6 +897,8 @@ async function scanTicker(ticker) {
     // Actualizar estado neuronal
     s.lastSignalDir = result.direction;
     s.lastSignalTs  = Date.now();
+    s.lastSignalPrice = price;
+    s.lastChochSig  = chochSig;       // recuerda el CHoCH ya disparado (no repetir)
     s.lastStructure = result.direction;
     s.lastCVDDir    = result.cvd4H.bullish ? 'positive' : result.cvd4H.bearish ? 'negative' : 'neutral';
     s.lastOITrend   = oiHistory?.trend || 'neutral';
@@ -903,7 +927,7 @@ console.log('🧠 LiquidMap PRO Monitor v4 — SISTEMA NEURONAL INSTITUCIONAL');
 console.log(`   Tickers  : ${CRYPTO_TICKERS.join(', ')}`);
 console.log(`   Capas    : POC·CVD·OI·FR·CHoCH·BOS·SH·Zonas·Ballenas·L/S·15m`);
 console.log(`   Score    : mínimo ${MIN_SCORE}/10 · mínimo 3 capas concordantes`);
-console.log(`   Cooldown : 4H (se rompe si hay CHoCH)`);
+console.log(`   Cooldown : 4H · roto solo por CHoCH NUEVO · 1 señal por vela 4H (anti-spam)`);
 console.log(`   Kill Zones: London·NY·Overlap ponderadas`);
 console.log(`   Data     : proxy Render → Bybit (klines/FR/OI/L-S)`);
 console.log(`   Scan     : cada 5 min — dispara solo cuando hay calidad real`);
