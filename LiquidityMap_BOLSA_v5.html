@@ -1434,11 +1434,12 @@ function sessionBars(bars, tf, fallbackN){
   const etDate = t => new Date(t*1000).toLocaleDateString('en-US',{timeZone:'America/New_York'});
   const lastDate = etDate(bars[bars.length-1].t);
   const sess = bars.filter(b => etDate(b.t) === lastDate);
-  if(sess.length >= 4) return sess; // intradía (5m/15m/1H) con sesión llena = ancla diaria real (como TV)
-  // Respaldo POR TF (antes era 60 fijo). El 4H casi nunca tiene >=4 velas en una sola fecha ET → caía
-  // a 60 velas = ~2 semanas → VWAP/POC se iban lejísimos (PLTR 4H: VWAP $182 vs precio $135).
-  // Ahora cae a una ventana corta por TF que mantiene el ancla pegada al precio reciente.
-  const tfFallback = ({'5':78,'15':52,'60':14,'240':8})[tf] || fallbackN;
+  // 4H: ancla a la SESIÓN actual SIN mínimo — IDÉNTICO al bot (currentSessionCandles): reset diario,
+  // como el VWAP de sesión de TradingView. Así VWAP/POC del 4H del mapa COINCIDEN con los del bot.
+  if(tf === '240') return sess;
+  // Intradía (5m/15m/1H): sesión llena = ancla diaria real (como TV); respaldo corto si recién abre.
+  if(sess.length >= 4) return sess;
+  const tfFallback = ({'5':78,'15':52,'60':14})[tf] || fallbackN;
   return bars.slice(-tfFallback);
 }
 function getVWAP(bars){
