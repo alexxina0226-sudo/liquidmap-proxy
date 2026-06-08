@@ -550,6 +550,7 @@ function showChangePass(){
 
 // ── STATE ─────────────────────────────────────────────────────
 let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: única fuente (velas + precio)
+const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/polygon'; // #4: la key vive en el servidor (oculta). El mapa pide /polygon?path=...
 let sym = 'SPY', tf = '60';
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
@@ -991,7 +992,7 @@ function renderConfMeter(sig){
 function showSetup(){ document.getElementById('setup-screen').classList.remove('hidden'); }
 function hideSetup(){ document.getElementById('setup-screen').classList.add('hidden'); }
 function resetAPI(){ localStorage.removeItem('poly_key'); POLY_KEY=''; showSetup(); }
-function initAfterLock(){ if(!POLY_KEY){ showSetup(); } else { initApp(); } }
+function initAfterLock(){ POLY_KEY = 'server-side'; try{ localStorage.removeItem('poly_key'); }catch(e){} initApp(); } // #4: la key vive en el servidor; el navegador ya no la necesita ni la guarda
 
 async function doConnect(){
   const key = document.getElementById('api-input').value.trim();
@@ -1048,7 +1049,7 @@ async function loadQuote(){
     // desde aggregates diarios, que el plan SÍ autoriza. Una sola fuente: Polygon.
     const to   = new Date().toISOString().slice(0,10);
     const from = new Date(Date.now() - 7*86400000).toISOString().slice(0,10); // 7d cubre findes/feriados
-    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/${sym}/range/1/day/${from}/${to}?adjusted=true&sort=asc&limit=10&apiKey=${POLY_KEY}`);
+    const r = await fetch(`${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/1/day/${from}/${to}`)}&adjusted=true&sort=asc&limit=10`);
     const d = await r.json();
     if(d.status==='ERROR' || d.error || !d.results || !d.results.length){ console.warn('loadQuote: sin datos diarios', d.error||d.message||''); return; }
     const bars = d.results;
@@ -1100,7 +1101,7 @@ async function loadCandles(){
   const cfg = tfToPolygon(tf);
   const fmt = d => new Date(d).toISOString().slice(0,10);
   const to = fmt(Date.now()), from = fmt(Date.now() - cfg.days*86400000);
-  const url = `https://api.polygon.io/v2/aggs/ticker/${sym}/range/${cfg.mult}/${cfg.span}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${POLY_KEY}`;
+  const url = `${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/${cfg.mult}/${cfg.span}/${from}/${to}`)}&adjusted=true&sort=asc&limit=50000`;
   try{
     const r = await fetch(url);
     const d = await r.json();
@@ -1766,7 +1767,7 @@ function startTicker(){
       // SIN snapshot (401 en plan Starter). Últimos 2 días hábiles desde aggregates (autorizado).
       const to   = new Date().toISOString().slice(0,10);
       const from = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
-      const r=await fetch(`https://api.polygon.io/v2/aggs/ticker/${s}/range/1/day/${from}/${to}?adjusted=true&sort=desc&limit=2&apiKey=${POLY_KEY}`);
+      const r=await fetch(`${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${s}/range/1/day/${from}/${to}`)}&adjusted=true&sort=desc&limit=2`);
       const j=await r.json();
       if(j.results && j.results.length){
         const live=j.results[0].c;
