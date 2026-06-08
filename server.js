@@ -250,6 +250,34 @@ app.get('/proxy', async (req, res) => {
   }
 });
 
+// ── PROXY POLYGON (key del lado servidor — la API key NUNCA viaja al navegador) ──
+// El mapa de bolsa pide /polygon?path=/v2/aggs/...&adjusted=...  (SIN apiKey).
+// Acá adjuntamos la key desde process.env.POLYGON_KEY y llamamos a Polygon.
+// Resultado: la key queda oculta (no en URL ni en HTML) y se acaban los errores
+// de consola CORS/502 (la llamada pasa a ser server-to-server).
+// Restringido a /v2/aggs/ (solo lectura de agregados) para acotar el uso del proxy.
+const POLYGON_KEY = process.env.POLYGON_KEY || '';
+app.get('/polygon', async (req, res) => {
+  try {
+    if (!POLYGON_KEY) return res.status(500).json({ error: 'POLYGON_KEY no configurada en el servidor (Render → Environment)' });
+    const apiPath = req.query.path;
+    if (!apiPath || !apiPath.startsWith('/v2/aggs/')) return res.status(400).json({ error: 'path inválido (solo /v2/aggs/)' });
+    const params = Object.entries(req.query)
+      .filter(([k]) => k !== 'path')
+      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
+      .join('&');
+    const url = `https://api.polygon.io${apiPath}?${params ? params + '&' : ''}apiKey=${POLYGON_KEY}`;
+    const r    = await fetch(url, { headers: { 'Accept': 'application/json' }, timeout: 10000 });
+    const text = await r.text();
+    let data;
+    try { data = JSON.parse(text); }
+    catch (e) { return res.status(502).json({ error: 'polygon_invalid_json', upstream_status: r.status, sample: text.slice(0, 160) }); }
+    return res.status(r.ok ? 200 : r.status).json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── DIAGNÓSTICO DE RED ────────────────────────────
 app.get('/diag', async (req, res) => {
   const targets = [
