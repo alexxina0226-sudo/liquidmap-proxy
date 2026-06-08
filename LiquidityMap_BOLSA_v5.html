@@ -1124,7 +1124,18 @@ async function loadCandles(){
     const cp = quote.c || candles[candles.length-1].c;
     zones = buildZones(cp);
     // CVD aproximado por dirección de vela (FASE 3 = trades reales por agresor)
-    cvd = candles.slice(-30).reduce((a,b) => a+(b.c>=b.o?b.v:-b.v), 0);
+    const cvdBars = candles.slice(-30);
+    cvd = cvdBars.reduce((a,b) => a+(b.c>=b.o?b.v:-b.v), 0);
+    // Buy/Sell vol REAL-ish: posición del cierre en el rango de cada vela (close-location value)
+    // ponderada por volumen. Antes buyV/sellV quedaban en 0 → barra clavada en 5/95 en TODOS los
+    // tickers. Ahora el split varía de verdad y acompaña al CVD neto.
+    buyV = 0; sellV = 0;
+    for(const b of cvdBars){
+      const rng = b.h - b.l;
+      const buyFrac = rng > 0 ? (b.c - b.l) / rng : 0.5;
+      buyV  += (b.v||0) * buyFrac;
+      sellV += (b.v||0) * (1 - buyFrac);
+    }
     recomputeIndicators();
     updateVP(); updateCandleList(); drawAll();
   } catch(e){ console.warn('loadCandles Polygon error:', e); }
@@ -1422,7 +1433,12 @@ function sessionBars(bars, tf, fallbackN){
   const etDate = t => new Date(t*1000).toLocaleDateString('en-US',{timeZone:'America/New_York'});
   const lastDate = etDate(bars[bars.length-1].t);
   const sess = bars.filter(b => etDate(b.t) === lastDate);
-  return sess.length >= 4 ? sess : bars.slice(-fallbackN);
+  if(sess.length >= 4) return sess; // intradía (5m/15m/1H) con sesión llena = ancla diaria real (como TV)
+  // Respaldo POR TF (antes era 60 fijo). El 4H casi nunca tiene >=4 velas en una sola fecha ET → caía
+  // a 60 velas = ~2 semanas → VWAP/POC se iban lejísimos (PLTR 4H: VWAP $182 vs precio $135).
+  // Ahora cae a una ventana corta por TF que mantiene el ancla pegada al precio reciente.
+  const tfFallback = ({'5':78,'15':52,'60':14,'240':8})[tf] || fallbackN;
+  return bars.slice(-tfFallback);
 }
 function getVWAP(bars){
   if(!bars || !bars.length) return null;
