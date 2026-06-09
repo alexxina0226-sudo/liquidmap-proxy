@@ -103,39 +103,20 @@ function getATR(ticker, price, currentTF, candles) {
 // ── TP/SL ESTRUCTURALES (idéntico al mapa v6) ────────────────
 // TP anclados a niveles REALES: VWAP, POC, VAH/VAL, pools de liquidez (equal H/L),
 // máx/mín del día, proyección medida del impulso (BOS). ATR solo de relleno.
-function computeStructuralTargets(price, dir, vp, zones, quote, struct, atr) {
+function computeStructuralTargets(price, dir, vp, zones, quote, struct, atr, atrTV) {
   if ((dir !== 'BUY' && dir !== 'SELL') || !price || !atr) return null;
   const isBuy = dir === 'BUY';
-  const cand = [];
-  // Distancia mínima del TP al precio: que NO se pegue (evita el R:R invertido, ej. TP1 a +0.04%).
-  // El "Máx/Mín día" que cae justo en el precio queda descartado; entra el siguiente nivel real o ATR.
-  const minTP = Math.max(atr * 0.8, price * 0.004);
-  const add = (p, label) => { if (p != null && isFinite(p) && (isBuy ? p > price : p < price) && Math.abs(p - price) >= minTP) cand.push({ price: p, label }); };
-  if (vp) { add(vp.vwap, 'VWAP'); add(vp.poc, 'POC'); add(isBuy ? vp.vah : vp.val, isBuy ? 'VAH' : 'VAL'); }
-  // Pool de liquidez del lado del objetivo (equal highs/lows)
-  if (zones && zones.nearZones) {
-    const poolSide = isBuy ? 'above' : 'below';
-    const pool = zones.nearZones.find(z => z.side === poolSide && (z.type === 'EQH' || z.type === 'EQL'));
-    if (pool) add(pool.price, 'Pool liq.');
-  }
-  if (quote) add(isBuy ? quote.h : quote.l, isBuy ? 'Máx día' : 'Mín día');
-  // Proyección medida (measured move): rango de la sesión del día proyectado desde el precio
-  if (quote && quote.h != null && quote.l != null && quote.h > quote.l) {
-    const rng = quote.h - quote.l;
-    add(isBuy ? price + rng : price - rng, 'Proy. BOS');
-  }
-  cand.sort((a, b) => isBuy ? a.price - b.price : b.price - a.price);
-  const uniq = [];
-  for (const c of cand) { if (!uniq.some(u => Math.abs(u.price - c.price) / price < 0.0015)) uniq.push(c); }
-  // Relleno con proyección ATR si faltan niveles para 3 TP
-  const atrMults = [1.0, 1.8, 2.6]; let mi = 0;
-  while (uniq.length < 3 && mi < atrMults.length) {
-    const proj = isBuy ? price + atr * atrMults[mi] : price - atr * atrMults[mi];
-    if (!uniq.some(u => Math.abs(u.price - proj) / price < 0.0015)) uniq.push({ price: proj, label: 'Proy. ATR' });
-    mi++;
-  }
-  uniq.sort((a, b) => isBuy ? a.price - b.price : b.price - a.price); // re-orden tras relleno (evita TP3<TP2)
-  const tps = uniq.slice(0, 3);
+  // ── TP a la fórmula de TV/Pine: proyección ATR pura (igual que el indicador Pine v6) ──
+  // TP1=3×ATR (R:R 1:2 con SL 1.5×ATR), TP2=4.5×ATR, TP3=7.5×ATR. atrTV = ATR(14) REAL del 4H
+  // (mismo ta.atr(14) del Pine). Antes los TP se anclaban a estructura cercana (Máx/Mín día, pools)
+  // y quedaban pegados (TP1 a +0.04%). Ahora calzan con los números de TV.
+  const a14 = (atrTV && atrTV > 0) ? atrTV : atr;
+  const sgn = isBuy ? 1 : -1;
+  const tps = [
+    { price: price + sgn * 3.0 * a14, label: 'Proy. ATR' },
+    { price: price + sgn * 4.5 * a14, label: 'Proy. ATR' },
+    { price: price + sgn * 7.5 * a14, label: 'Proy. ATR' },
+  ];
   // SL: invalidación estructural del lado opuesto + buffer ATR, con distancia mínima
   const slCand = [];
   const addSL = (p, label) => { if (p != null && isFinite(p) && (isBuy ? p < price : p > price)) slCand.push({ price: p, label }); };
@@ -712,9 +693,10 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const isBuy  = result.direction === 'BUY';
   const _tf    = '240';  // monitor analiza en 4H — señales de swing
   const atr    = getATR(ticker, price, _tf, candles4H);
+  const atrTV  = calcRealATR(candles4H, 14) || atr;   // ATR(14) real del 4H = ta.atr(14) del Pine → TP a lo TV
   // TP/SL ESTRUCTURALES (niveles reales: POC/VWAP/VAH-VAL/pools/máx-mín día/proy). ATR solo relleno.
   const zones4H = detectLiquidityZones(candles4H, price);
-  const tgt = computeStructuralTargets(price, result.direction, result.vp, zones4H, quote, result.struct4H, atr);
+  const tgt = computeStructuralTargets(price, result.direction, result.vp, zones4H, quote, result.struct4H, atr, atrTV);
   const sl  = tgt ? tgt.sl.price : (isBuy ? price - atr*1.5 : price + atr*1.5);
   const slLb  = tgt ? ' · ' + tgt.sl.label : '';
   const tp1 = tgt && tgt.tps[0] ? tgt.tps[0].price : null;
