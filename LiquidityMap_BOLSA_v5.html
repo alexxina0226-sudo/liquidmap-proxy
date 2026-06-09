@@ -554,6 +554,7 @@ const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/polygon'; // #4: la key
 let sym = 'SPY', tf = '60';
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
+let vpBars = [];   // ROOT #5: fuente de VWAP/POC. En 4H = velas de 15m (sesión); en el resto = candles.
 let cvd = 0, buyV = 0, sellV = 0;
 let tickerCache = {}, tickIdx = 0;
 let lastSignal = '', audioCtx = null;
@@ -1098,7 +1099,9 @@ function tfToPolygon(t){
 
 async function loadCandles(){
   if(!POLY_KEY){ console.warn('loadCandles: sin Polygon API key'); return; }
-  const cfg = tfToPolygon(tf);
+  // ROOT #5: en 4H pedimos 15m y resampleamos a sesión (09:30/13:30, como TV).
+  const is4H = (tf === '240');
+  const cfg = is4H ? {mult:15, span:'minute', days:45} : tfToPolygon(tf);
   const fmt = d => new Date(d).toISOString().slice(0,10);
   const to = fmt(Date.now()), from = fmt(Date.now() - cfg.days*86400000);
   const url = `${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/${cfg.mult}/${cfg.span}/${from}/${to}`)}&adjusted=true&sort=asc&limit=50000`;
@@ -1108,15 +1111,21 @@ async function loadCandles(){
     if(d.status==='ERROR' || d.error){ console.warn('Polygon error:', d.error||d.message); return; }
     if(!d.results || !d.results.length){ console.warn('Polygon sin velas para', sym, tf); return; }
     // t de Polygon viene en ms → convertir a segundos para el resto del motor
-    candles = d.results.map(b => ({ t: Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
-    // Intradía: quedarnos con las últimas 300 velas (coincide con el cap del WS)
-    if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
-    // Overlay precio vivo (último cierre Polygon) sobre la última vela real
-    if(quote.c && candles.length){
-      const last = candles[candles.length-1];
+    let raw = d.results.map(b => ({ t: Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
+    // Overlay precio vivo sobre la última vela CRUDA antes de derivar nada
+    if(quote.c && raw.length){
+      const last = raw[raw.length-1];
       last.c = quote.c;
       if(quote.h) last.h = Math.max(last.h, quote.h);
       if(quote.l) last.l = Math.min(last.l, quote.l);
+    }
+    if(is4H){
+      vpBars  = raw;                            // 15m crudos = fuente de VWAP/POC de sesión (vía sessionBars)
+      candles = resampleSession4H(raw, false);  // velas 4H ancladas a sesión → chart / ST / estructura = TV
+    } else {
+      candles = raw;
+      if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
+      vpBars  = candles;                        // resto de TFs: VWAP/POC sobre las mismas velas (igual que antes)
     }
     // VOLUME PROFILE sobre VENTANA OPERATIVA (no toda la historia) — clave anti-POC-viejo.
     // Por TF: ventana proporcional a lo que el trader realmente opera.
@@ -1429,14 +1438,42 @@ function buildZones(mid){
 // VWAP/POC ANCLADOS A LA SESIÓN (reset diario, como TradingView). El mapa guarda
 // el timestamp en SEGUNDOS. En intradía usa las velas de hoy (fecha ET); en Diario
 // mantiene la ventana rodante (en diario "sesión" = 1 vela, no aplica reset).
+// ── ROOT #5 FIX: 4H ANCLADO A LA SESIÓN (como TradingView) ──────────────
+// Polygon da barras de 4h de RELOJ (ancla fija + extendido) → el SuperTrend 4H salía
+// OPUESTO al Pine. TV ancla el 4H a la apertura de sesión: validado en AMZN, las velas
+// 4H de TV abren 09:30 y 13:30 ET (RTH 9:30–16:00). Resampleamos las velas de 15m (caen
+// en :30) a 4H de sesión: dos por día → [09:30–13:30) y [13:30–16:00). Sin pre/post-market.
+// El mapa trabaja en SEGUNDOS (tMs=false).
+function resampleSession4H(bars, tMs){
+  if(!bars || !bars.length) return [];
+  const toMs = t => tMs ? t : t*1000;
+  const fmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const buckets = new Map(); const order = [];
+  for(const b of bars){
+    const p = fmt.formatToParts(new Date(toMs(b.t)));
+    const g = t => p.find(x=>x.type===t).value;
+    let hh = parseInt(g('hour'),10); if(hh===24) hh=0;
+    const mins = hh*60 + parseInt(g('minute'),10);     // minutos ET desde 00:00
+    if(mins < 570 || mins >= 960) continue;            // fuera de RTH (570=9:30, 960=16:00)
+    const slot = mins < 810 ? 'A' : 'B';               // 810 = 13:30
+    const key = `${g('year')}-${g('month')}-${g('day')}|${slot}`;
+    let bk = buckets.get(key);
+    if(!bk){ bk = { t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }; buckets.set(key,bk); order.push(key); }
+    else { bk.h=Math.max(bk.h,b.h); bk.l=Math.min(bk.l,b.l); bk.c=b.c; bk.v+=(b.v||0); }
+  }
+  return order.map(k=>buckets.get(k));
+}
+
 function sessionBars(bars, tf, fallbackN){
+  // ROOT #5: en 4H las velas (candles) ahora son de SESIÓN (2 por día) → un VWAP/POC sobre
+  // 2 velas sería degenerado. Igual que el bot, el VWAP/POC del 4H se anclan a la sesión
+  // usando las velas de 15m (vpBars). Redirigimos acá: una sola puerta para todo el VWAP/POC.
+  if(tf === '240'){ bars = vpBars; tf = '15'; }
   if(tf === 'D' || !bars || !bars.length) return bars ? bars.slice(-fallbackN) : [];
   const etDate = t => new Date(t*1000).toLocaleDateString('en-US',{timeZone:'America/New_York'});
   const lastDate = etDate(bars[bars.length-1].t);
   const sess = bars.filter(b => etDate(b.t) === lastDate);
-  // 4H: ancla a la SESIÓN actual SIN mínimo — IDÉNTICO al bot (currentSessionCandles): reset diario,
-  // como el VWAP de sesión de TradingView. Así VWAP/POC del 4H del mapa COINCIDEN con los del bot.
-  if(tf === '240') return sess;
   // Intradía (5m/15m/1H): sesión llena = ancla diaria real (como TV); respaldo corto si recién abre.
   if(sess.length >= 4) return sess;
   const tfFallback = ({'5':78,'15':52,'60':14})[tf] || fallbackN;
