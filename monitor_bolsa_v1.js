@@ -218,7 +218,7 @@ async function fetchCandles(symbol, tf) {
     case '1D':  mult = 1; span = 'day';    days = 200; break;
     case '4H':  mult = 4; span = 'hour';   days = 300; break;
     case '1H':  mult = 1; span = 'hour';   days = 90;  break;
-    case '15m': mult = 15; span = 'minute'; days = 25; break;
+    case '15m': mult = 15; span = 'minute'; days = 45; break;  // +hist: el 4H de sesión se arma de acá (ROOT #5)
     default:    mult = 1; span = 'hour';   days = 90;
   }
   return await fetchPolygonCandles(symbol, mult, span, days);
@@ -311,6 +311,35 @@ function calcSuperTrend(candles, period = 10, multiplier = 3.0) {
     crossed,
     label:   last.trend === 1 ? '📗 SuperTrend ALCISTA' : '📕 SuperTrend BAJISTA',
   };
+}
+
+// ── ROOT #5 FIX: 4H ANCLADO A LA SESIÓN (como TradingView) ──────────────
+// Polygon entrega barras de 4h de RELOJ (ancla fija + horario extendido), por eso
+// el SuperTrend 4H salía OPUESTO al Pine. TradingView ancla el 4H a la apertura de
+// sesión: validado en AMZN, las velas 4H de TV abren 09:30 y 13:30 ET (RTH 9:30–16:00).
+// Resampleamos las velas de 15m (que ya bajamos, y caen justo en :30) en velas 4H de
+// sesión: dos por día → [09:30–13:30) y [13:30–16:00). Se descarta el pre/post-market.
+// Esas velas alimentan calcSuperTrend → misma vela que TV → misma dirección y cruce.
+// `tMs`: true si los timestamps están en milisegundos (el monitor trabaja en ms).
+function resampleSession4H(bars, tMs) {
+  if (!bars || !bars.length) return [];
+  const toMs = t => tMs ? t : t * 1000;
+  const fmt = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  const buckets = new Map(); const order = [];
+  for (const b of bars) {
+    const p = fmt.formatToParts(new Date(toMs(b.t)));
+    const g = t => p.find(x => x.type === t).value;
+    let hh = parseInt(g('hour'), 10); if (hh === 24) hh = 0;
+    const mins = hh * 60 + parseInt(g('minute'), 10);   // minutos ET desde 00:00
+    if (mins < 570 || mins >= 960) continue;            // fuera de RTH (570=9:30, 960=16:00)
+    const slot = mins < 810 ? 'A' : 'B';                // 810 = 13:30
+    const key = `${g('year')}-${g('month')}-${g('day')}|${slot}`;
+    let bk = buckets.get(key);
+    if (!bk) { bk = { t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 }; buckets.set(key, bk); order.push(key); }
+    else { bk.h = Math.max(bk.h, b.h); bk.l = Math.min(bk.l, b.l); bk.c = b.c; bk.v += (b.v || 0); }
+  }
+  return order.map(k => buckets.get(k));
 }
 
 // ════════════════════════════════════════════════════════════
@@ -756,24 +785,24 @@ async function sendTelegram(text) {
 async function scanTicker(ticker, session) {
   const s = getState(ticker);
   try {
-    const [candles4H, candles1H, candles15m, quote] = await Promise.all([
-      fetchCandles(ticker, '4H'),
+    // ROOT #5 FIX: ya NO pedimos 4h nativas a Polygon (venían de reloj + extendido →
+    // SuperTrend opuesto al Pine). El 4H se arma resampleando los 15m a sesión (09:30/13:30).
+    const [candles1H, candles15m, quote] = await Promise.all([
       fetchCandles(ticker, '1H'),
       fetchCandles(ticker, '15m'),
       fetchQuote(ticker),
     ]);
 
-    if (candles4H.length < 20) {
-      console.log(`[${ticker}] Sin datos suficientes`);
+    if (candles15m.length < 30) {
+      console.log(`[${ticker}] Sin datos 15m suficientes para armar el 4H`);
       return;
     }
 
-    const price  = quote?.c || candles4H[candles4H.length - 1].c;
-    const candle4HId = candles4H[candles4H.length - 1].t;
     // Overlay precio del último cierre (Polygon, delay 15 min en Starter) sobre la
-    // última vela real de cada TF. Fuente única, sin Finnhub.
+    // última vela real de cada TF. Fuente única, sin Finnhub. Se hace ANTES de
+    // resamplear, para que la última vela 4H ya refleje el precio vivo.
     if (quote?.c) {
-      for (const arr of [candles4H, candles1H, candles15m]) {
+      for (const arr of [candles1H, candles15m]) {
         if (arr.length) {
           const last = arr[arr.length - 1];
           last.c = quote.c;
@@ -782,6 +811,16 @@ async function scanTicker(ticker, session) {
         }
       }
     }
+
+    // 4H ANCLADO A SESIÓN (como TradingView) desde los 15m ya con overlay.
+    const candles4H = resampleSession4H(candles15m, true);
+    if (candles4H.length < 11) {
+      console.log(`[${ticker}] 4H de sesión insuficiente (${candles4H.length} velas)`);
+      return;
+    }
+
+    const price  = quote?.c || candles4H[candles4H.length - 1].c;
+    const candle4HId = candles4H[candles4H.length - 1].t;
     // VWAP/POC ANCLADOS A LA SESIÓN (reset diario, como TradingView): se calculan
     // sobre las velas de 15m de la sesión actual — NO sobre 60 velas 4H (~1.5 meses).
     // Esto evita el VWAP a la deriva (ej. QQQ daba VWAP a −$141 del precio).
