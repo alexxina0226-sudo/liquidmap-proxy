@@ -827,35 +827,17 @@ function findLiquidityPools(swings, price){
 function computeStructuralTargets(p, sigType, flow, pools, quote, struct, atr){
   if((sigType!=='BUY' && sigType!=='SELL') || !p || !atr) return null;
   const isBuy = sigType==='BUY';
-  const cand = [];
-  // Distancia mínima del TP al precio: que NO se pegue (evita R:R invertido, ej. TP1 a +0.04%).
-  // Idéntico al monitor. El "Máx/Mín día" o "Pool" que cae justo en el precio se descarta.
-  const minTP = Math.max(atr*0.8, p*0.004);
-  const add = (price, label)=>{ if(price!=null && isFinite(price) && (isBuy ? price>p : price<p) && Math.abs(price-p)>=minTP) cand.push({price, label}); };
-  if(flow){ add(flow.vwap,'VWAP'); add(flow.poc,'POC'); add(isBuy?flow.vah:flow.val, isBuy?'VAH':'VAL'); }
-  if(pools){ add(isBuy ? (pools.res&&pools.res.price) : (pools.sup&&pools.sup.price), 'Pool liq.'); }
-  if(quote){ add(isBuy?quote.h:quote.l, isBuy?'Máx día':'Mín día'); }
-  // Proyección medida (measured move): rango del último impulso swing proyectado
-  if(struct && struct.swings && struct.swings.length>=2){
-    const hh=struct.swings.filter(s=>s.type==='HH'), ll=struct.swings.filter(s=>s.type==='LL');
-    if(hh.length && ll.length){
-      const rng=Math.abs(hh[hh.length-1].price - ll[ll.length-1].price);
-      if(rng>0) add(isBuy ? p+rng : p-rng, 'Proy. BOS');
-    }
-  }
-  // Ordeno por cercanía y deduplico niveles a <0.15%
-  cand.sort((a,b)=> isBuy ? a.price-b.price : b.price-a.price);
-  const uniq=[];
-  for(const c of cand){ if(!uniq.some(u=>Math.abs(u.price-c.price)/p < 0.0015)) uniq.push(c); }
-  // Relleno con proyección ATR si faltan niveles para 3 TP
-  const atrMults=[1.0,1.8,2.6]; let mi=0;
-  while(uniq.length<3 && mi<atrMults.length){
-    const proj = isBuy ? p+atr*atrMults[mi] : p-atr*atrMults[mi];
-    if(!uniq.some(u=>Math.abs(u.price-proj)/p < 0.0015)) uniq.push({price:proj, label:'Proy. ATR'});
-    mi++;
-  }
-  uniq.sort((a,b)=> isBuy ? a.price-b.price : b.price-a.price); // re-orden tras el relleno ATR (evita TP3<TP2)
-  const tps = uniq.slice(0,3);
+  // ── TP a la fórmula de TV/Pine: proyección ATR pura (igual que el indicador Pine v6) ──
+  // TP1=3×ATR (R:R 1:2 con SL 1.5×ATR), TP2=4.5×ATR, TP3=7.5×ATR. a14 = ATR(14) REAL del TF
+  // (mismo ta.atr(14) del Pine), no el escalado. Antes los TP se anclaban a estructura cercana
+  // (Máx/Mín día, pools) y quedaban pegados (TP1 a +0.04%). Ahora calzan con los números de TV.
+  const a14 = (flow && flow.atr14 && flow.atr14 > 0) ? flow.atr14 : atr;
+  const sgn = isBuy ? 1 : -1;
+  const tps = [
+    { price: p + sgn * 3.0 * a14, label: 'Proy. ATR' },
+    { price: p + sgn * 4.5 * a14, label: 'Proy. ATR' },
+    { price: p + sgn * 7.5 * a14, label: 'Proy. ATR' }
+  ];
   // SL: invalidación estructural del lado opuesto + buffer ATR; con distancia mínima sensata
   const slCand=[];
   const addSL=(price,label)=>{ if(price!=null&&isFinite(price)&&(isBuy?price<p:price>p)) slCand.push({price,label}); };
