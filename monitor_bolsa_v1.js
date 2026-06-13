@@ -27,6 +27,14 @@
 'use strict';
 const fetch = require('node-fetch');
 
+// ── ARCO BOSWAVES (CAPA 14) — módulo compartido bot/RADAR ──
+// Port JS del "Arc VWAP Supertrend [BOSWaves]" (MPL 2.0, open source).
+// Si el archivo no está en el repo, la capa se desactiva sola (sin crashear)
+// y el resto del bot sigue idéntico — deploy seguro: subir AMBOS archivos.
+let computeArc = null;
+try { computeArc = require('./arc_boswaves.js').computeArc; }
+catch (e) { console.log('⚠️ arc_boswaves.js no encontrado — CAPA 14 (Arco) desactivada. Subir arc_boswaves.js al repo para activarla.'); }
+
 // ── CONFIG ──────────────────────────────────────────────────
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
@@ -200,6 +208,7 @@ async function fetchCandles(symbol, tf) {
     case '4H':  mult = 4; span = 'hour';   days = 300; break;
     case '1H':  mult = 1; span = 'hour';   days = 90;  break;
     case '15m': mult = 15; span = 'minute'; days = 45; break;  // +hist: el 4H de sesión se arma de acá (ROOT #5)
+    case '15mXL': mult = 15; span = 'minute'; days = 120; break; // serie EXTENDIDA solo para el ARCO (necesita 110+ velas 4H de sesión); las capas validadas siguen usando 45d
     default:    mult = 1; span = 'hour';   days = 90;
   }
   return await fetchPolygonCandles(symbol, mult, span, days);
@@ -231,6 +240,62 @@ async function fetchQuote(symbol) {
       dp: prevClose ? ((live - prevClose) / prevClose * 100) : 0
     };
   } catch { return null; }
+}
+
+// ════════════════════════════════════════════════════════════
+//  ADX / DMI — WILDER · IDÉNTICO A ta.dmi(14,14) DEL PINE v6.1
+//  "El alma de TV": ADX ≥20 = tendencia válida · ≥30 = fuerte ·
+//  <20 = LATERAL → la señal se BLOQUEA (= adx_ok del Pine, línea 602).
+//  Caso de calibración: WMT 12-jun — Pine NEUTRAL (ADX 19, squeeze)
+//  vs bot BUY 10/10. Con este filtro, ese 10/10 no se envía.
+// ════════════════════════════════════════════════════════════
+const ADX_LEN    = 14;   // = i_adx_len del Pine
+const ADX_MIN    = 20;   // = i_adx_min del Pine (umbral lateral)
+const ADX_FUERTE = 30;   // = umbral 🔥 FUERTE del Pine (sig_quality)
+
+function calcADX(candles, len = ADX_LEN) {
+  if (!candles || candles.length < len * 2 + 2) return null; // datos insuficientes → fail-open (no bloquea)
+  // RMA (Wilder): seed = SMA(p), luego (prev*(p-1)+x)/p — igual ta.rma()
+  const rma = (vals, p) => {
+    const out = new Array(vals.length).fill(null);
+    let sum = 0;
+    for (let i = 0; i < vals.length; i++) {
+      if (i < p) { sum += vals[i]; if (i === p - 1) out[i] = sum / p; }
+      else out[i] = (out[i - 1] * (p - 1) + vals[i]) / p;
+    }
+    return out;
+  };
+  const trArr = [], pdmArr = [], ndmArr = [];
+  for (let i = 1; i < candles.length; i++) {
+    const h = candles[i].h, l = candles[i].l, pc = candles[i - 1].c;
+    trArr.push(Math.max(h - l, Math.abs(h - pc), Math.abs(l - pc)));
+    const up = h - candles[i - 1].h, dn = candles[i - 1].l - l;
+    pdmArr.push(up > dn && up > 0 ? up : 0);   // +DM
+    ndmArr.push(dn > up && dn > 0 ? dn : 0);   // -DM
+  }
+  const trR = rma(trArr, len), pR = rma(pdmArr, len), nR = rma(ndmArr, len);
+  const dxArr = [];
+  let diPlus = 0, diMinus = 0;
+  for (let i = 0; i < trArr.length; i++) {
+    if (trR[i] === null) continue;             // warmup del RMA
+    const dip = trR[i] === 0 ? 0 : 100 * pR[i] / trR[i];
+    const dim = trR[i] === 0 ? 0 : 100 * nR[i] / trR[i];
+    diPlus = dip; diMinus = dim;
+    const s = dip + dim;
+    dxArr.push(s === 0 ? 0 : 100 * Math.abs(dip - dim) / s);
+  }
+  if (dxArr.length < len) return null;
+  const adxSm = rma(dxArr, len);
+  const adx = adxSm[adxSm.length - 1];
+  if (adx === null || !isFinite(adx)) return null;
+  return {
+    adx, diPlus, diMinus,
+    strong:  adx >= ADX_MIN,
+    lateral: adx <  ADX_MIN,
+    bull: diPlus > diMinus,
+    bear: diMinus > diPlus,
+    quality: adx >= ADX_FUERTE ? '🔥 FUERTE' : adx >= ADX_MIN ? '✅ VÁLIDA' : '⚠️ LATERAL',
+  };
 }
 
 // ════════════════════════════════════════════════════════════
@@ -567,7 +632,7 @@ function _estimateDarkPool_disabled(candles, price) {
 // ════════════════════════════════════════════════════════════
 //  MOTOR NEURONAL — PESOS IDÉNTICOS AL MAPA v6
 // ════════════════════════════════════════════════════════════
-function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, session }) {
+function evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session }) {
   const signals = [];
 
   // ── CAPA 1: SUPERTREND JUEZ (3pts) ─────────────────────
@@ -659,6 +724,41 @@ function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, sessio
     if (dir15) signals.push({ layer:8, dir:dir15, weight: session.powerHour.weight - 1, label:`${session.powerHour.name} activa` });
   }
 
+  // ── CAPA 13: ADX/DMI — EL ALMA DE TV (= capa 13 del Pine v6.1) ──
+  // +1pt si hay tendencia real (ADX≥20) con DMI en la dirección. El
+  // BLOQUEO por lateral (ADX<20) se aplica en el gate de envío, como adx_ok.
+  const adx4H = calcADX(candles4H);
+  if (adx4H && adx4H.strong) {
+    if (adx4H.bull) signals.push({ layer:13, dir:'BUY',  weight:1, label:`📡 ADX ${adx4H.adx.toFixed(1)} + DMI alcista — tendencia real` });
+    if (adx4H.bear) signals.push({ layer:13, dir:'SELL', weight:1, label:`📡 ADX ${adx4H.adx.toFixed(1)} + DMI bajista — tendencia real` });
+  }
+
+  // ── CAPA 14: ARCO BOSWAVES — el gatillo del triángulo (ST+arco+VWAP) ──
+  // Port fiel del "Arc VWAP Supertrend [BOSWaves]" (MPL 2.0). Dos aportes:
+  // · ESTADO (+0.75): dirección actual del arco — confluencia continua.
+  // · EVENTO (+1.5): flip CONFIRMADO por VWAP en las últimas 2 velas 4H —
+  //   el disparo preciso que Gonzalo opera en TV (par "VWAP Confirmed").
+  // Usa la serie EXTENDIDA (4HXL); si falta el módulo o hay pocas velas,
+  // la capa se omite sin afectar nada (fail-open, datos reales o nada).
+  let arc4H = null;
+  if (computeArc && candles4HXL && candles4HXL.length >= 110) {
+    try { arc4H = computeArc(candles4HXL); } catch (e) { arc4H = null; }
+    if (arc4H && arc4H.initialized) {
+      const bull = arc4H.trend === 'BULL';
+      signals.push({
+        layer: 14, dir: bull ? 'BUY' : 'SELL', weight: 0.75,
+        label: `🌀 Arco BOSWaves ${bull ? 'alcista' : 'bajista'} 4H (VWAP ${arc4H.vwapAgreesNow ? '✓' : '✗'})`,
+      });
+      const lf = arc4H.lastFlip;
+      if (lf && lf.confirmed && arc4H.flipAgeBars !== null && arc4H.flipAgeBars <= 2) {
+        signals.push({
+          layer: 14, dir: lf.bull ? 'BUY' : 'SELL', weight: 1.5,
+          label: `🌀 FLIP ${lf.bull ? 'BULL' : 'BEAR'} del arco · VWAP confirmado${lf.live ? ' (intrabarra)' : ''} — gatillo del triángulo`,
+        });
+      }
+    }
+  }
+
   // ── SCORE FINAL — NORMALIZADO 0-10 (igual mapa v6) ─────
   let buyScore = 0, sellScore = 0;
   for (const sig of signals) {
@@ -684,7 +784,7 @@ function evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, sessio
   return {
     direction, score: finalScore, buyScore, sellScore,
     confluences, signals, layersInDir,
-    st4H, cvd4H, struct4H, sh4H, gex, dp, vp,
+    st4H, cvd4H, struct4H, sh4H, gex, dp, vp, adx4H, arc4H,
   };
 }
 
@@ -707,9 +807,16 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const t3Lb = tgt && tgt.tps[2] ? ' · ' + tgt.tps[2].label : '';
 
   const arrow   = isBuy ? '▲ BUY — COMPRA 🟢' : '▼ SELL — VENTA 🔴';
-  const quality = result.score >= 8 ? '🔥 MÁXIMA CALIDAD'
+  // Calidad alineada al Pine: 🔥 solo con ADX≥30 (tendencia fuerte real).
+  // Score alto en ADX 20-30 = ⭐ INSTITUCIONAL (válida, sin humo).
+  const adxV    = result.adx4H ? result.adx4H.adx : null;
+  const quality = (result.score >= 8 && (adxV === null || adxV >= ADX_FUERTE)) ? '🔥 MÁXIMA CALIDAD'
                 : result.score >= 6 ? '⭐ INSTITUCIONAL'
                 : '✅ VÁLIDA';
+  const adxLine = result.adx4H ? `\n📡 Régimen: ADX ${result.adx4H.adx.toFixed(1)} · ${result.adx4H.quality}` : '';
+  const arcLine = (result.arc4H && result.arc4H.initialized)
+    ? `\n🌀 Arco: ${result.arc4H.trend === 'BULL' ? '▲ BULL' : '▼ BEAR'}${result.arc4H.lastFlip && result.arc4H.flipAgeBars <= 2 && result.arc4H.lastFlip.confirmed ? ' · FLIP confirmado hace ' + result.arc4H.flipAgeBars + ' vela' + (result.arc4H.flipAgeBars === 1 ? '' : 's') : ''} · VWAP ${result.arc4H.vwapAgreesNow ? '✓' : '✗'}`
+    : '';
 
   const phLine    = session.powerHour ? `\n⏰ ${session.powerHour.name}` : '';
   const stLine    = result.st4H       ? `\n${result.st4H.label}${result.st4H.crossed?' ← CRUCE RECIENTE':''}` : '';
@@ -730,7 +837,7 @@ ${arrow}
 
 🎯 <b>${ticker}</b> · 4H${phLine}
 💰 Precio: <b>${fmt(price,price)}</b> (${changeStr} hoy)
-⭐ Score: ${result.score}/10 · ${quality}
+⭐ Score: ${result.score}/10 · ${quality}${adxLine}${arcLine}
 🌏 Sesión: ${session.sessionName}${stLine}
 
 📊 <b>Confluencias:</b>
@@ -769,11 +876,16 @@ async function scanTicker(ticker, session) {
   try {
     // ROOT #5 FIX: ya NO pedimos 4h nativas a Polygon (venían de reloj + extendido →
     // SuperTrend opuesto al Pine). El 4H se arma resampleando los 15m a sesión (09:30/13:30).
-    const [candles1H, candles15m, quote] = await Promise.all([
+    // ARCO: pedimos 120 días de 15m UNA sola vez; las capas validadas reciben el recorte
+    // de 45 días (idéntico a antes, cero cambio de comportamiento) y el ARCO recibe la
+    // serie completa (necesita 110+ velas 4H de sesión para converger). Mismo fetch, una verdad.
+    const [candles1H, candles15mFull, quote] = await Promise.all([
       fetchCandles(ticker, '1H'),
-      fetchCandles(ticker, '15m'),
+      fetchCandles(ticker, '15mXL'),
       fetchQuote(ticker),
     ]);
+    const cut45 = Date.now() - 45 * 86400000;
+    const candles15m = candles15mFull.filter(b => b.t >= cut45);  // mismas referencias → el overlay del precio vivo llega a ambas series
 
     if (candles15m.length < 30) {
       console.log(`[${ticker}] Sin datos 15m suficientes para armar el 4H`);
@@ -796,6 +908,8 @@ async function scanTicker(ticker, session) {
 
     // 4H ANCLADO A SESIÓN (como TradingView) desde los 15m ya con overlay.
     const candles4H = resampleSession4H(candles15m, true);
+    // Serie EXTENDIDA solo para el ARCO (capa 14) — no toca las capas validadas.
+    const candles4HXL = resampleSession4H(candles15mFull, true);
     if (candles4H.length < 11) {
       console.log(`[${ticker}] 4H de sesión insuficiente (${candles4H.length} velas)`);
       return;
@@ -809,12 +923,25 @@ async function scanTicker(ticker, session) {
     let vpWindow = currentSessionCandles(candles15m);
     if (vpWindow.length < 6) vpWindow = (candles15m.length ? candles15m : candles4H).slice(-26); // respaldo: ~1 sesión
     const vp     = buildVolumeProfile(vpWindow, 100);
-    const result = evaluateAllLayers({ price, candles4H, candles1H, candles15m, vp, session });
+    const result = evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session });
 
     const stLabel = result.st4H ? (result.st4H.bullish ? '↑ST' : '↓ST') : 'ST?';
     console.log(`[${ticker}] Dir=${result.direction} Score=${result.score}/10 ${stLabel} BUY=${result.buyScore.toFixed(1)} SELL=${result.sellScore.toFixed(1)} Capas=${result.layersInDir.size}`);
 
     if (result.direction === 'NEUTRAL') return;
+
+    // ── RÉGIMEN ADX — CONFLUENCIA, NO JUEZ (decisión 12-jun, revisada) ──
+    // El ADX es LENTO (RMA de RMA): en un cambio de tendencia preciso — BOS con
+    // velas de volumen, CHoCH del triángulo — todavía viene < 20 caminando atrás.
+    // Bloquear por ADX bajo MATA la señal temprana, que es el oro del sistema
+    // (lo vimos con HOOD: el precio explota antes de que el ADX confirme).
+    // Por eso NO bloqueamos: el ADX solo SUMA +1pt como confluencia (capa 13)
+    // cuando hay tendencia real, y marca calidad 🔥 con ≥30. El juez que filtra
+    // sigue siendo el SuperTrend + estructura, no el ADX. Solo lo dejamos
+    // anotado en el log para vigilar si una señal nació en régimen lateral.
+    if (result.adx4H && result.adx4H.lateral) {
+      console.log(`[${ticker}] ℹ️ ADX ${result.adx4H.adx.toFixed(1)} < ${ADX_MIN} (lateral) — NO bloquea; señal ${result.direction} validada por estructura. ADX informa, no juzga.`);
+    }
 
     const minReq = session.powerHour ? 5 : MIN_SCORE;
     if (result.score < minReq) {
@@ -903,6 +1030,9 @@ console.log('   CAPA 5    : Stop Hunt + OB + EQH/EQL (1pt)');
 console.log('   CAPA 6    : Régimen de Volatilidad (REAL · contexto, 0pts al score)');
 console.log('   CAPA 7    : Dark Pool — DESACTIVADA (requiere endpoint Trades · Developer $79)');
 console.log('   CAPA 8    : 15m + Power Hour timing');
+console.log(`   CAPA 13   : ADX/DMI Wilder(${ADX_LEN}) 4H — +1pt CONFLUENCIA si ADX≥${ADX_MIN} con DMI a favor (= Pine v6.1)`);
+console.log(`   RÉGIMEN   : ADX informa (🔥≥${ADX_FUERTE} / ✅≥${ADX_MIN} / ⚠️ rango) pero NO bloquea — el juez es SuperTrend+estructura, no el ADX (lento)`);
+console.log(`   CAPA 14   : ARCO BOSWaves 4H — estado +0.75 · flip VWAP-confirmado ≤2 velas +1.5 (gatillo del triángulo) · ${computeArc ? 'ACTIVA' : '⚠️ DESACTIVADA (falta arc_boswaves.js)'}`);
 console.log('   GEX/MaxPain: N/D — requieren cadena de opciones (no afectan el score)');
 console.log('   TP/SL     : ESTRUCTURALES (POC/VWAP/VAH-VAL/pools/máx-mín/proy) — idéntico al mapa v6');
 console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10 · SOLO capas reales`);
