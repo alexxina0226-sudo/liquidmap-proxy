@@ -24,6 +24,28 @@ app.get('/crypto', (req, res) => {
   res.sendFile(path.join(__dirname, 'LiquidityMap_CRYPTO_v6_2.html'));
 });
 
+// ── FAVICON (SVG embebido — mata el 404 en AMBOS mapas, cero archivo externo) ──
+// Mini-chart con la identidad LiquidMap: velas neón (cyan/verde/rojo) + línea
+// de tendencia amarilla sobre fondo oscuro. Cuando cualquier navegador pide
+// /favicon.ico, el server lo sirve → se acaba el "Failed to load favicon.ico 404".
+const FAVICON_SVG = Buffer.from(
+  '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">' +
+  '<rect width="32" height="32" rx="6" fill="#02040c"/>' +
+  '<rect x="5" y="18" width="3" height="9" rx="1" fill="#00e5ff"/>' +
+  '<rect x="11" y="13" width="3" height="14" rx="1" fill="#00ff9d"/>' +
+  '<rect x="17" y="8" width="3" height="19" rx="1" fill="#00ff9d"/>' +
+  '<rect x="23" y="14" width="3" height="13" rx="1" fill="#ff2d6b"/>' +
+  '<path d="M5 16 L13 11 L19 6 L27 12" fill="none" stroke="#ffe000" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>' +
+  '</svg>'
+);
+function serveFavicon(req, res) {
+  res.set('Content-Type', 'image/svg+xml');
+  res.set('Cache-Control', 'public, max-age=86400');
+  res.send(FAVICON_SVG);
+}
+app.get('/favicon.ico', serveFavicon);
+app.get('/favicon.svg', serveFavicon);
+
 // ═══════════════════════════════════════════════════════════
 // ADAPTADOR BINANCE → BYBIT
 // Binance devuelve 418 (IP baneado por exceso de peso) desde Render.
