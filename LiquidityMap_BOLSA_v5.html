@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LiquidityMap PRO v6 — Neuronal Institucional</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CjxyZWN0IHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgcng9IjYiIGZpbGw9IiMwMjA0MGMiLz4KPHJlY3QgeD0iNSIgeT0iMTgiIHdpZHRoPSIzIiBoZWlnaHQ9IjkiIHJ4PSIxIiBmaWxsPSIjMDBlNWZmIi8+CjxyZWN0IHg9IjExIiB5PSIxMyIgd2lkdGg9IjMiIGhlaWdodD0iMTQiIHJ4PSIxIiBmaWxsPSIjMDBmZjlkIi8+CjxyZWN0IHg9IjE3IiB5PSI4IiB3aWR0aD0iMyIgaGVpZ2h0PSIxOSIgcng9IjEiIGZpbGw9IiMwMGZmOWQiLz4KPHJlY3QgeD0iMjMiIHk9IjE0IiB3aWR0aD0iMyIgaGVpZ2h0PSIxMyIgcng9IjEiIGZpbGw9IiNmZjJkNmIiLz4KPHBhdGggZD0iTTUgMTYgTDEzIDExIEwxOSA2IEwyNyAxMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZlMDAwIiBzdHJva2Utd2lkdGg9IjEuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap');
 :root{
@@ -982,12 +983,13 @@ function computeNeuralScore(p){
 
   // Normalize 0-10
   const normalized = Math.round(Math.max(0, Math.min(10, ((score + rawMax) / (rawMax * 2)) * 10)));
-  let type = score >= 3 ? 'BUY' : score <= -3 ? 'SELL' : 'NEUTRAL';
-  // FILTRO DE RÉGIMEN (= adx_ok del Pine): ADX<20 = LATERAL → titular NEUTRAL
-  // y, por consecuencia, NO se envía a Telegram (el envío exige type BUY/SELL).
-  let regimeBlocked = false;
-  if(adxObj && adxObj.lateral && type !== 'NEUTRAL'){ regimeBlocked = true; type = 'NEUTRAL'; }
-  return { type, score: normalized, rawScore: score, conf, superTrendDir: stDir, layers, adx: adxObj, regimeBlocked };
+  const type = score >= 3 ? 'BUY' : score <= -3 ? 'SELL' : 'NEUTRAL';
+  // RÉGIMEN ADX — CONFLUENCIA, NO JUEZ (revisado 12-jun): el ADX es lento;
+  // NO bloquea el titular ni el envío. Solo informamos el régimen como etiqueta
+  // para que el ojo sepa si la señal nació en tendencia o en rango. El juez
+  // sigue siendo SuperTrend + estructura. (regimeWeak = solo dato, no veto.)
+  const regimeWeak = !!(adxObj && adxObj.lateral && type !== 'NEUTRAL');
+  return { type, score: normalized, rawScore: score, conf, superTrendDir: stDir, layers, adx: adxObj, regimeWeak };
 }
 
 // ── GEX / MAX PAIN ────────────────────────────────────────────
@@ -1261,12 +1263,12 @@ function updateDerived(){
   const qualEl = document.getElementById('sig-quality');
   const scoreValEl = document.getElementById('score-val');
   const scoreFillEl = document.getElementById('score-fill');
-  // Main signal
+  // Main signal — el ADX NO sustituye el titular; solo lo anota como contexto
   if(sig.type==='BUY'){ sigEl.textContent='▲ BUY — COMPRA'; sigEl.className='buy'; }
   else if(sig.type==='SELL'){ sigEl.textContent='▼ SELL — VENTA'; sigEl.className='sell'; }
-  else if(sig.regimeBlocked){ sigEl.textContent='⚠ LATERAL — ADX '+sig.adx.adx.toFixed(1); sigEl.className='neutral'; }
   else { sigEl.textContent='◈ NEUTRAL / ESPERAR'; sigEl.className='neutral'; }
-  sesgoEl.textContent = 'SESGO '+(tfLabels[tf]||tf)+' — Score '+sig.score+'/10'+(sig.adx?' · ADX '+sig.adx.adx.toFixed(1)+' '+sig.adx.quality:'');
+  const regNote = sig.regimeWeak ? ' · ⚠ rango (ADX '+sig.adx.adx.toFixed(1)+')' : (sig.adx&&sig.adx.strong?' · ADX '+sig.adx.adx.toFixed(1)+' '+sig.adx.quality:'');
+  sesgoEl.textContent = 'SESGO '+(tfLabels[tf]||tf)+' — Score '+sig.score+'/10'+regNote;
   qualEl.textContent = sig.conf.slice(0,3).join(' · ');
   scoreValEl.textContent = sig.score+'/10';
   scoreFillEl.style.width = (sig.score*10)+'%';
