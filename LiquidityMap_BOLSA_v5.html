@@ -1132,7 +1132,7 @@ async function loadCandles(){
   if(!POLY_KEY){ console.warn('loadCandles: sin Polygon API key'); return; }
   // ROOT #5: en 4H pedimos 15m y resampleamos a sesión (09:30/13:30, como TV).
   const is4H = (tf === '240');
-  const cfg = is4H ? {mult:15, span:'minute', days:120} : tfToPolygon(tf); // 4H: 120d de 15m → ~190 velas de sesión, el arco inicializa (pide 110+)
+  const cfg = is4H ? {mult:15, span:'minute', days:300} : tfToPolygon(tf); // 4H: 300d de 15m → ~180+ velas de sesion, el arco inicializa con aire (pide 110+; con 120 daba solo 108)
   const fmt = d => new Date(d).toISOString().slice(0,10);
   const to = fmt(Date.now()), from = fmt(Date.now() - cfg.days*86400000);
   const url = `${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/${cfg.mult}/${cfg.span}/${from}/${to}`)}&adjusted=true&sort=asc&limit=50000`;
