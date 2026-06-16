@@ -12,6 +12,9 @@
 
 'use strict';
 
+const http = require('http');   // mini-servidor para calificar como Web Service (tier Free de Render)
+let LAST = { at: null, hits: 0, fired: 0, universe: 0, baseline: 0, error: 'aún no corrió' };
+
 // ── CREDENCIALES (env vars en Render — NUNCA hardcodear) ────────────────────
 const ALPACA_KEY    = process.env.ALPACA_KEY_ID     || '';
 const ALPACA_SECRET = process.env.ALPACA_SECRET_KEY || '';
@@ -207,8 +210,10 @@ async function runScan() {
       }
     }
     console.log(`[RADAR SCAN] ${now} · candidatos:${hits} · alertas:${fired} · universo:${UNIVERSE.length}`);
+    LAST = { at: now, hits, fired, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, error: null };
   } catch (e) {
     console.error(`[RADAR SCAN] ${now} · ERROR:`, e.message);
+    LAST = { at: now, hits: 0, fired: 0, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, error: e.message };
   }
 }
 
@@ -223,6 +228,30 @@ console.log(`   Alpaca key: ${ALPACA_KEY ? 'OK' : 'FALTA (ALPACA_KEY_ID)'}`);
 console.log(`   TG radar  : ${TG_TOKEN ? 'OK' : 'FALTA (TELEGRAM_TOKEN_RADAR)'}`);
 console.log('   FLAGGER de candidatos — no es gatillo de ejecución.');
 console.log('════════════════════════════════════════════\n');
+
+// ── MINI-SERVIDOR HTTP (para calificar como Web Service free de Render) ──────
+//   No toca la lógica del radar: solo escucha el puerto que Render asigna y
+//   sirve una página de estado. El radar sigue corriendo en su setInterval.
+const PORT = process.env.PORT || 10000;
+http.createServer((req, res) => {
+  if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
+  const l = LAST;
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(`<!doctype html><meta charset="utf-8">
+    <title>LiquidMap RADAR</title>
+    <style>body{font-family:system-ui,sans-serif;background:#0b0e14;color:#cdd6e4;padding:32px;line-height:1.6}
+    b{color:#7fd1ff}.ok{color:#5fd38a}.err{color:#ff6b6b}.k{color:#ffd66b}</style>
+    <h2>📡 LiquidMap PRO · RADAR v1</h2>
+    <p>Universo: <b>${UNIVERSE.length}</b> tickers · Umbrales: RVOL ≥ <b>${RVOL_MIN}×</b> · mov ≥ <b>${ATR_MULT}×ATR(${ATR_PERIOD})</b></p>
+    <p>Alpaca key: <span class="${ALPACA_KEY ? 'ok' : 'err'}">${ALPACA_KEY ? 'OK' : 'FALTA'}</span> ·
+       TG radar: <span class="${TG_TOKEN ? 'ok' : 'err'}">${TG_TOKEN ? 'OK' : 'FALTA'}</span></p>
+    <hr>
+    <p>Último barrido: <b>${l.at || 'aún no corrió'}</b></p>
+    <p>Baseline: <b>${l.baseline}/${UNIVERSE.length}</b> tickers con ATR+avgVol</p>
+    <p>Candidatos: <b class="k">${l.hits}</b> · Alertas enviadas: <b class="k">${l.fired}</b></p>
+    ${l.error ? `<p class="err">Error: ${l.error}</p>` : ''}
+    <p style="opacity:.6;margin-top:24px">FLAGGER de candidatos — no es gatillo de ejecución. Se refresca cada ${SCAN_INTERVAL / 60000} min.</p>`);
+}).listen(PORT, '0.0.0.0', () => console.log(`[RADAR] HTTP de estado en puerto ${PORT}`));
 
 runScan();
 setInterval(runScan, SCAN_INTERVAL);
