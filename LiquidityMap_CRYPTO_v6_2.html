@@ -427,6 +427,15 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div style="margin-top:4px;text-align:center;font-size:8px;font-family:'Space Mono',monospace;color:var(--muted);" id="sig-time">—</div>
     </div>
 
+    <!-- Contexto músculo (Pine v6.1): EMA200 · Zona ICT · MTF 4H -->
+    <div class="ps">
+      <h3>🧭 CONTEXTO <span style="font-size:7px;color:var(--muted);font-weight:400">· como TV</span></h3>
+      <div class="mr"><span class="lb">Tendencia</span><span class="vl" id="ctx-ema">—</span></div>
+      <div class="mr"><span class="lb">Zona ICT</span><span class="vl" id="ctx-ict">—</span></div>
+      <div class="mr"><span class="lb">MTF 4H</span><span class="vl" id="ctx-mtf">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">Contexto institucional — no modifica el score, te da criterio.</div>
+    </div>
+
     <!-- LIVE QUOTE -->
     <div class="ps">
       <h3>📡 Live Quote</h3>
@@ -1157,6 +1166,7 @@ async function initApp(){
   setBar(50);
   drawAll();               // draw whatever we have (bootstrap)
   await loadCandles();     // get real candles
+  prefetchMuscle();        // calienta EMA200 + MTF (no bloquea)
   setBar(70);
   drawAll();
   await Promise.all([loadFundingRate(), loadOpenInterest()]);
@@ -1185,6 +1195,7 @@ async function initApp(){
     await Promise.all([loadQuote(), loadCandles(), loadFundingRate(), loadOpenInterest()]);
     await Promise.all([loadOIHistory(), loadLSRatio(), loadWhales()]);
     detectStructure(candles);
+    prefetchMuscle();
     drawAll(); updatePanels();
   }, 30000);
   setInterval(loadFearGreed, 300000);
@@ -2013,6 +2024,79 @@ function updateSuperTrendJuez() {
     stJuez = { dir: 'NEUTRAL', stLine: 0, strength: 0, consecutive: 0 };
   }
 }
+
+// ── MÚSCULO PINE v6.1 (crypto): EMA200 · Discount/Premium · MTF 4H ──
+//   CONTEXTO del dashboard. NO toca el score (igual que en el Pine).
+//   Crypto 24/7: sin sesión NY; el MTF usa klines NATIVAS 1h/4h (sin resample).
+//   Fetch dedicado y cacheado APARTE del VP/score → no mueve el POC.
+let muscleCache = {};   // key `${tf}:${limit}` -> { bars, ts }
+async function fetchMuscleTF(tfName, limit){
+  const key = tfName+':'+limit, now = Date.now();
+  if(muscleCache[key] && now - muscleCache[key].ts < 120000) return muscleCache[key].bars;
+  try{
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/api/v3/klines&symbol=${sym}&interval=${tfName}&limit=${limit}`);
+    if(!r.ok) return null;
+    const d = await r.json();
+    if(!Array.isArray(d) || !d.length) return null;
+    const bars = d.map(k => ({ h:parseFloat(k[2]), l:parseFloat(k[3]), c:parseFloat(k[4]) }));
+    muscleCache[key] = { bars, ts: now };
+    return bars;
+  } catch(e){ return null; }
+}
+function prefetchMuscle(){          // calienta el cache (no bloquea el render)
+  fetchMuscleTF(tf, 250).catch(()=>{});      // EMA200 del TF activo
+  fetchMuscleTF('1h', 30).catch(()=>{});     // MTF
+  fetchMuscleTF('4h', 30).catch(()=>{});
+}
+function emaLast(vals, period){
+  if(!vals || vals.length < period) return null;
+  const k = 2/(period+1);
+  let e = vals.slice(0, period).reduce((a,b)=>a+b,0)/period;     // seed = SMA
+  for(let i=period;i<vals.length;i++) e = vals[i]*k + e*(1-k);
+  return e;
+}
+function lastPivot(bars, len, hi){                                // clon ta.pivothigh/low(20,20)
+  if(!bars || bars.length < len*2+1) return null;
+  for(let i = bars.length-1-len; i >= len; i--){
+    const v = hi ? bars[i].h : bars[i].l;
+    let ok = true;
+    for(let j=i-len; j<=i+len; j++){
+      if(j===i) continue;
+      const w = hi ? bars[j].h : bars[j].l;
+      if(hi ? (w >= v) : (w <= v)){ ok=false; break; }
+    }
+    if(ok) return v;
+  }
+  return null;
+}
+function rangeHalf(bars, n){                                      // mitad superior del rango de N (regla MTF Pine)
+  if(!bars || bars.length < 2) return null;
+  const s = bars.slice(-Math.min(n,bars.length));
+  const hi = Math.max(...s.map(b=>b.h)), lo = Math.min(...s.map(b=>b.l)), close = s[s.length-1].c;
+  return { hi, lo, close, bull: close > lo + (hi-lo)*0.5 };
+}
+function computeCryptoContext(activeCandles, price){
+  // EMA200 del TF activo (250 velas del fetch dedicado; fallback a las activas)
+  const emaBars = (muscleCache[tf+':250'] ? muscleCache[tf+':250'].bars : (activeCandles||[]));
+  const ema200  = emaLast((emaBars||[]).map(b=>b.c), 200);
+  const trendStr = ema200!=null ? price > ema200 : null;          // close > ema200
+  // Discount/Premium sobre pivotes del TF activo
+  const fibHi = lastPivot(activeCandles, 20, true);
+  const fibLo = lastPivot(activeCandles, 20, false);
+  let zoneTxt='—', zoneDir=0;
+  if(fibHi!=null && fibLo!=null){
+    const inDiscount = price < (fibHi+fibLo)/2;                    // eq = (fib_hi+fib_lo)/2
+    zoneTxt = inDiscount ? '📉 DISCOUNT (compra)' : '📈 PREMIUM (venta)';
+    zoneDir = inDiscount ? 1 : -1;
+  }
+  // MTF: 1h Y 4h nativas, precio en mitad superior del rango de 20
+  let mtfBull = null;
+  const h1 = rangeHalf(muscleCache['1h:30'] ? muscleCache['1h:30'].bars : null, 20);
+  const h4 = rangeHalf(muscleCache['4h:30'] ? muscleCache['4h:30'].bars : null, 20);
+  if(h1 && h4) mtfBull = h1.bull && h4.bull;
+  return { ema200, trendStr, zoneTxt, zoneDir, mtfBull };
+}
+
 // Sistema de 10 puntos con JUEZ SuperTrend
 // REGLA #1: Si el JUEZ dice DOWN → solo SELL, nunca BUY
 // REGLA #2: Si el JUEZ dice UP   → solo BUY,  nunca SELL  
@@ -2323,6 +2407,13 @@ function updateDerived(){
   set('sig-conf', sig.conf.join(' · '), 'a');
   const q = evalQuality(sig.score);
   set('sig-quality', q.label, q.ok ? 'g' : 'r');
+  // ── CONTEXTO MÚSCULO (Pine v6.1): EMA200 · Zona ICT · MTF 4H — solo display ──
+  const mctx = computeCryptoContext(candles, p);
+  if(mctx.trendStr===null) set('ctx-ema','—','');
+  else set('ctx-ema', mctx.trendStr?'▲ Alcista >EMA200':'▼ Bajista <EMA200', mctx.trendStr?'g':'r');
+  set('ctx-ict', mctx.zoneTxt, mctx.zoneDir===1?'g':(mctx.zoneDir===-1?'r':''));
+  if(mctx.mtfBull===null) set('ctx-mtf','—','');
+  else set('ctx-mtf', mctx.mtfBull?'▲ Alcista':'▼ Bajista', mctx.mtfBull?'g':'r');
   // Timestamp
   const nowStr = new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   if(sig.type !== 'NEUTRAL') { const te = document.getElementById('sig-time'); if(te) te.textContent = 'Última señal: '+nowStr+' UTC'; }
@@ -3166,6 +3257,7 @@ async function selectTF(t, btn){
   }
   await new Promise(r => setTimeout(r, 80));
   await loadCandles();
+  prefetchMuscle();
   drawAll(); updatePanels();
 }
 
