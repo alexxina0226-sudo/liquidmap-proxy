@@ -63,6 +63,18 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 
 /* LEGENDS */
 #legends{display:flex;gap:10px;padding:3px 10px;border-bottom:1px solid var(--border);background:var(--panel);flex-shrink:0;flex-wrap:wrap;align-items:center;}
+/* ── CONFLUENCE METER (toque del mapa bolsa) ── */
+#conf-meter{display:none;gap:6px;flex-wrap:wrap;align-items:stretch;padding:6px 12px;background:linear-gradient(180deg,rgba(6,11,23,.7),rgba(6,11,23,.2));border-bottom:1px solid var(--border);flex-shrink:0;}
+.cf-lead{display:flex;align-items:center;font-size:8px;font-family:'Space Mono',monospace;color:var(--accent);letter-spacing:1px;padding:0 6px 0 2px;white-space:nowrap;text-transform:uppercase;}
+.cf-chip{display:flex;flex-direction:column;gap:3px;min-width:80px;flex:1;padding:5px 8px;border-radius:6px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);position:relative;overflow:hidden;}
+.cf-chip .cf-name{font-size:8px;font-family:'Space Mono',monospace;color:var(--muted);letter-spacing:.4px;text-transform:uppercase;white-space:nowrap;}
+.cf-chip .cf-val{font-size:11px;font-weight:700;display:flex;align-items:center;gap:4px;}
+.cf-chip .cf-track{height:3px;border-radius:2px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:1px;}
+.cf-chip .cf-bar{height:100%;border-radius:2px;transition:width .5s;}
+.cf-bull{color:var(--green);} .cf-bull .cf-bar{background:var(--green);}
+.cf-bear{color:var(--red);} .cf-bear .cf-bar{background:var(--red);}
+.cf-neut{color:var(--muted);} .cf-neut .cf-bar{background:var(--muted);}
+.cf-chip.lit{box-shadow:0 0 0 1px currentColor inset,0 0 12px -4px currentColor;}
 .leg{display:flex;align-items:center;gap:4px;font-size:9px;color:var(--muted);}
 .ldot{width:10px;height:3px;border-radius:1px;flex-shrink:0;}
 #fear-greed{padding:2px 8px;border-radius:2px;font-family:'Space Mono',monospace;font-size:9px;font-weight:700;border:1px solid;}
@@ -296,6 +308,9 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
   <div id="alert-bell" class="on" onclick="toggleAlertModal()" title="Alertas">🔔</div>
   <div onclick="toggleLegend()" title="Guía" style="margin-left:6px;cursor:pointer;font-size:13px;opacity:.7;transition:opacity .2s;" onmouseover="this.style.opacity=1" onmouseout="this.style.opacity=.7">📖</div>
 </div>
+
+<!-- CONFLUENCE METER (toque del mapa bolsa) — capas del motor institucional -->
+<div id="conf-meter"></div>
 
 <!-- ALERT MODAL -->
 <div id="alert-modal">
@@ -2016,6 +2031,8 @@ function computeSignal(price) {
   // ── FASE 2: CAPAS DE CONFIRMACIÓN (máx 8 puntos) ─────────
   let bullPts = 0, bearPts = 0;
   const confBull = [], confBear = [];
+  // Banderas hoisted para el medidor de confluencia (capas reales del motor) ──
+  let shDir = 0, whaleDir = 0, whaleUSD = 0;
 
   // CAPA 1 — Precio vs POC / VWAP (peso 1.5)
   const distPOC = (price - poc) / poc;
@@ -2055,11 +2072,11 @@ function computeSignal(price) {
       const upperWick = last.h - Math.max(last.o, last.c);
       // Stop Hunt alcista: mecha inferior > 2x cuerpo
       if (lowerWick > body * 2 && lowerWick / totalRange > 0.40) {
-        bullPts += 1.5; confBull.push('SH Alcista↑');
+        bullPts += 1.5; confBull.push('SH Alcista↑'); shDir = 1;
       }
       // Stop Hunt bajista: mecha superior > 2x cuerpo
       if (upperWick > body * 2 && upperWick / totalRange > 0.40) {
-        bearPts += 1.5; confBear.push('SH Bajista↓');
+        bearPts += 1.5; confBear.push('SH Bajista↓'); shDir = -1;
       }
     }
   }
@@ -2086,9 +2103,9 @@ function computeSignal(price) {
       const sellUSD = recentW.filter(w=>w.side==='SELL').reduce((a,w)=>a+w.usd,0);
       const fmtM = v => v>1e6?(v/1e6).toFixed(1)+'M':(v/1e3).toFixed(0)+'K';
       if(buyUSD > sellUSD * 1.3 && cvd > 0){
-        bullPts += 1.5; confBull.push('🐋 Ballena $'+fmtM(buyUSD)+'+CVD↑');
+        bullPts += 1.5; confBull.push('🐋 Ballena $'+fmtM(buyUSD)+'+CVD↑'); whaleDir = 1; whaleUSD = buyUSD;
       } else if(sellUSD > buyUSD * 1.3 && cvd < 0){
-        bearPts += 1.5; confBear.push('🐋 Ballena $'+fmtM(sellUSD)+'+CVD↓');
+        bearPts += 1.5; confBear.push('🐋 Ballena $'+fmtM(sellUSD)+'+CVD↓'); whaleDir = -1; whaleUSD = sellUSD;
       } else if(buyUSD > sellUSD * 1.3 && cvd < 0){
         confBull.push('🐋⚠ Ballena compra vs CVD↓ divergencia');
       } else if(sellUSD > buyUSD * 1.3 && cvd > 0){
@@ -2136,7 +2153,59 @@ function computeSignal(price) {
     conf = ['Confluencia insuficiente'];
   }
 
-  return { type, score: finalScore, conf, stDir: juezDir, stLine: stJuez.stLine, stStrength: stJuez.strength };
+  // ── Capas reales para el medidor de confluencia (refleja el motor, sin inventar) ──
+  const _pocDir = distPOC > 0.001 ? 1 : distPOC < -0.001 ? -1 : 0;
+  let _cvdVal = 0, _cvdDir = 0;
+  if (cvd > 0 && buyPct > 54) { _cvdVal = 1.5; _cvdDir = 1; }
+  else if (cvd < 0 && buyPct < 46) { _cvdVal = 1.5; _cvdDir = -1; }
+  let _frVal = 0, _frDir = 0;
+  if (fundingRate < -0.03) { _frVal = 1.5; _frDir = 1; }
+  else if (fundingRate < -0.01) { _frVal = 0.8; _frDir = 1; }
+  else if (fundingRate > 0.05) { _frVal = 1.5; _frDir = -1; }
+  else if (fundingRate > 0.02) { _frVal = 0.8; _frDir = -1; }
+  const _liqDir = (nearSup && !nearRes) ? 1 : (nearRes && !nearSup) ? -1 : 0;
+  const _vaDir = price > va.vah ? 1 : price < va.val ? -1 : (price > poc ? 1 : -1);
+  let _strVal = 0, _strDir = 0;
+  if (structureEvents && structureEvents.length) {
+    const _le = structureEvents[structureEvents.length - 1];
+    _strDir = _le.dir === 'bull' ? 1 : -1;
+    _strVal = _le.type === 'BOS' ? 3 : 1.5;
+  }
+  const layers = [
+    { name: 'SuperTrend', val: +(+juezScore).toFixed(1), dir: juezDir === 'UP' ? 1 : juezDir === 'DOWN' ? -1 : 0 },
+    { name: 'Precio/POC', val: _pocDir ? 1.5 : 0, dir: _pocDir },
+    { name: 'CVD',        val: _cvdVal, dir: _cvdDir },
+    { name: 'Funding',    val: _frVal,  dir: _frDir },
+    { name: 'Liquidez',   val: _liqDir ? 1 : 0, dir: _liqDir },
+    { name: 'Value Area', val: 0.5, dir: _vaDir },
+    { name: 'Stop Hunt',  val: shDir ? 1.5 : 0, dir: shDir },
+    { name: 'Estructura', val: _strVal, dir: _strDir },
+    { name: 'Ballena',    val: whaleDir ? 1.5 : 0, dir: whaleDir, usd: whaleUSD }
+  ];
+
+  return { type, score: finalScore, conf, stDir: juezDir, stLine: stJuez.stLine, stStrength: stJuez.strength, layers };
+}
+
+// ── CONFLUENCE METER (toque del mapa bolsa) ───────────────
+// Muestra cada capa institucional REAL del motor crypto con su peso y dirección.
+function renderConfMeter(sig){
+  const el = document.getElementById('conf-meter');
+  if(!el || !sig || !sig.layers || !sig.layers.length){ if(el) el.style.display='none'; return; }
+  el.style.display='flex';
+  const maxW = { 'SuperTrend':2, 'Precio/POC':1.5, 'CVD':1.5, 'Funding':1.5, 'Liquidez':1, 'Value Area':0.5, 'Stop Hunt':1.5, 'Estructura':3, 'Ballena':1.5 };
+  const chips = sig.layers.map(L => {
+    const cls = L.dir>0?'cf-bull':L.dir<0?'cf-bear':'cf-neut';
+    const arrow = L.dir>0?'▲':L.dir<0?'▼':'•';
+    const lit = L.val>0 ? 'lit' : '';
+    const pct = Math.min(100, (L.val / (maxW[L.name]||3)) * 100);
+    const valTxt = L.dir===0 ? '—' : (L.dir>0?'+':'−')+L.val;
+    return `<div class="cf-chip ${cls} ${lit}">
+      <span class="cf-name">${L.name}</span>
+      <span class="cf-val">${arrow} ${valTxt}</span>
+      <span class="cf-track"><span class="cf-bar" style="width:${pct}%"></span></span>
+    </div>`;
+  }).join('');
+  el.innerHTML = `<span class="cf-lead">Motor · capas</span>` + chips;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2241,6 +2310,8 @@ function updateDerived(){
     scoreNum.textContent = sig.score + '/10';
     scoreNum.style.color = sig.score >= 8 ? 'var(--green)' : sig.score >= 6 ? 'var(--yellow)' : 'var(--muted)';
   }
+  // Barra de confluencia (toque del bolsa) — capas reales del motor
+  renderConfMeter(sig);
   // Kill zone status
   const nowHM2 = new Date().getUTCHours() * 60 + new Date().getUTCMinutes();
   const kzNames = {30:'Asia Open',480:'London Open',780:'NY-London',810:'NY Open',1140:'NY Close'};
