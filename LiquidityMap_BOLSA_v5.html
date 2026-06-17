@@ -360,6 +360,15 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div style="margin-top:4px;font-size:8px;color:var(--muted)" id="st-note">Calculando...</div>
     </div>
 
+    <!-- Contexto músculo (Pine v6.1): EMA200 · Zona ICT · MTF 4H -->
+    <div class="ps">
+      <h3>🧭 CONTEXTO <span style="font-size:7px;color:var(--muted);font-weight:400">· como TV</span></h3>
+      <div class="mr"><span class="lb">Tendencia</span><span class="vl" id="ctx-ema">—</span></div>
+      <div class="mr"><span class="lb">Zona ICT</span><span class="vl" id="ctx-ict">—</span></div>
+      <div class="mr"><span class="lb">MTF 4H</span><span class="vl" id="ctx-mtf">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">Contexto institucional — no modifica el score, te da criterio.</div>
+    </div>
+
     <!-- Estructura CHoCH/BOS -->
     <div class="ps">
       <h3>🏗 ESTRUCTURA</h3>
@@ -720,6 +729,79 @@ function computeSuperTrend(bars, period, mult){
     finalUpperPrev = finalUpper; finalLowerPrev = finalLower; trendPrev = trend;
   }
   return result;
+}
+
+// ── MÚSCULO PINE v6.1: EMA200 · Discount/Premium · MTF 4H ───────
+//   CONTEXTO para el dashboard (idéntico al Pine). NO toca el score —
+//   en el Pine v6.1 estas tres también son solo filas de contexto.
+function emaLast(vals, period){
+  if(!vals || vals.length < period) return null;
+  const k = 2/(period+1);
+  let e = vals.slice(0, period).reduce((a,b)=>a+b,0)/period;     // seed = SMA, igual que ta.ema
+  for(let i=period;i<vals.length;i++) e = vals[i]*k + e*(1-k);
+  return e;
+}
+// pivote con 20 barras a cada lado — clon de ta.pivothigh/low(20,20)
+function lastPivot(bars, len, hi){
+  if(!bars || bars.length < len*2+1) return null;
+  for(let i = bars.length-1-len; i >= len; i--){
+    const v = hi ? bars[i].h : bars[i].l;
+    let ok = true;
+    for(let j=i-len; j<=i+len; j++){
+      if(j===i) continue;
+      const w = hi ? bars[j].h : bars[j].l;
+      if(hi ? (w >= v) : (w <= v)){ ok=false; break; }
+    }
+    if(ok) return v;
+  }
+  return null;
+}
+// resample a 1H por hora ET (para el MTF; el 4H reusa resampleSession4H)
+function resampleHourET(bars){
+  if(!bars || !bars.length) return [];
+  const fmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit'});
+  const buckets = new Map(); const order=[];
+  for(const b of bars){
+    const p = fmt.formatToParts(new Date(b.t*1000));
+    const g = t => p.find(x=>x.type===t).value;
+    let hh = parseInt(g('hour'),10); if(hh===24) hh=0;
+    if(hh < 9 || hh >= 16) continue;                 // RTH por hora (9–16 ET)
+    const key = `${g('year')}-${g('month')}-${g('day')}|${hh}`;
+    let bk = buckets.get(key);
+    if(!bk){ bk={t:b.t,o:b.o,h:b.h,l:b.l,c:b.c}; buckets.set(key,bk); order.push(key); }
+    else { bk.h=Math.max(bk.h,b.h); bk.l=Math.min(bk.l,b.l); bk.c=b.c; }
+  }
+  return order.map(k=>buckets.get(k));
+}
+// mitad superior del rango de N barras (la regla MTF del Pine)
+function rangeHalf(bars, n){
+  if(!bars || bars.length < 2) return null;
+  const s = bars.slice(-Math.min(n,bars.length));
+  const hi = Math.max(...s.map(b=>b.h)), lo = Math.min(...s.map(b=>b.l)), close = s[s.length-1].c;
+  return { hi, lo, close, bull: close > lo + (hi-lo)*0.5 };
+}
+// Contexto completo del músculo — devuelve solo texto/dirección para mostrar
+function computeContext(activeCandles, intradaySrc, price){
+  const ema200  = emaLast(activeCandles.map(b=>b.c), 200);
+  const trendStr = ema200!=null ? price > ema200 : null;            // close > ema200
+
+  const fibHi = lastPivot(activeCandles, 20, true);
+  const fibLo = lastPivot(activeCandles, 20, false);
+  let zoneTxt='—', zoneDir=0;
+  if(fibHi!=null && fibLo!=null){
+    const inDiscount = price < (fibHi+fibLo)/2;                     // eq = (fib_hi+fib_lo)/2
+    zoneTxt = inDiscount ? '📉 DISCOUNT (compra)' : '📈 PREMIUM (venta)';
+    zoneDir = inDiscount ? 1 : -1;
+  }
+
+  let mtfBull = null;
+  const src = (intradaySrc && intradaySrc.length) ? intradaySrc : activeCandles;
+  const h1 = rangeHalf(resampleHourET(src), 20);
+  const h4 = rangeHalf(resampleSession4H(src, false), 20);
+  if(h1 && h4) mtfBull = h1.bull && h4.bull;                        // 1H Y 4H en mitad superior
+
+  return { ema200, trendStr, zoneTxt, zoneDir, mtfBull };
 }
 
 // ── CHoCH + BOS ────────────────────────────────────────────────
@@ -1423,6 +1505,13 @@ function updateDerived(){
     const atrReal=(stLast.atr!=null&&isFinite(stLast.atr))?stLast.atr:(quote.h&&quote.l?(quote.h-quote.l)*0.5:p*0.008); set('st-atr','$'+atrReal.toFixed(2),'a');
     document.getElementById('st-note').textContent=stDir?'Tendencia alcista. Buscar entradas en retrocesos al SuperTrend.':'Tendencia bajista. Cuidado con compras contra la tendencia.';
   }
+  // ── CONTEXTO MÚSCULO (Pine v6.1): EMA200 · Zona ICT · MTF 4H — solo display ──
+  const ctx = computeContext(candles, vpBars, p);
+  if(ctx.trendStr===null) set('ctx-ema','—','');
+  else set('ctx-ema', ctx.trendStr?'▲ Alcista >EMA200':'▼ Bajista <EMA200', ctx.trendStr?'g':'r');
+  set('ctx-ict', ctx.zoneTxt, ctx.zoneDir===1?'g':(ctx.zoneDir===-1?'r':''));
+  if(ctx.mtfBull===null) set('ctx-mtf','—','');
+  else set('ctx-mtf', ctx.mtfBull?'▲ Alcista':'▼ Bajista', ctx.mtfBull?'g':'r');
   // Structure panel
   if(struct.choch){ set('s-choch',struct.choch.label,struct.choch.dir==='BULL'?'g':'r'); } else { set('s-choch','No detectado',''); }
   if(struct.bos){ set('s-bos',struct.bos.label,struct.bos.dir==='BULL'?'g':'r'); } else { set('s-bos','No detectado',''); }
