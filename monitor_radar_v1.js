@@ -1,11 +1,17 @@
 // ════════════════════════════════════════════════════════════════════════════
-// LIQUIDMAP PRO · RADAR — monitor_radar_v1.js
+// LIQUIDMAP PRO · RADAR — monitor_radar_v1.js   (v1.1 — RVOL coherente SIP)
 // Scanner de universo amplio (barrido) — TERCER bot, independiente del estructural.
 // ────────────────────────────────────────────────────────────────────────────
-// FUENTE: Alpaca free ($0). Precio real-time (IEX) + diarias completas (ambos planes).
+// FUENTE: Alpaca free ($0). TODO el cálculo sale del MISMO feed SIP retrasado
+//   ~16 min (volumen 100% del mercado, no el 2.5% de IEX). Una sola fuente,
+//   una sola verdad → el RVOL es apples-to-apples con el baseline.
 //   Es a la vez el RADAR y el PILARTO para medir la calidad de Alpaca antes de pagar.
-// DISPARA: RVOL ≥ umbral (volumen relativo) Y movimiento ≥ N×ATR (vs cierre previo).
+// DISPARA: RVOL ≥ umbral (normalizado por hora del día) Y movimiento ≥ N×ATR.
 //   Es un FLAGGER de candidatos, no un gatillo de ejecución — confirmá en el mapa/TV.
+// ────────────────────────────────────────────────────────────────────────────
+// FIX (sesión 34): antes el volumen de hoy salía del snapshot feed=iex (~2.5% del
+//   mercado) y el promedio del baseline salía de SIP (100%). RVOL ≈ 0.025 SIEMPRE →
+//   nunca cruzaba el umbral → cero señales. Ahora hoy y promedio salen ambos de SIP.
 // ────────────────────────────────────────────────────────────────────────────
 // Un paso, una verdad: sin data sintética, archivo completo, validado con node --check.
 // ════════════════════════════════════════════════════════════════════════════
@@ -13,7 +19,7 @@
 'use strict';
 
 const http = require('http');   // mini-servidor para calificar como Web Service (tier Free de Render)
-let LAST = { at: null, hits: 0, fired: 0, universe: 0, baseline: 0, error: 'aún no corrió' };
+let LAST = { at: null, hits: 0, fired: 0, evaluated: 0, universe: 0, baseline: 0, frac: 0, top: [], error: 'aún no corrió' };
 
 // ── CREDENCIALES (env vars en Render — NUNCA hardcodear) ────────────────────
 const ALPACA_KEY    = process.env.ALPACA_KEY_ID     || '';
@@ -41,19 +47,48 @@ const UNIVERSE = [
 ];
 
 // ── UMBRALES (config — generales, no por ticker) ────────────────────────────
-const RVOL_MIN     = 2.0;                  // volumen relativo mínimo (×promedio)
+const RVOL_MIN     = 2.0;                  // volumen relativo mínimo (×esperado a esta hora)
 const ATR_MULT     = 2.0;                  // movimiento mínimo en múltiplos de ATR
 const ATR_PERIOD   = 14;                   // días para ATR
 const AVGVOL_DAYS  = 20;                   // días para volumen promedio
-const HIST_DAYS    = 45;                   // ventana de diarias a pedir (cubre ATR+avgvol con aire)
+const HIST_DAYS    = 45;                   // ventana de diarias para el baseline
+const TODAY_DAYS   = 6;                    // ventana corta para hoy + cierre previo (cubre finde/feriado)
+const DELAY_MS     = 16 * 60 * 1000;       // SIP free exige end > 15 min → pedimos a 16 min
 const SCAN_INTERVAL = 5 * 60 * 1000;       // barrido cada 5 min
 const COOLDOWN_MS   = 2 * 60 * 60 * 1000;  // anti-spam: 1 alerta por ticker cada 2h
-const SNAP_BATCH    = 50;                  // símbolos por llamada de snapshot
+const SNAP_BATCH    = 50;                  // símbolos por llamada
+const MIN_FRAC      = 0.05;                // < 5% de sesión transcurrida → RVOL aún no confiable
+
+// ── SESIÓN NY (para normalizar el RVOL por hora del día) ────────────────────
+const SESSION_OPEN  = 9.5 * 3600;          // 09:30 ET en segundos desde medianoche
+const SESSION_CLOSE = 16 * 3600;           // 16:00 ET
+const SESSION_LEN   = SESSION_CLOSE - SESSION_OPEN;   // 23.400 s
 
 // ── ESTADO (en memoria; dedup por ticker) ───────────────────────────────────
 const STATE = {};                          // ticker -> { lastAlertTs, lastDir }
-let BASELINE = {};                         // ticker -> { atr, avgVol, day }  (refresca 1×/día)
+let BASELINE = {};                         // ticker -> { atr, avgVol }  (refresca 1×/día)
 let baselineDay = null;
+
+// ── HELPERS de fecha/hora NY ────────────────────────────────────────────────
+function nyDate(d) {
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(d);   // YYYY-MM-DD
+}
+function nySecSinceMidnight(d) {
+  const parts = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York', hour12: false,
+    hour: '2-digit', minute: '2-digit', second: '2-digit'
+  }).formatToParts(d);
+  const get = t => parseInt(parts.find(p => p.type === t).value, 10);
+  let h = get('hour'); if (h === 24) h = 0;   // medianoche puede venir como 24
+  return h * 3600 + get('minute') * 60 + get('second');
+}
+// fracción de la sesión transcurrida según el RELOJ RETRASADO (alinea con la data que tenemos)
+function sessionFraction(dataClock) {
+  const sec = nySecSinceMidnight(dataClock);
+  if (sec <= SESSION_OPEN)  return 0;
+  if (sec >= SESSION_CLOSE) return 1;
+  return (sec - SESSION_OPEN) / SESSION_LEN;
+}
 
 // ── HTTP a Alpaca ───────────────────────────────────────────────────────────
 async function alpacaGet(path) {
@@ -83,20 +118,14 @@ function computeATR(bars, period) {
   for (let i = period; i < tr.length; i++) atr = (atr * (period - 1) + tr[i]) / period;
   return atr;
 }
-
 function avg(arr) { return arr.reduce((a, b) => a + b, 0) / arr.length; }
 
-// ── BASELINE: diarias históricas completas (full-volume en free si end >15min) ──
-async function buildBaseline() {
-  const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/New_York' }).format(new Date());
-  if (baselineDay === today && Object.keys(BASELINE).length) return;   // ya está para hoy
-
-  console.log(`[RADAR] Construyendo baseline (ATR${ATR_PERIOD} + avgVol${AVGVOL_DAYS}) para ${UNIVERSE.length} tickers...`);
-  const start = new Date(Date.now() - HIST_DAYS * 24 * 3600 * 1000).toISOString().slice(0, 10);
-  // end ≥ 16 min atrás: en free, SIP histórico exige end > 15 min (data completa, no IEX)
-  const end = new Date(Date.now() - 16 * 60 * 1000).toISOString();
-  const next = {};
-
+// ── Pedir diarias SIP (retrasadas 16 min, full-volume en free) ──────────────
+//   Reutilizado por baseline (ventana larga) y por el barrido (ventana corta de hoy).
+async function fetchDailyBars(days) {
+  const start = new Date(Date.now() - days * 24 * 3600 * 1000).toISOString().slice(0, 10);
+  const end   = new Date(Date.now() - DELAY_MS).toISOString();
+  const out = {};   // sym -> [{ date, h, l, c, v }, ...] en orden
   for (let i = 0; i < UNIVERSE.length; i += SNAP_BATCH) {
     const syms = UNIVERSE.slice(i, i + SNAP_BATCH).join(',');
     let pageToken = null;
@@ -106,58 +135,63 @@ async function buildBaseline() {
                  `&adjustment=raw&feed=sip&limit=10000` + (pageToken ? `&page_token=${pageToken}` : '');
       const d = await alpacaGet(`/v2/stocks/bars?${qs}`);
       for (const s in (d.bars || {})) {
-        bySym[s] = (bySym[s] || []).concat(d.bars[s].map(b => ({ h: b.h, l: b.l, c: b.c, v: b.v })));
+        bySym[s] = (bySym[s] || []).concat(
+          d.bars[s].map(b => ({ date: b.t.slice(0, 10), h: b.h, l: b.l, c: b.c, v: b.v }))
+        );
       }
       pageToken = d.next_page_token || null;
     } while (pageToken);
-
-    for (const s in bySym) {
-      const bars = bySym[s];
-      const atr = computeATR(bars, ATR_PERIOD);
-      const vols = bars.slice(-AVGVOL_DAYS).map(b => b.v);
-      if (atr && vols.length) next[s] = { atr, avgVol: avg(vols) };
-    }
+    Object.assign(out, bySym);
   }
+  return out;
+}
 
+// ── BASELINE: ATR + volumen promedio, EXCLUYENDO la barra parcial de hoy ────
+async function buildBaseline() {
+  const today = nyDate(new Date());
+  if (baselineDay === today && Object.keys(BASELINE).length) return;   // ya está para hoy
+
+  console.log(`[RADAR] Construyendo baseline (ATR${ATR_PERIOD} + avgVol${AVGVOL_DAYS}) para ${UNIVERSE.length} tickers...`);
+  const bySym = await fetchDailyBars(HIST_DAYS);
+  const next = {};
+  for (const s in bySym) {
+    const completed = bySym[s].filter(b => b.date !== today);   // fuera la parcial de hoy (no contamina el promedio)
+    const atr  = computeATR(completed, ATR_PERIOD);
+    const vols = completed.slice(-AVGVOL_DAYS).map(b => b.v);
+    if (atr && vols.length) next[s] = { atr, avgVol: avg(vols) };
+  }
   BASELINE = next;
   baselineDay = today;
   console.log(`[RADAR] Baseline listo: ${Object.keys(BASELINE).length}/${UNIVERSE.length} tickers con ATR+avgVol.`);
 }
 
-// ── SNAPSHOT: precio real-time (IEX) + diaria de hoy + cierre previo ────────
-async function fetchSnapshots() {
-  const out = {};
-  for (let i = 0; i < UNIVERSE.length; i += SNAP_BATCH) {
-    const syms = UNIVERSE.slice(i, i + SNAP_BATCH).join(',');
-    const d = await alpacaGet(`/v2/stocks/snapshots?symbols=${syms}&feed=iex`);
-    Object.assign(out, d);
-  }
-  return out;
-}
-
 // ── DETECCIÓN ───────────────────────────────────────────────────────────────
-function evaluate(sym, snap) {
+//   Devuelve SIEMPRE las métricas (con bandera `passed`) para poder mostrar
+//   los "top movers" en la página de estado aunque no crucen el umbral.
+function evaluate(sym, bars, frac, today) {
   const base = BASELINE[sym];
-  if (!base) return null;
+  if (!base || !bars || bars.length < 2) return null;
 
-  const last  = snap.latestTrade?.p ?? snap.minuteBar?.c ?? snap.dailyBar?.c;
-  const prevC = snap.prevDailyBar?.c;
-  const todayVol = snap.dailyBar?.v;
-  if (!last || !prevC || !todayVol) return null;
+  const last  = bars[bars.length - 1];
+  const prev  = bars[bars.length - 2];
+  if (last.date !== today) return null;            // aún no hay barra de hoy (pre-market/feriado/primeros ~16 min)
+  if (frac < MIN_FRAC) return null;                // demasiado temprano: el RVOL todavía no es confiable
 
-  const move    = last - prevC;
+  const px = last.c, prevC = prev.c, todayVol = last.v;
+  if (!px || !prevC || !todayVol) return null;
+
+  const expectedVol = base.avgVol * frac;          // volumen ESPERADO a esta hora (aprox. uniforme en la sesión)
+  const rvol    = expectedVol ? todayVol / expectedVol : 0;
+  const move    = px - prevC;
   const moveATR = base.atr ? move / base.atr : 0;
-  const rvol    = base.avgVol ? todayVol / base.avgVol : 0;
 
-  if (rvol >= RVOL_MIN && Math.abs(moveATR) >= ATR_MULT) {
-    return {
-      sym, last, prevC,
-      pct: (move / prevC) * 100,
-      moveATR, rvol,
-      dir: move >= 0 ? 'up' : 'down'
-    };
-  }
-  return null;
+  return {
+    sym, last: px, prevC, todayVol,
+    pct: (move / prevC) * 100,
+    moveATR, rvol, frac,
+    dir: move >= 0 ? 'up' : 'down',
+    passed: rvol >= RVOL_MIN && Math.abs(moveATR) >= ATR_MULT
+  };
 }
 
 // ── TELEGRAM (HTML, a vos y Sucel — mismo patrón que el bot bolsa) ──────────
@@ -175,82 +209,101 @@ async function sendTelegram(text) {
 }
 
 function buildAlert(h) {
-  const arrow = h.dir === 'up' ? '🟢 ▲' : '🔴 ▼';
+  const arrow  = h.dir === 'up' ? '🟢 ▲' : '🔴 ▼';
   const dirTxt = h.dir === 'up' ? 'ALCISTA' : 'BAJISTA';
   return `📡 <b>RADAR — ${h.sym}</b>\n` +
          `${arrow} ${dirTxt} · ${h.pct >= 0 ? '+' : ''}${h.pct.toFixed(2)}% del día\n` +
          `Precio $${h.last.toFixed(2)} · prev $${h.prevC.toFixed(2)}\n` +
          `⚡ RVOL ${h.rvol.toFixed(1)}× · movimiento ${Math.abs(h.moveATR).toFixed(1)}×ATR\n` +
-         `🔎 Candidato — confirmá estructura en el mapa / TV antes de operar.`;
+         `🕒 SIP ≈15 min retrasado · 🔎 Candidato — confirmá estructura en el mapa / TV.`;
 }
 
 // ── BARRIDO ──────────────────────────────────────────────────────────────────
 async function runScan() {
   const now = new Date().toLocaleString('es', { timeZone: 'America/New_York' });
+  let frac = 0;
   try {
     await buildBaseline();
-    const snaps = await fetchSnapshots();
+    const barsBySym = await fetchDailyBars(TODAY_DAYS);
+    const today = nyDate(new Date());
+    frac = sessionFraction(new Date(Date.now() - DELAY_MS));
 
+    const evals = [];
     let hits = 0, fired = 0;
     for (const sym of UNIVERSE) {
-      const snap = snaps[sym];
-      if (!snap) continue;
-      const hit = evaluate(sym, snap);
-      if (!hit) continue;
+      const ev = evaluate(sym, barsBySym[sym], frac, today);
+      if (!ev) continue;
+      evals.push(ev);
+      if (!ev.passed) continue;
       hits++;
 
       const s = STATE[sym] || (STATE[sym] = { lastAlertTs: 0, lastDir: null });
       const fresh = (Date.now() - s.lastAlertTs) >= COOLDOWN_MS;
-      const dirChanged = s.lastDir !== hit.dir;
+      const dirChanged = s.lastDir !== ev.dir;
       if (fresh || dirChanged) {
-        await sendTelegram(buildAlert(hit));
+        await sendTelegram(buildAlert(ev));
         s.lastAlertTs = Date.now();
-        s.lastDir = hit.dir;
+        s.lastDir = ev.dir;
         fired++;
       }
     }
-    console.log(`[RADAR SCAN] ${now} · candidatos:${hits} · alertas:${fired} · universo:${UNIVERSE.length}`);
-    LAST = { at: now, hits, fired, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, error: null };
+
+    // top movers por RVOL (para que SE VEA el dato real del pilarto, crucen o no el umbral)
+    const top = evals.slice().sort((a, b) => b.rvol - a.rvol).slice(0, 8)
+      .map(e => ({ sym: e.sym, rvol: e.rvol, moveATR: e.moveATR, pct: e.pct, dir: e.dir, passed: e.passed }));
+
+    console.log(`[RADAR SCAN] ${now} · evaluados:${evals.length} · candidatos:${hits} · alertas:${fired} · sesión:${(frac * 100).toFixed(0)}%`);
+    LAST = { at: now, hits, fired, evaluated: evals.length, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top, error: null };
   } catch (e) {
     console.error(`[RADAR SCAN] ${now} · ERROR:`, e.message);
-    LAST = { at: now, hits: 0, fired: 0, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, error: e.message };
+    LAST = { at: now, hits: 0, fired: 0, evaluated: 0, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top: [], error: e.message };
   }
 }
 
 // ── ARRANQUE ──────────────────────────────────────────────────────────────────
 console.log('════════════════════════════════════════════');
-console.log('  LIQUIDMAP PRO · RADAR v1 — Alpaca free');
+console.log('  LIQUIDMAP PRO · RADAR v1.1 — Alpaca free (SIP retrasado)');
 console.log('════════════════════════════════════════════');
 console.log(`   Universo  : ${UNIVERSE.length} tickers`);
-console.log(`   Umbrales  : RVOL ≥ ${RVOL_MIN}× · movimiento ≥ ${ATR_MULT}×ATR(${ATR_PERIOD})`);
+console.log(`   Umbrales  : RVOL ≥ ${RVOL_MIN}× (normalizado por hora) · movimiento ≥ ${ATR_MULT}×ATR(${ATR_PERIOD})`);
 console.log(`   Barrido   : cada ${SCAN_INTERVAL / 60000} min · cooldown ${COOLDOWN_MS / 3600000}h por ticker`);
+console.log(`   Feed      : SIP retrasado ${DELAY_MS / 60000} min (100% volumen, free)`);
 console.log(`   Alpaca key: ${ALPACA_KEY ? 'OK' : 'FALTA (ALPACA_KEY_ID)'}`);
 console.log(`   TG radar  : ${TG_TOKEN ? 'OK' : 'FALTA (TELEGRAM_TOKEN_RADAR)'}`);
 console.log('   FLAGGER de candidatos — no es gatillo de ejecución.');
 console.log('════════════════════════════════════════════\n');
 
 // ── MINI-SERVIDOR HTTP (para calificar como Web Service free de Render) ──────
-//   No toca la lógica del radar: solo escucha el puerto que Render asigna y
-//   sirve una página de estado. El radar sigue corriendo en su setInterval.
 const PORT = process.env.PORT || 10000;
 http.createServer((req, res) => {
   if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
   const l = LAST;
+  const rows = (l.top || []).map(t => {
+    const arrow = t.dir === 'up' ? '🟢▲' : '🔴▼';
+    const mark  = t.passed ? '<span class="ok">●</span>' : '<span style="opacity:.35">○</span>';
+    return `<tr><td>${mark} <b>${t.sym}</b></td><td>${arrow} ${t.pct >= 0 ? '+' : ''}${t.pct.toFixed(2)}%</td>` +
+           `<td class="k">${t.rvol.toFixed(2)}×</td><td>${Math.abs(t.moveATR).toFixed(2)}×ATR</td></tr>`;
+  }).join('');
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(`<!doctype html><meta charset="utf-8">
+  res.end(`<!doctype html><meta charset="utf-8"><meta http-equiv="refresh" content="60">
     <title>LiquidMap RADAR</title>
     <style>body{font-family:system-ui,sans-serif;background:#0b0e14;color:#cdd6e4;padding:32px;line-height:1.6}
-    b{color:#7fd1ff}.ok{color:#5fd38a}.err{color:#ff6b6b}.k{color:#ffd66b}</style>
-    <h2>📡 LiquidMap PRO · RADAR v1</h2>
-    <p>Universo: <b>${UNIVERSE.length}</b> tickers · Umbrales: RVOL ≥ <b>${RVOL_MIN}×</b> · mov ≥ <b>${ATR_MULT}×ATR(${ATR_PERIOD})</b></p>
+    b{color:#7fd1ff}.ok{color:#5fd38a}.err{color:#ff6b6b}.k{color:#ffd66b}
+    table{border-collapse:collapse;margin-top:8px}td{padding:4px 16px 4px 0;border-bottom:1px solid #1c2230}
+    th{text-align:left;padding:4px 16px 4px 0;color:#8aa;font-weight:600;font-size:.85em}</style>
+    <h2>📡 LiquidMap PRO · RADAR v1.1</h2>
+    <p>Universo: <b>${UNIVERSE.length}</b> · Umbrales: RVOL ≥ <b>${RVOL_MIN}×</b> · mov ≥ <b>${ATR_MULT}×ATR(${ATR_PERIOD})</b> · feed SIP ≈15 min</p>
     <p>Alpaca key: <span class="${ALPACA_KEY ? 'ok' : 'err'}">${ALPACA_KEY ? 'OK' : 'FALTA'}</span> ·
        TG radar: <span class="${TG_TOKEN ? 'ok' : 'err'}">${TG_TOKEN ? 'OK' : 'FALTA'}</span></p>
     <hr>
-    <p>Último barrido: <b>${l.at || 'aún no corrió'}</b></p>
-    <p>Baseline: <b>${l.baseline}/${UNIVERSE.length}</b> tickers con ATR+avgVol</p>
-    <p>Candidatos: <b class="k">${l.hits}</b> · Alertas enviadas: <b class="k">${l.fired}</b></p>
+    <p>Último barrido: <b>${l.at || 'aún no corrió'}</b> · sesión transcurrida: <b>${(l.frac * 100).toFixed(0)}%</b></p>
+    <p>Baseline: <b>${l.baseline}/${UNIVERSE.length}</b> · evaluados: <b>${l.evaluated}</b> ·
+       Candidatos: <b class="k">${l.hits}</b> · Alertas: <b class="k">${l.fired}</b></p>
     ${l.error ? `<p class="err">Error: ${l.error}</p>` : ''}
-    <p style="opacity:.6;margin-top:24px">FLAGGER de candidatos — no es gatillo de ejecución. Se refresca cada ${SCAN_INTERVAL / 60000} min.</p>`);
+    <h3 style="margin-top:24px">Top movers por RVOL <span style="opacity:.6;font-weight:400">(el dato del pilarto — el ● cruzó el umbral)</span></h3>
+    ${rows ? `<table><tr><th>Ticker</th><th>% día</th><th>RVOL</th><th>Mov</th></tr>${rows}</table>`
+           : '<p style="opacity:.6">Sin lecturas todavía (mercado cerrado o primeros minutos de la sesión).</p>'}
+    <p style="opacity:.6;margin-top:24px">FLAGGER de candidatos — no es gatillo de ejecución. Refresca cada ${SCAN_INTERVAL / 60000} min.</p>`);
 }).listen(PORT, '0.0.0.0', () => console.log(`[RADAR] HTTP de estado en puerto ${PORT}`));
 
 runScan();
