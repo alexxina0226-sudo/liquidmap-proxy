@@ -19,7 +19,7 @@
 'use strict';
 
 const http = require('http');   // mini-servidor para calificar como Web Service (tier Free de Render)
-let LAST = { at: null, hits: 0, fired: 0, evaluated: 0, universe: 0, baseline: 0, frac: 0, top: [], error: 'aún no corrió' };
+let LAST = { at: null, hits: 0, fired: 0, preFired: 0, evaluated: 0, universe: 0, baseline: 0, frac: 0, top: [], error: 'aún no corrió' };
 
 // ── CREDENCIALES (env vars en Render — NUNCA hardcodear) ────────────────────
 const ALPACA_KEY    = process.env.ALPACA_KEY_ID     || '';
@@ -58,6 +58,10 @@ const SCAN_INTERVAL = 5 * 60 * 1000;       // barrido cada 5 min
 const COOLDOWN_MS   = 2 * 60 * 60 * 1000;  // anti-spam: 1 alerta por ticker cada 2h
 const SNAP_BATCH    = 50;                  // símbolos por llamada
 const MIN_FRAC      = 0.05;                // < 5% de sesión transcurrida → RVOL aún no confiable
+
+// ── PRE-AVISO (capa temprana, precio en TIEMPO REAL IEX — sin delay) ────────
+const PRE_ATR_MULT    = 1.2;               // movimiento mínimo para el pre-aviso (más bajo que el confirmado)
+const PRE_COOLDOWN_MS = 60 * 60 * 1000;    // 1 pre-aviso por ticker por hora
 
 // ── SESIÓN NY (para normalizar el RVOL por hora del día) ────────────────────
 const SESSION_OPEN  = 9.5 * 3600;          // 09:30 ET en segundos desde medianoche
@@ -218,6 +222,45 @@ function buildAlert(h) {
          `🕒 SIP ≈15 min retrasado · 🔎 Candidato — confirmá estructura en el mapa / TV.`;
 }
 
+// ── PRECIO EN TIEMPO REAL (IEX) — SOLO para el pre-aviso (sin volumen, sin delay) ──
+//   IEX da precio real-time fiable; el volumen es parcial, por eso el pre-aviso
+//   NO usa RVOL — es puro momentum de precio. La confirmación sigue por SIP.
+async function fetchLivePrices() {
+  const out = {};
+  for (let i = 0; i < UNIVERSE.length; i += SNAP_BATCH) {
+    const syms = UNIVERSE.slice(i, i + SNAP_BATCH).join(',');
+    try {
+      const d = await alpacaGet(`/v2/stocks/snapshots?symbols=${syms}&feed=iex`);
+      const map = d.snapshots || d;   // tolera ambas formas del endpoint
+      for (const s in map) {
+        const snap = map[s];
+        const px = (snap && snap.latestTrade && snap.latestTrade.p) ||
+                   (snap && snap.minuteBar && snap.minuteBar.c) ||
+                   (snap && snap.dailyBar && snap.dailyBar.c) || null;
+        if (px) out[s] = px;
+      }
+    } catch (e) { /* best-effort: si falla un batch, ese no tiene pre-aviso este barrido */ }
+  }
+  return out;
+}
+
+// prevC = cierre del último día COMPLETADO (no la barra parcial de hoy)
+function prevCloseOf(bars, today) {
+  if (!bars || !bars.length) return null;
+  for (let i = bars.length - 1; i >= 0; i--) if (bars[i].date !== today) return bars[i].c;
+  return null;
+}
+
+function buildPreAlert(sym, last, prevC, moveATR) {
+  const up = last >= prevC;
+  const arrow = up ? '🟢 ▲' : '🔴 ▼';
+  const pct = (last - prevC) / prevC * 100;
+  return `👀 <b>PRE-AVISO — ${sym}</b>\n` +
+         `${arrow} moviéndose · ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%\n` +
+         `Precio $${last.toFixed(2)} (tiempo real) · prev $${prevC.toFixed(2)}\n` +
+         `⚡ ${Math.abs(moveATR).toFixed(1)}×ATR · ⏱ EN VIVO sin delay · ⚠ sin confirmar — vigilar (no es señal).`;
+}
+
 // ── BARRIDO ──────────────────────────────────────────────────────────────────
 async function runScan() {
   const now = new Date().toLocaleString('es', { timeZone: 'America/New_York' });
@@ -225,26 +268,46 @@ async function runScan() {
   try {
     await buildBaseline();
     const barsBySym = await fetchDailyBars(TODAY_DAYS);
+    const livePrices = await fetchLivePrices();         // precio real-time IEX (best-effort)
     const today = nyDate(new Date());
     frac = sessionFraction(new Date(Date.now() - DELAY_MS));
 
     const evals = [];
-    let hits = 0, fired = 0;
+    let hits = 0, fired = 0, preFired = 0;
     for (const sym of UNIVERSE) {
-      const ev = evaluate(sym, barsBySym[sym], frac, today);
-      if (!ev) continue;
-      evals.push(ev);
-      if (!ev.passed) continue;
-      hits++;
+      const base = BASELINE[sym];
+      if (!base) continue;
+      const s = STATE[sym] || (STATE[sym] = { lastAlertTs: 0, lastDir: null, lastPreTs: 0, confirmedTs: 0 });
 
-      const s = STATE[sym] || (STATE[sym] = { lastAlertTs: 0, lastDir: null });
-      const fresh = (Date.now() - s.lastAlertTs) >= COOLDOWN_MS;
-      const dirChanged = s.lastDir !== ev.dir;
-      if (fresh || dirChanged) {
-        await sendTelegram(buildAlert(ev));
-        s.lastAlertTs = Date.now();
-        s.lastDir = ev.dir;
-        fired++;
+      // ── CONFIRMACIÓN (SIP retrasado: RVOL ≥ umbral Y mov ≥ N×ATR) ──
+      const ev = evaluate(sym, barsBySym[sym], frac, today);
+      if (ev) {
+        evals.push(ev);
+        if (ev.passed) {
+          hits++;
+          const fresh = (Date.now() - s.lastAlertTs) >= COOLDOWN_MS;
+          const dirChanged = s.lastDir !== ev.dir;
+          if (fresh || dirChanged) {
+            await sendTelegram(buildAlert(ev));
+            s.lastAlertTs = Date.now(); s.lastDir = ev.dir; s.confirmedTs = Date.now();
+            fired++;
+          }
+          continue;   // ya confirmó → no mandamos pre-aviso del mismo ticker
+        }
+      }
+
+      // ── PRE-AVISO (precio real-time IEX; sirve aunque aún no haya barra SIP de hoy) ──
+      const lp = livePrices[sym];
+      const prevC = prevCloseOf(barsBySym[sym], today);
+      if (lp != null && prevC != null && base.atr > 0) {
+        const moveLiveATR = (lp - prevC) / base.atr;
+        const recentlyConfirmed = (Date.now() - s.confirmedTs) < COOLDOWN_MS;
+        const preFresh = (Date.now() - s.lastPreTs) >= PRE_COOLDOWN_MS;
+        if (!recentlyConfirmed && preFresh && Math.abs(moveLiveATR) >= PRE_ATR_MULT) {
+          await sendTelegram(buildPreAlert(sym, lp, prevC, moveLiveATR));
+          s.lastPreTs = Date.now();
+          preFired++;
+        }
       }
     }
 
@@ -252,17 +315,17 @@ async function runScan() {
     const top = evals.slice().sort((a, b) => b.rvol - a.rvol).slice(0, 8)
       .map(e => ({ sym: e.sym, rvol: e.rvol, moveATR: e.moveATR, pct: e.pct, dir: e.dir, passed: e.passed }));
 
-    console.log(`[RADAR SCAN] ${now} · evaluados:${evals.length} · candidatos:${hits} · alertas:${fired} · sesión:${(frac * 100).toFixed(0)}%`);
-    LAST = { at: now, hits, fired, evaluated: evals.length, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top, error: null };
+    console.log(`[RADAR SCAN] ${now} · evaluados:${evals.length} · candidatos:${hits} · alertas:${fired} · pre-avisos:${preFired} · sesión:${(frac * 100).toFixed(0)}%`);
+    LAST = { at: now, hits, fired, preFired, evaluated: evals.length, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top, error: null };
   } catch (e) {
     console.error(`[RADAR SCAN] ${now} · ERROR:`, e.message);
-    LAST = { at: now, hits: 0, fired: 0, evaluated: 0, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top: [], error: e.message };
+    LAST = { at: now, hits: 0, fired: 0, preFired: 0, evaluated: 0, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top: [], error: e.message };
   }
 }
 
 // ── ARRANQUE ──────────────────────────────────────────────────────────────────
 console.log('════════════════════════════════════════════');
-console.log('  LIQUIDMAP PRO · RADAR v1.1 — Alpaca free (SIP retrasado)');
+console.log('  LIQUIDMAP PRO · RADAR v1.2 — pre-aviso real-time + confirmación SIP');
 console.log('════════════════════════════════════════════');
 console.log(`   Universo  : ${UNIVERSE.length} tickers`);
 console.log(`   Umbrales  : RVOL ≥ ${RVOL_MIN}× (normalizado por hora) · movimiento ≥ ${ATR_MULT}×ATR(${ATR_PERIOD})`);
@@ -291,14 +354,14 @@ http.createServer((req, res) => {
     b{color:#7fd1ff}.ok{color:#5fd38a}.err{color:#ff6b6b}.k{color:#ffd66b}
     table{border-collapse:collapse;margin-top:8px}td{padding:4px 16px 4px 0;border-bottom:1px solid #1c2230}
     th{text-align:left;padding:4px 16px 4px 0;color:#8aa;font-weight:600;font-size:.85em}</style>
-    <h2>📡 LiquidMap PRO · RADAR v1.1</h2>
+    <h2>📡 LiquidMap PRO · RADAR v1.2</h2>
     <p>Universo: <b>${UNIVERSE.length}</b> · Umbrales: RVOL ≥ <b>${RVOL_MIN}×</b> · mov ≥ <b>${ATR_MULT}×ATR(${ATR_PERIOD})</b> · feed SIP ≈15 min</p>
     <p>Alpaca key: <span class="${ALPACA_KEY ? 'ok' : 'err'}">${ALPACA_KEY ? 'OK' : 'FALTA'}</span> ·
        TG radar: <span class="${TG_TOKEN ? 'ok' : 'err'}">${TG_TOKEN ? 'OK' : 'FALTA'}</span></p>
     <hr>
     <p>Último barrido: <b>${l.at || 'aún no corrió'}</b> · sesión transcurrida: <b>${(l.frac * 100).toFixed(0)}%</b></p>
     <p>Baseline: <b>${l.baseline}/${UNIVERSE.length}</b> · evaluados: <b>${l.evaluated}</b> ·
-       Candidatos: <b class="k">${l.hits}</b> · Alertas: <b class="k">${l.fired}</b></p>
+       Candidatos: <b class="k">${l.hits}</b> · Alertas: <b class="k">${l.fired}</b> · 👀 Pre-avisos: <b class="k">${l.preFired|0}</b></p>
     ${l.error ? `<p class="err">Error: ${l.error}</p>` : ''}
     <h3 style="margin-top:24px">Top movers por RVOL <span style="opacity:.6;font-weight:400">(el dato del pilarto — el ● cruzó el umbral)</span></h3>
     ${rows ? `<table><tr><th>Ticker</th><th>% día</th><th>RVOL</th><th>Mov</th></tr>${rows}</table>`
