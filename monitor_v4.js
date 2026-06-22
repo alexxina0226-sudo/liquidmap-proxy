@@ -812,16 +812,30 @@ async function sendTelegram(text) {
 // ════════════════════════════════════════════════════════════
 const ARC_OPTS  = { anchorTz: 'UTC', filterPeriod: 'Session' };   // crypto 24/7 → ancla UTC
 const ARC_STATE = {};                                             // {sym_tf: t del último flip alertado} — vive entre scans
+const ARC_RECENT_BARS = 2;                                        // un flip solo es alertable si ocurrió en las últimas N velas CERRADAS → mata el backlog al (re)arrancar
 
 function detectArcFlipAlerts(candles, sym, tf, state, opts) {
   const arc = computeArc(candles, opts || {});
   if (!arc || !arc.initialized || !arc.flips || !arc.flips.length) return [];
   const key = `${sym}_${tf}`;
   const lastT = state[key] || 0;
-  // flips nuevos, confirmados, sobre vela cerrada, posteriores al último alertado
-  const fresh = arc.flips.filter(f => f.confirmed && !f.live && f.t > lastT);
+
+  // flips confirmados sobre vela CERRADA (la viva puede revertir → fuera)
+  const closed = arc.flips.filter(f => f.confirmed && !f.live);
+  if (!closed.length) { if (state[key] === undefined) state[key] = 0; return []; }
+  const newestT = Math.max(...closed.map(f => f.t));
+
+  // Ventana de RECENCIA: solo alertar flips de las últimas N velas cerradas. Resuelve el
+  // spam de (re)arranque: el marcador anti-spam vive en memoria y se borra al reiniciar
+  // (free tier reinicia seguido), así que sin esto el arco repetía TODO el historial de
+  // flips de golpe. Con la ventana, al arrancar siembra su línea de base (state ← newestT)
+  // y SOLO alerta un flip genuinamente fresco (de las últimas ARC_RECENT_BARS velas cerradas).
+  const idxCut = candles.length - 1 - ARC_RECENT_BARS;
+  const recentCutoff = idxCut >= 0 ? candles[idxCut].t : 0;
+  const fresh = closed.filter(f => f.t > lastT && f.t >= recentCutoff);
+
+  state[key] = Math.max(lastT, newestT);   // siembra/avanza el marcador SIEMPRE (evita re-alertar el backlog)
   if (!fresh.length) return [];
-  state[key] = Math.max(lastT, ...fresh.map(f => f.t));   // avanza el marcador anti-spam
   return fresh.map(f => ({
     sym, tf, dir: f.bull ? 'BUY' : 'SELL', bull: f.bull, price: f.price, t: f.t,
     msg: `🌀 <b>ARCO FLIP ${f.bull ? 'ALCISTA 🟢' : 'BAJISTA 🔴'}</b> confirmado\n` +
