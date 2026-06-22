@@ -346,6 +346,31 @@ app.get('/diag', async (req, res) => {
   });
 });
 
+// ── DIAGNÓSTICO POLYGON ───────────────────────────
+// Abrí /polygon-diag y leé el JSON: nos dice EXACTAMENTE qué responde Polygon al server.
+//   ok:true  + status:200            → la key y la conexión andan (el problema sería otro)
+//   ok:false + status:401/403        → la KEY no sirve (vencida / plan equivocado)
+//   ok:false + status:429            → LÍMITE de Polygon (plan / cuota)
+//   ok:false + error:'Premature...'  → la conexión se corta (egress de Render o Polygon dropea)
+app.get('/polygon-diag', async (req, res) => {
+  const started = Date.now();
+  if (!POLYGON_KEY) return res.json({ ok: false, error: 'POLYGON_KEY no configurada en el servidor' });
+  const url = `https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/2026-06-08/2026-06-13?adjusted=true&sort=asc&limit=10&apiKey=${POLYGON_KEY}`;
+  try {
+    const r    = await fetch(url, { headers: { 'Accept': 'application/json' }, timeout: 10000 });
+    const text = await r.text();
+    let body; try { body = JSON.parse(text); } catch { body = { raw: text.slice(0, 200) }; }
+    res.json({
+      ok: r.ok, status: r.status, ms: Date.now() - started,
+      polygon_status: body && body.status, polygon_message: body && (body.message || body.error),
+      resultsCount: body && body.resultsCount, sample: text.slice(0, 200),
+    });
+  } catch (e) {
+    res.json({ ok: false, error: e.message, ms: Date.now() - started,
+      hint: 'la conexión a Polygon se cortó — revisá suscripción/cuota de Polygon, o egress de Render' });
+  }
+});
+
 // ── HEALTH CHECK ─────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString(), service: 'LiquidMap PRO v2' });
