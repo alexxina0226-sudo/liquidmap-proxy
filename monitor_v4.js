@@ -23,7 +23,13 @@ const { computeArc } = require('./arc_boswaves.js');   // CAPA 14 · motor del a
 // ── CONFIG ─────────────────────────────────────────────────
 const TELEGRAM_TOKEN = '8676337394:AAEVIwDY2xGwAmE7hMWcjjAMedjws_vjzSU';
 const CHAT_IDS       = ['1218461753', '1373309702'];
-const PROXY          = 'https://liquidmap-proxy.onrender.com/proxy';
+// PROXY: por defecto LOOPBACK local. El bot corre DENTRO de server.js (mismo proceso),
+// así que pegarle al /proxy por la URL PÚBLICA de Render salía a internet y volvía a entrar a
+// la MISMA instancia free (1 solo proceso) → se ahogaba bajo carga ("Premature close").
+// Por 127.0.0.1 el pedido nunca sale de la caja: sin DNS, sin TLS, sin el edge de Render.
+// Override con PROXY_URL si alguna vez se corre el bot por separado (fuera de server.js).
+const PORT           = process.env.PORT || 3000;
+const PROXY          = process.env.PROXY_URL || `http://127.0.0.1:${PORT}/proxy`;
 
 // Tickers activos — agregar aquí cuando se quiera activar uno nuevo
 const CRYPTO_TICKERS = [
@@ -986,6 +992,7 @@ console.log(`   Score    : mínimo ${MIN_SCORE}/10 · mínimo 3 capas concordant
 console.log(`   Cooldown : 4H · roto solo por CHoCH NUEVO · 1 señal por vela 4H (anti-spam)`);
 console.log(`   Kill Zones: London·NY·Overlap ponderadas`);
 console.log(`   Data     : proxy Render → Bybit (klines/FR/OI/L-S)`);
+console.log(`   Proxy    : ${PROXY} ${/127\.0\.0\.1|localhost/.test(PROXY) ? '(loopback local — no sale de la instancia)' : '(URL pública)'}`);
 console.log(`   Scan     : cada 5 min — dispara solo cuando hay calidad real`);
 
 runScan();
