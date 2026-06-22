@@ -42,6 +42,13 @@ const POLYGON_KEY          = process.env.POLYGON_KEY || ''; // velas + quote REA
 // Polygon.io → Massive.com (30-oct-2025). api.polygon.io se apaga en 2026 ("Premature close").
 // Base nueva api.massive.com (misma API/key). Override con POLYGON_BASE si cambia.
 const POLYGON_BASE         = process.env.POLYGON_BASE || 'https://api.massive.com';
+// Massive comprime las respuestas y node-fetch las corta ("Premature close").
+// Fix probado: Accept-Encoding identity (sin compresión) + User-Agent navegador.
+const POLYGON_HEADERS      = {
+  'Accept': 'application/json',
+  'Accept-Encoding': 'identity',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+};
 
 const STOCK_TICKERS = [
   'SPY', 'QQQ', 'NVDA', 'AAPL', 'AMZN',
@@ -195,7 +202,7 @@ async function fetchPolygonCandles(symbol, mult, span, fromDays) {
     const to   = fmtDate(Date.now());
     const from = fmtDate(Date.now() - fromDays * 86400000);
     const url  = `${POLYGON_BASE}/v2/aggs/ticker/${symbol}/range/${mult}/${span}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${POLYGON_KEY}`;
-    const r = await fetch(url, { timeout: 10000 });
+    const r = await fetch(url, { headers: POLYGON_HEADERS, timeout: 10000 });
     const d = await r.json();
     if (d.status === 'ERROR' || d.error || !d.results || !d.results.length) return [];
     // Polygon ya entrega t en ms — el monitor trabaja en ms internamente
@@ -225,7 +232,7 @@ async function fetchQuote(symbol) {
     const to   = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10); // 7d cubre findes/feriados
     const url  = `${POLYGON_BASE}/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}?adjusted=true&sort=desc&limit=2&apiKey=${POLYGON_KEY}`;
-    const r    = await fetch(url);
+    const r    = await fetch(url, { headers: POLYGON_HEADERS });
     const j    = await r.json();
     if (j.status === 'ERROR' || j.error || !j.results || !j.results.length) return null;
     const dayBar  = j.results[0];                               // sesión más reciente
