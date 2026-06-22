@@ -39,6 +39,9 @@ catch (e) { console.log('⚠️ arc_boswaves.js no encontrado — CAPA 14 (Arco)
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
 const POLYGON_KEY          = process.env.POLYGON_KEY || ''; // velas + quote REALES (env var en Render)
+// Polygon.io → Massive.com (30-oct-2025). api.polygon.io se apaga en 2026 ("Premature close").
+// Base nueva api.massive.com (misma API/key). Override con POLYGON_BASE si cambia.
+const POLYGON_BASE         = process.env.POLYGON_BASE || 'https://api.massive.com';
 
 const STOCK_TICKERS = [
   'SPY', 'QQQ', 'NVDA', 'AAPL', 'AMZN',
@@ -191,7 +194,7 @@ async function fetchPolygonCandles(symbol, mult, span, fromDays) {
     const fmtDate = d => new Date(d).toISOString().slice(0, 10);
     const to   = fmtDate(Date.now());
     const from = fmtDate(Date.now() - fromDays * 86400000);
-    const url  = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/${mult}/${span}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${POLYGON_KEY}`;
+    const url  = `${POLYGON_BASE}/v2/aggs/ticker/${symbol}/range/${mult}/${span}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${POLYGON_KEY}`;
     const r = await fetch(url, { timeout: 10000 });
     const d = await r.json();
     if (d.status === 'ERROR' || d.error || !d.results || !d.results.length) return [];
@@ -221,7 +224,7 @@ async function fetchQuote(symbol) {
     // desde aggregates diarios, autorizado por el plan. Fuente única: Polygon.
     const to   = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10); // 7d cubre findes/feriados
-    const url  = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}?adjusted=true&sort=desc&limit=2&apiKey=${POLYGON_KEY}`;
+    const url  = `${POLYGON_BASE}/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}?adjusted=true&sort=desc&limit=2&apiKey=${POLYGON_KEY}`;
     const r    = await fetch(url);
     const j    = await r.json();
     if (j.status === 'ERROR' || j.error || !j.results || !j.results.length) return null;
