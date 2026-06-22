@@ -279,6 +279,10 @@ app.get('/proxy', async (req, res) => {
 // de consola CORS/502 (la llamada pasa a ser server-to-server).
 // Restringido a /v2/aggs/ (solo lectura de agregados) para acotar el uso del proxy.
 const POLYGON_KEY = process.env.POLYGON_KEY || '';
+// Polygon.io se renombró a Massive.com (30-oct-2025). El endpoint viejo api.polygon.io
+// se está apagando en 2026 (da "Premature close"). Base nueva: api.massive.com (misma API/key).
+// Override con POLYGON_BASE si alguna vez cambia de nuevo.
+const POLYGON_BASE = process.env.POLYGON_BASE || 'https://api.massive.com';
 app.get('/polygon', async (req, res) => {
   try {
     if (!POLYGON_KEY) return res.status(500).json({ error: 'POLYGON_KEY no configurada en el servidor (Render → Environment)' });
@@ -288,7 +292,7 @@ app.get('/polygon', async (req, res) => {
       .filter(([k]) => k !== 'path')
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&');
-    const url = `https://api.polygon.io${apiPath}?${params ? params + '&' : ''}apiKey=${POLYGON_KEY}`;
+    const url = `${POLYGON_BASE}${apiPath}?${params ? params + '&' : ''}apiKey=${POLYGON_KEY}`;
     // 2 intentos: bajo carga (instancia free + NY abierto) la conexión a Polygon puede
     // cortarse ("Premature close"). Un reintento corto suele resolver el corte transitorio.
     let r, text;
@@ -355,7 +359,7 @@ app.get('/diag', async (req, res) => {
 app.get('/polygon-diag', async (req, res) => {
   const started = Date.now();
   if (!POLYGON_KEY) return res.json({ ok: false, error: 'POLYGON_KEY no configurada en el servidor' });
-  const url = `https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/2026-06-08/2026-06-13?adjusted=true&sort=asc&limit=10&apiKey=${POLYGON_KEY}`;
+  const url = `${POLYGON_BASE}/v2/aggs/ticker/SPY/range/1/day/2026-06-08/2026-06-13?adjusted=true&sort=asc&limit=10&apiKey=${POLYGON_KEY}`;
   try {
     const r    = await fetch(url, { headers: { 'Accept': 'application/json' }, timeout: 10000 });
     const text = await r.text();
