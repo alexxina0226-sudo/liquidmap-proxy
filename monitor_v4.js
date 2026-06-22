@@ -161,17 +161,28 @@ function getSession() {
 async function fetchCandles(symbol, interval, limit = 100) {
   // Usar proxy de Render → traduce a Bybit (Binance da 418 desde Render)
   const url = `${PROXY}?path=/api/v3/klines&symbol=${symbol}&interval=${interval}&limit=${limit}`;
-  const r   = await fetch(url, { timeout: 10000 });
-  const raw = await r.json();
-  if (!Array.isArray(raw)) return [];
-  return raw.map(k => ({
-    t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4],
-    v: +k[5], qv: +k[7],           // quote volume en USDT
-    trades: +k[8],
-    buyBaseVol: +k[9],             // volumen de compra agresiva
-    buyQuoteVol: +k[10],           // volumen de compra en USDT
-    closeTime: k[6],
-  }));
+  // 2 intentos: el proxy free puede cortar la conexión ("Premature close") bajo carga.
+  // Un reintento corto tras drenar la cola suele resolverlo. Si persiste, propaga (aborta
+  // el ticker como antes) — no inventa data parcial.
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const r   = await fetch(url, { timeout: 10000 });
+      const raw = await r.json();
+      if (!Array.isArray(raw)) return [];
+      return raw.map(k => ({
+        t: k[0], o: +k[1], h: +k[2], l: +k[3], c: +k[4],
+        v: +k[5], qv: +k[7],           // quote volume en USDT
+        trades: +k[8],
+        buyBaseVol: +k[9],             // volumen de compra agresiva
+        buyQuoteVol: +k[10],           // volumen de compra en USDT
+        closeTime: k[6],
+      }));
+    } catch (e) {
+      if (attempt === 2) throw e;                          // tras 2 intentos, propaga (como antes)
+      await new Promise(res => setTimeout(res, 500));      // backoff corto antes del reintento
+    }
+  }
+  return [];
 }
 
 // Funding Rate — clave en crypto, contrarian institucional
@@ -825,7 +836,7 @@ async function scanTicker(ticker) {
       fetchFundingRate(ticker),
       fetchOIHistory(ticker),
       fetchLSRatio(ticker),
-      fetchCandles(ticker, '4h',  200),   // CAPA 14: velas dedicadas para el ARCO (≥110) — aislado, NO toca el VP/POC de candles4H(100)
+      fetchCandles(ticker, '4h',  200).catch(() => []),   // CAPA 14: velas dedicadas para el ARCO (≥110) — aislado, NO toca el VP/POC; .catch → NUNCA aborta el scan del ticker
     ]);
 
     if (candles4H.length < 30) return;
