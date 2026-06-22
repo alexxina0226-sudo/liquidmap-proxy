@@ -355,18 +355,30 @@ app.get('/health', (req, res) => {
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => console.log(`LiquidMap PRO running on port ${PORT}`));
 
-// ── MONITOR CRYPTO 24/7 ───────────────────────────
-try {
-  require('./monitor_v4');
-  console.log('✅ Monitor CRYPTO arrancado — @liquidmappro_bot');
-} catch (e) {
-  console.error('❌ Monitor crypto no pudo arrancar:', e.message);
-}
+// ── MONITORES (bots) ──────────────────────────────
+// Los bots (crypto + bolsa) comparten ESTE proceso con los mapas y el proxy.
+// En instancia free de 1 solo proceso, con NY abierto compiten por el event loop y
+// las conexiones salientes → los pedidos a Polygon del mapa se cortan ("Premature close").
+// Interruptor: poné MAPS_ONLY=1 en Render → Environment para correr SOLO mapas/proxy
+// (bots apagados) y darle aire al mapa. Es el paso para confirmar la causa y el puente
+// hasta separar los bots a su propio servicio.
+const MAPS_ONLY = /^(1|true|yes|on)$/i.test(process.env.MAPS_ONLY || '');
+if (MAPS_ONLY) {
+  console.log('⚙️  MAPS_ONLY=1 — bots APAGADOS en este servicio (solo mapas + proxy).');
+} else {
+  // ── MONITOR CRYPTO 24/7 ───────────────────────────
+  try {
+    require('./monitor_v4');
+    console.log('✅ Monitor CRYPTO arrancado — @liquidmappro_bot');
+  } catch (e) {
+    console.error('❌ Monitor crypto no pudo arrancar:', e.message);
+  }
 
-// ── MONITOR BOLSA (solo sesión NY) ────────────────
-try {
-  require('./monitor_bolsa_v1');
-  console.log('✅ Monitor BOLSA arrancado — @liquidmapbolsa_bot');
-} catch (e) {
-  console.error('❌ Monitor bolsa no pudo arrancar:', e.message);
+  // ── MONITOR BOLSA (solo sesión NY) ────────────────
+  try {
+    require('./monitor_bolsa_v1');
+    console.log('✅ Monitor BOLSA arrancado — @liquidmapbolsa_bot');
+  } catch (e) {
+    console.error('❌ Monitor bolsa no pudo arrancar:', e.message);
+  }
 }
