@@ -289,8 +289,19 @@ app.get('/polygon', async (req, res) => {
       .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
       .join('&');
     const url = `https://api.polygon.io${apiPath}?${params ? params + '&' : ''}apiKey=${POLYGON_KEY}`;
-    const r    = await fetch(url, { headers: { 'Accept': 'application/json' }, timeout: 10000 });
-    const text = await r.text();
+    // 2 intentos: bajo carga (instancia free + NY abierto) la conexión a Polygon puede
+    // cortarse ("Premature close"). Un reintento corto suele resolver el corte transitorio.
+    let r, text;
+    for (let attempt = 1; attempt <= 2; attempt++) {
+      try {
+        r    = await fetch(url, { headers: { 'Accept': 'application/json' }, timeout: 10000 });
+        text = await r.text();
+        break;
+      } catch (e) {
+        if (attempt === 2) throw e;                       // tras 2 intentos, propaga al catch (→ 500, como antes)
+        await new Promise(res => setTimeout(res, 400));    // backoff corto antes del reintento
+      }
+    }
     let data;
     try { data = JSON.parse(text); }
     catch (e) { return res.status(502).json({ error: 'polygon_invalid_json', upstream_status: r.status, sample: text.slice(0, 160) }); }
