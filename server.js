@@ -283,6 +283,13 @@ const POLYGON_KEY = process.env.POLYGON_KEY || '';
 // se está apagando en 2026 (da "Premature close"). Base nueva: api.massive.com (misma API/key).
 // Override con POLYGON_BASE si alguna vez cambia de nuevo.
 const POLYGON_BASE = process.env.POLYGON_BASE || 'https://api.massive.com';
+// Massive manda respuestas comprimidas que node-fetch no digiere → "Premature close".
+// Fix probado: pedir SIN compresión (Accept-Encoding: identity) + User-Agent de navegador.
+const POLYGON_HEADERS = {
+  'Accept': 'application/json',
+  'Accept-Encoding': 'identity',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+};
 app.get('/polygon', async (req, res) => {
   try {
     if (!POLYGON_KEY) return res.status(500).json({ error: 'POLYGON_KEY no configurada en el servidor (Render → Environment)' });
@@ -298,7 +305,7 @@ app.get('/polygon', async (req, res) => {
     let r, text;
     for (let attempt = 1; attempt <= 2; attempt++) {
       try {
-        r    = await fetch(url, { headers: { 'Accept': 'application/json' }, timeout: 10000 });
+        r    = await fetch(url, { headers: POLYGON_HEADERS, timeout: 10000 });
         text = await r.text();
         break;
       } catch (e) {
