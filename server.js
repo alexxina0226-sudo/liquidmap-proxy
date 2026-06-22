@@ -357,22 +357,37 @@ app.get('/diag', async (req, res) => {
 //   ok:false + status:429            → LÍMITE de Polygon (plan / cuota)
 //   ok:false + error:'Premature...'  → la conexión se corta (egress de Render o Polygon dropea)
 app.get('/polygon-diag', async (req, res) => {
-  const started = Date.now();
   if (!POLYGON_KEY) return res.json({ ok: false, error: 'POLYGON_KEY no configurada en el servidor' });
-  const url = `${POLYGON_BASE}/v2/aggs/ticker/SPY/range/1/day/2026-06-08/2026-06-13?adjusted=true&sort=asc&limit=10&apiKey=${POLYGON_KEY}`;
-  try {
-    const r    = await fetch(url, { headers: { 'Accept': 'application/json' }, timeout: 10000 });
-    const text = await r.text();
-    let body; try { body = JSON.parse(text); } catch { body = { raw: text.slice(0, 200) }; }
-    res.json({
-      ok: r.ok, status: r.status, ms: Date.now() - started,
-      polygon_status: body && body.status, polygon_message: body && (body.message || body.error),
-      resultsCount: body && body.resultsCount, sample: text.slice(0, 200),
-    });
-  } catch (e) {
-    res.json({ ok: false, error: e.message, ms: Date.now() - started,
-      hint: 'la conexión a Polygon se cortó — revisá suscripción/cuota de Polygon, o egress de Render' });
+  const path = `/v2/aggs/ticker/SPY/range/1/day/2026-06-08/2026-06-13?adjusted=true&sort=asc&limit=10&apiKey=${POLYGON_KEY}`;
+  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
+  const nativeFetch = (typeof globalThis.fetch === 'function') ? globalThis.fetch : null;
+
+  // Cada estrategia: distinto host / headers / cliente → vemos cuál logra traer data
+  const strategies = [
+    { name: 'massive + Accept (actual)',        host: 'https://api.massive.com', client: 'node-fetch', headers: { 'Accept': 'application/json' } },
+    { name: 'massive + User-Agent navegador',   host: 'https://api.massive.com', client: 'node-fetch', headers: { 'Accept': 'application/json', 'User-Agent': UA } },
+    { name: 'massive + UA + sin compresión',    host: 'https://api.massive.com', client: 'node-fetch', headers: { 'Accept': 'application/json', 'User-Agent': UA, 'Accept-Encoding': 'identity' } },
+    { name: 'polygon + UA',                     host: 'https://api.polygon.io', client: 'node-fetch', headers: { 'Accept': 'application/json', 'User-Agent': UA } },
+    { name: 'massive + fetch nativo + UA',      host: 'https://api.massive.com', client: 'native', headers: { 'Accept': 'application/json', 'User-Agent': UA } },
+  ];
+
+  const results = [];
+  for (const s of strategies) {
+    const started = Date.now();
+    try {
+      const doFetch = (s.client === 'native' && nativeFetch) ? nativeFetch : fetch;
+      if (s.client === 'native' && !nativeFetch) { results.push({ name: s.name, skip: 'fetch nativo no disponible (Node viejo)' }); continue; }
+      const r    = await doFetch(s.host + path, { headers: s.headers, timeout: 10000 });
+      const text = await r.text();
+      let body; try { body = JSON.parse(text); } catch { body = null; }
+      results.push({ name: s.name, ok: r.ok, status: r.status, ms: Date.now() - started,
+        resultsCount: body && body.resultsCount, sample: text.slice(0, 120) });
+    } catch (e) {
+      results.push({ name: s.name, ok: false, error: e.message, ms: Date.now() - started });
+    }
   }
+  const winner = results.find(x => x.ok);
+  res.json({ veredicto: winner ? `✅ FUNCIONA: ${winner.name}` : '❌ ninguna estrategia trajo data', node: process.version, results });
 });
 
 // ── HEALTH CHECK ─────────────────────────────────
