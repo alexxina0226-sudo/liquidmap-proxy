@@ -18,6 +18,7 @@
 
 'use strict';
 const fetch = require('node-fetch');
+const { computeArc } = require('./arc_boswaves.js');   // CAPA 14 · motor del arco (ya en el repo, lo usa el bot bolsa)
 
 // ── CONFIG ─────────────────────────────────────────────────
 const TELEGRAM_TOKEN = '8676337394:AAEVIwDY2xGwAmE7hMWcjjAMedjws_vjzSU';
@@ -782,24 +783,67 @@ async function sendTelegram(text) {
 // ════════════════════════════════════════════════════════════
 //  SCANNER NEURONAL PRINCIPAL
 // ════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════
+//  CAPA 14 · ARCO VWAP SUPERTREND [BOSWaves] — FLIP CONFIRMADO
+//  Independiente del score neuronal: el valor del flip es avisar el GIRO,
+//  no esperar a que converjan las 6 capas. Reglas (calidad institucional):
+//   · Solo flips CONFIRMADOS por VWAP de sesión (flip.confirmed).
+//   · Solo sobre vela CERRADA (no la viva, que puede revertir) — !flip.live.
+//   · 1 alerta por flip — dedup por timestamp del flip (anti-spam) en ARC_STATE.
+//  CRYPTO: anclaje UTC (el diario de TV/Bybit cierra 00:00 UTC, NO en ET) —
+//  sin esto los VWAPs resetean 4-5h corridos y el flip no coincide con TV.
+// ════════════════════════════════════════════════════════════
+const ARC_OPTS  = { anchorTz: 'UTC', filterPeriod: 'Session' };   // crypto 24/7 → ancla UTC
+const ARC_STATE = {};                                             // {sym_tf: t del último flip alertado} — vive entre scans
+
+function detectArcFlipAlerts(candles, sym, tf, state, opts) {
+  const arc = computeArc(candles, opts || {});
+  if (!arc || !arc.initialized || !arc.flips || !arc.flips.length) return [];
+  const key = `${sym}_${tf}`;
+  const lastT = state[key] || 0;
+  // flips nuevos, confirmados, sobre vela cerrada, posteriores al último alertado
+  const fresh = arc.flips.filter(f => f.confirmed && !f.live && f.t > lastT);
+  if (!fresh.length) return [];
+  state[key] = Math.max(lastT, ...fresh.map(f => f.t));   // avanza el marcador anti-spam
+  return fresh.map(f => ({
+    sym, tf, dir: f.bull ? 'BUY' : 'SELL', bull: f.bull, price: f.price, t: f.t,
+    msg: `🌀 <b>ARCO FLIP ${f.bull ? 'ALCISTA 🟢' : 'BAJISTA 🔴'}</b> confirmado\n` +
+         `${sym} · ${tf} · $${fmt(f.price, f.price)} · VWAP ✓\n` +
+         `CAPA 14 — giro del arco (independiente del score). Confirmá estructura en el mapa / TV.`
+  }));
+}
+
 async function scanTicker(ticker) {
   const s = getState(ticker);
 
   try {
     // ── PASO 1: Obtener todos los datos en paralelo ──────
-    const [candles4H, candles1H, candles15m, fr, oiHistory, lsRatio] = await Promise.all([
+    const [candles4H, candles1H, candles15m, fr, oiHistory, lsRatio, candlesArc4H] = await Promise.all([
       fetchCandles(ticker, '4h',  100),
       fetchCandles(ticker, '1h',  60),
       fetchCandles(ticker, '15m', 60),
       fetchFundingRate(ticker),
       fetchOIHistory(ticker),
       fetchLSRatio(ticker),
+      fetchCandles(ticker, '4h',  200),   // CAPA 14: velas dedicadas para el ARCO (≥110) — aislado, NO toca el VP/POC de candles4H(100)
     ]);
 
     if (candles4H.length < 30) return;
 
     const price   = candles4H[candles4H.length - 1].c;
     const candle4HId = candles4H[candles4H.length - 1].t;
+
+    // ── CAPA 14 · FLIP DEL ARCO (independiente del score — dispara aunque el motor esté NEUTRAL) ──
+    //   Va ANTES de las reglas de disparo del motor: el flip es su propia alerta, no la del score.
+    try {
+      if (candlesArc4H && candlesArc4H.length >= 110) {
+        const arcFlips = detectArcFlipAlerts(candlesArc4H, ticker, '4H', ARC_STATE, ARC_OPTS);
+        for (const fl of arcFlips) {
+          await sendTelegram(fl.msg);
+          console.log(`[${ticker}] 🌀 ARCO FLIP ${fl.dir} @ $${fmt(fl.price, fl.price)} (CAPA 14, independiente del score)`);
+        }
+      }
+    } catch (e) { console.error(`[${ticker}] ARCO flip error:`, e.message); }
 
     // ── PASO 2: Volume Profile sobre 4H ──────────────────
     const vp     = buildVolumeProfile(candles4H, 100);
@@ -926,6 +970,7 @@ async function runScan() {
 console.log('🧠 LiquidMap PRO Monitor v4 — SISTEMA NEURONAL INSTITUCIONAL');
 console.log(`   Tickers  : ${CRYPTO_TICKERS.join(', ')}`);
 console.log(`   Capas    : POC·CVD·OI·FR·CHoCH·BOS·SH·Zonas·Ballenas·L/S·15m`);
+console.log(`   CAPA 14  : 🌀 ARCO FLIP [BOSWaves] 4H · confirmado VWAP · vela cerrada · independiente del score (UTC)`);
 console.log(`   Score    : mínimo ${MIN_SCORE}/10 · mínimo 3 capas concordantes`);
 console.log(`   Cooldown : 4H · roto solo por CHoCH NUEVO · 1 señal por vela 4H (anti-spam)`);
 console.log(`   Kill Zones: London·NY·Overlap ponderadas`);
