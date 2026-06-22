@@ -1,5 +1,5 @@
 // ════════════════════════════════════════════════════════════════════════════
-// LIQUIDMAP PRO · RADAR — monitor_radar_v1.js   (v1.1 — RVOL coherente SIP)
+// LIQUIDMAP PRO · RADAR — monitor_radar_v1.js   (v1.3 — pre-aviso con candado RTH + RVOL parcial)
 // Scanner de universo amplio (barrido) — TERCER bot, independiente del estructural.
 // ────────────────────────────────────────────────────────────────────────────
 // FUENTE: Alpaca free ($0). TODO el cálculo sale del MISMO feed SIP retrasado
@@ -61,7 +61,9 @@ const MIN_FRAC      = 0.05;                // < 5% de sesión transcurrida → R
 
 // ── PRE-AVISO (capa temprana, precio en TIEMPO REAL IEX — sin delay) ────────
 const PRE_ATR_MULT    = 1.2;               // movimiento mínimo para el pre-aviso (más bajo que el confirmado)
+const PRE_RVOL_MIN    = 1.3;               // RVOL parcial mínimo (SIP, normalizado por hora) — filtra velas flojas
 const PRE_COOLDOWN_MS = 60 * 60 * 1000;    // 1 pre-aviso por ticker por hora
+// NOTA: el pre-aviso solo dispara en RTH (candado de hora, reloj real) → mata el ruido de after-hours.
 
 // ── SESIÓN NY (para normalizar el RVOL por hora del día) ────────────────────
 const SESSION_OPEN  = 9.5 * 3600;          // 09:30 ET en segundos desde medianoche
@@ -92,6 +94,15 @@ function sessionFraction(dataClock) {
   if (sec <= SESSION_OPEN)  return 0;
   if (sec >= SESSION_CLOSE) return 1;
   return (sec - SESSION_OPEN) / SESSION_LEN;
+}
+// ¿mercado regular abierto AHORA? — CANDADO del pre-aviso, por RELOJ REAL (el precio es real-time, no el retrasado).
+// Cubre fin de semana (Sat/Sun) y fuera de 09:30–16:00 ET. (Feriados: sin barra SIP + IEX devuelve cierre previo
+// → moveLiveATR≈0, no dispara; no se hardcodea calendario de feriados.)
+function isRTH(d) {
+  const dow = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', weekday: 'short' }).format(d);
+  if (dow === 'Sat' || dow === 'Sun') return false;
+  const sec = nySecSinceMidnight(d);
+  return sec >= SESSION_OPEN && sec < SESSION_CLOSE;
 }
 
 // ── HTTP a Alpaca ───────────────────────────────────────────────────────────
@@ -251,14 +262,18 @@ function prevCloseOf(bars, today) {
   return null;
 }
 
-function buildPreAlert(sym, last, prevC, moveATR) {
+function buildPreAlert(sym, last, prevC, moveATR, rvol) {
   const up = last >= prevC;
   const arrow = up ? '🟢 ▲' : '🔴 ▼';
   const pct = (last - prevC) / prevC * 100;
+  const volLine = (rvol != null)
+    ? `📊 RVOL parcial ${rvol.toFixed(1)}× (SIP)`
+    : `📊 volumen aún sin barra SIP (primeros min)`;
   return `👀 <b>PRE-AVISO — ${sym}</b>\n` +
          `${arrow} moviéndose · ${pct >= 0 ? '+' : ''}${pct.toFixed(2)}%\n` +
          `Precio $${last.toFixed(2)} (tiempo real) · prev $${prevC.toFixed(2)}\n` +
-         `⚡ ${Math.abs(moveATR).toFixed(1)}×ATR · ⏱ EN VIVO sin delay · ⚠ sin confirmar — vigilar (no es señal).`;
+         `⚡ ${Math.abs(moveATR).toFixed(1)}×ATR · ${volLine}\n` +
+         `⏱ EN VIVO sin delay · ⚠ sin confirmar — vigilar (no es señal).`;
 }
 
 // ── BARRIDO ──────────────────────────────────────────────────────────────────
@@ -297,16 +312,24 @@ async function runScan() {
       }
 
       // ── PRE-AVISO (precio real-time IEX; sirve aunque aún no haya barra SIP de hoy) ──
-      const lp = livePrices[sym];
-      const prevC = prevCloseOf(barsBySym[sym], today);
-      if (lp != null && prevC != null && base.atr > 0) {
-        const moveLiveATR = (lp - prevC) / base.atr;
-        const recentlyConfirmed = (Date.now() - s.confirmedTs) < COOLDOWN_MS;
-        const preFresh = (Date.now() - s.lastPreTs) >= PRE_COOLDOWN_MS;
-        if (!recentlyConfirmed && preFresh && Math.abs(moveLiveATR) >= PRE_ATR_MULT) {
-          await sendTelegram(buildPreAlert(sym, lp, prevC, moveLiveATR));
-          s.lastPreTs = Date.now();
-          preFired++;
+      //   CANDADO DE HORA: solo en RTH (09:30–16:00 ET) por RELOJ REAL → mata after-hours/fin de semana.
+      //   FILTRO DE VOLUMEN: si ya hay barra SIP de hoy, exige RVOL parcial ≥ PRE_RVOL_MIN (normalizado
+      //   por hora) para descartar velas flojas. En los primeros ~16 min aún no hay barra SIP →
+      //   se permite por momentum solo (es la ventana ÚNICA del pre-aviso, donde el confirmado ni puede).
+      if (isRTH(new Date())) {
+        const lp = livePrices[sym];
+        const prevC = prevCloseOf(barsBySym[sym], today);
+        if (lp != null && prevC != null && base.atr > 0) {
+          const moveLiveATR = (lp - prevC) / base.atr;
+          const recentlyConfirmed = (Date.now() - s.confirmedTs) < COOLDOWN_MS;
+          const preFresh = (Date.now() - s.lastPreTs) >= PRE_COOLDOWN_MS;
+          const hasVol = ev && isFinite(ev.rvol);             // ¿tenemos RVOL parcial SIP de hoy?
+          const volOK  = !hasVol || ev.rvol >= PRE_RVOL_MIN;  // sin barra (ventana temprana) → momentum solo
+          if (!recentlyConfirmed && preFresh && volOK && Math.abs(moveLiveATR) >= PRE_ATR_MULT) {
+            await sendTelegram(buildPreAlert(sym, lp, prevC, moveLiveATR, hasVol ? ev.rvol : null));
+            s.lastPreTs = Date.now();
+            preFired++;
+          }
         }
       }
     }
@@ -325,10 +348,11 @@ async function runScan() {
 
 // ── ARRANQUE ──────────────────────────────────────────────────────────────────
 console.log('════════════════════════════════════════════');
-console.log('  LIQUIDMAP PRO · RADAR v1.2 — pre-aviso real-time + confirmación SIP');
+console.log('  LIQUIDMAP PRO · RADAR v1.3 — pre-aviso (RTH + RVOL parcial) + confirmación SIP');
 console.log('════════════════════════════════════════════');
 console.log(`   Universo  : ${UNIVERSE.length} tickers`);
 console.log(`   Umbrales  : RVOL ≥ ${RVOL_MIN}× (normalizado por hora) · movimiento ≥ ${ATR_MULT}×ATR(${ATR_PERIOD})`);
+console.log(`   Pre-aviso : solo RTH 09:30–16:00 ET · mov ≥ ${PRE_ATR_MULT}×ATR · RVOL parcial ≥ ${PRE_RVOL_MIN}× (o momentum en primeros ~16 min)`);
 console.log(`   Barrido   : cada ${SCAN_INTERVAL / 60000} min · cooldown ${COOLDOWN_MS / 3600000}h por ticker`);
 console.log(`   Feed      : SIP retrasado ${DELAY_MS / 60000} min (100% volumen, free)`);
 console.log(`   Alpaca key: ${ALPACA_KEY ? 'OK' : 'FALTA (ALPACA_KEY_ID)'}`);
@@ -354,8 +378,10 @@ http.createServer((req, res) => {
     b{color:#7fd1ff}.ok{color:#5fd38a}.err{color:#ff6b6b}.k{color:#ffd66b}
     table{border-collapse:collapse;margin-top:8px}td{padding:4px 16px 4px 0;border-bottom:1px solid #1c2230}
     th{text-align:left;padding:4px 16px 4px 0;color:#8aa;font-weight:600;font-size:.85em}</style>
-    <h2>📡 LiquidMap PRO · RADAR v1.2</h2>
-    <p>Universo: <b>${UNIVERSE.length}</b> · Umbrales: RVOL ≥ <b>${RVOL_MIN}×</b> · mov ≥ <b>${ATR_MULT}×ATR(${ATR_PERIOD})</b> · feed SIP ≈15 min</p>
+    <h2>📡 LiquidMap PRO · RADAR v1.3</h2>
+    <p>Universo: <b>${UNIVERSE.length}</b> · Confirmado: RVOL ≥ <b>${RVOL_MIN}×</b> · mov ≥ <b>${ATR_MULT}×ATR(${ATR_PERIOD})</b> · feed SIP ≈15 min</p>
+    <p>👀 Pre-aviso: <b>solo RTH 09:30–16:00 ET</b> · mov ≥ <b>${PRE_ATR_MULT}×ATR</b> · RVOL parcial ≥ <b>${PRE_RVOL_MIN}×</b> ·
+       mercado ahora: <b class="${isRTH(new Date()) ? 'ok' : 'err'}">${isRTH(new Date()) ? 'ABIERTO (RTH)' : 'CERRADO'}</b></p>
     <p>Alpaca key: <span class="${ALPACA_KEY ? 'ok' : 'err'}">${ALPACA_KEY ? 'OK' : 'FALTA'}</span> ·
        TG radar: <span class="${TG_TOKEN ? 'ok' : 'err'}">${TG_TOKEN ? 'OK' : 'FALTA'}</span></p>
     <hr>
