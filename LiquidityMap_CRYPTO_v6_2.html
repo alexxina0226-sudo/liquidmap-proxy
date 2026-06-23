@@ -2102,6 +2102,56 @@ function computeCryptoContext(activeCandles, price){
 // REGLA #2: Si el JUEZ dice UP   → solo BUY,  nunca SELL  
 // REGLA #3: Score mínimo 5/10 para señal válida
 // ═══════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+//  GOBERNADOR DE CONVICCIÓN (institucional · sesión 37) — DISPLAY, no veto.
+//  Mismo cerebro que el mapa bolsa, configurado para CRYPTO:
+//   · sin gate de RÉGIMEN (el motor crypto no tiene ADX) → requireRegime:false
+//   · UBICACIÓN: BUY solo en discount / SELL solo en premium + coherencia MTF+EMA200
+//   · INTEGRIDAD: caza el 502 (capas apagadas) → "DATOS PARCIALES" y capa el SNIPER falso
+//  NO toca la dirección ni el score; gobierna el GRADO que se muestra y explica el cap.
+// ════════════════════════════════════════════════════════════════════
+const GOV_GRADES = ['ESPERAR','DÉBIL','VÁLIDA','FUERTE','SNIPER'];
+const GOV_G = { ESPERAR:0, 'DÉBIL':1, 'VÁLIDA':2, FUERTE:3, SNIPER:4 };
+const GOV_PILLAR = { 'SuperTrend':'Momentum','CVD':'Volumen','Funding':'Volumen','Ballena':'Volumen',
+  'Precio/POC':'Ubicación','Liquidez':'Ubicación','Value Area':'Ubicación',
+  'Stop Hunt':'Estructura','Estructura':'Estructura' };
+function govBaseGrade(score0to10){
+  const frac = Math.min(1, Math.abs(score0to10)/10);
+  if(frac>=0.72) return GOV_G.SNIPER;
+  if(frac>=0.52) return GOV_G.FUERTE;
+  if(frac>=0.32) return GOV_G['VÁLIDA'];
+  if(frac>=0.16) return GOV_G['DÉBIL'];
+  return GOV_G.ESPERAR;
+}
+function governConviction(sig, ctx, opts){
+  opts = opts||{};
+  const minPillars=opts.minPillars!=null?opts.minPillars:3, minLiveFrac=opts.minLiveFrac!=null?opts.minLiveFrac:0.6;
+  const dir=sig.type, dirSign=dir==='BUY'?1:dir==='SELL'?-1:0, caps=[];
+  let ceiling=govBaseGrade(sig.score||0);
+  if(dirSign===0) return { direction:'NEUTRAL', grade:'ESPERAR', gradeIdx:0, caps:[], liveLayers:0,
+    totalLayers:(sig.layers||[]).length, pillars:[], nPillars:0, partial:false };
+  // GATE · UBICACIÓN (ICT premium/discount + MTF + EMA200)
+  if(ctx && ctx.zoneDir){
+    const good=(dirSign>0&&ctx.zoneDir>0)||(dirSign<0&&ctx.zoneDir<0);
+    if(!good){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push(dirSign>0?'comprando en PREMIUM (venta)':'vendiendo en DISCOUNT (compra)'); }
+  }
+  if(ctx){
+    const mtfAg = ctx.mtfBull!=null && ((dirSign>0&&ctx.mtfBull===false)||(dirSign<0&&ctx.mtfBull===true));
+    const trAg  = ctx.trendStr!=null && ((dirSign>0&&ctx.trendStr===false)||(dirSign<0&&ctx.trendStr===true));
+    if(mtfAg && trAg){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('contra el HTF (MTF 4H + EMA200)'); }
+    else if(mtfAg||trAg){ ceiling=Math.min(ceiling,GOV_G['VÁLIDA']); caps.push(mtfAg?'MTF 4H en contra':'lado equivocado de EMA200'); }
+  }
+  // GATE · INTEGRIDAD (calidad de confluencia + data parcial → caza el 502)
+  const layers=sig.layers||[], pillars=new Set(); let live=0;
+  for(const L of layers){ if(L&&L.dir!==0){ live++; if((dirSign>0&&L.dir>0)||(dirSign<0&&L.dir<0)){ const pi=GOV_PILLAR[L.name]; if(pi) pillars.add(pi); } } }
+  const nP=pillars.size, total=layers.length, partial=total>0&&live<Math.ceil(total*minLiveFrac);
+  if(partial){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('DATOS PARCIALES ('+live+'/'+total+' capas)'); }
+  if(nP<minPillars){ ceiling=Math.min(ceiling, nP<=1?GOV_G['DÉBIL']:GOV_G['VÁLIDA']); caps.push('confluencia floja ('+nP+'/4 pilares)'); }
+  ceiling=Math.max(0,Math.min(GOV_G.SNIPER,ceiling));
+  return { direction:dir, grade:GOV_GRADES[ceiling], gradeIdx:ceiling, caps, liveLayers:live, totalLayers:total, pillars:[...pillars], nPillars:nP, partial };
+}
+function govLabel(g){ return ({ SNIPER:'🎯 SNIPER',FUERTE:'🔥 FUERTE','VÁLIDA':'✅ VÁLIDA','DÉBIL':'⚠️ DÉBIL',ESPERAR:'⏸️ ESPERAR' })[g]||g; }
+
 function computeSignal(price) {
   if (!price || !vp || candles.length < 5) return { type: 'NEUTRAL', score: 0, conf: [], stDir: 'NEUTRAL' };
 
@@ -2414,6 +2464,17 @@ function updateDerived(){
   set('ctx-ict', mctx.zoneTxt, mctx.zoneDir===1?'g':(mctx.zoneDir===-1?'r':''));
   if(mctx.mtfBull===null) set('ctx-mtf','—','');
   else set('ctx-mtf', mctx.mtfBull?'▲ Alcista':'▼ Bajista', mctx.mtfBull?'g':'r');
+  // ── GOBERNADOR DE CONVICCIÓN (display, no veto · crypto: sin gate ADX) ──
+  // Muestra el veredicto honesto AL LADO del SNIPER. Caza el 502 (DATOS PARCIALES)
+  // y el BUY-en-premium. Etapa de comparación: "lo que grita vs lo honesto".
+  try {
+    const gov = governConviction(sig, { trendStr:mctx.trendStr, zoneDir:mctx.zoneDir, mtfBull:mctx.mtfBull }, { requireRegime:false });
+    if(sig.type !== 'NEUTRAL'){
+      const why = gov.caps.length ? ' · capó: '+gov.caps[0] : ' · confluencia limpia';
+      const qEl = document.getElementById('sig-quality');
+      if(qEl) qEl.textContent += '  🛡 ' + govLabel(gov.grade) + why;
+    }
+  } catch(e){ /* el gobernador nunca tumba el render */ }
   // Timestamp
   const nowStr = new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   if(sig.type !== 'NEUTRAL') { const te = document.getElementById('sig-time'); if(te) te.textContent = 'Última señal: '+nowStr+' UTC'; }
