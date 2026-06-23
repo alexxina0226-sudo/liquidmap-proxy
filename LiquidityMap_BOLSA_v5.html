@@ -1348,6 +1348,70 @@ async function loadCandles(){
 //  computeArcSeries == computeArc (arc_boswaves.js) en estado final — cross-validado.
 //  t en SEGUNDOS (mapa) o MS: toMs() normaliza para anclar bien los VWAPs.
 // ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+//  /diag DEL ADX (sesión 37) — mide, no adivina (como /polygon-diag).
+//  Misterio: WMT 4H mapa 31.4 vs bot 13.6 vs TV 14.7. Misma fórmula Wilder,
+//  misma fuente Massive → la diferencia está en la SERIE. Esto la expone.
+//  USO: F12 → Console → escribir  adxDiag()  → Enter. (o Ctrl+Shift+D)
+//  Sale un alert con el resumen + detalle completo en la consola. Screenshot → me lo mandás.
+// ════════════════════════════════════════════════════════════════════
+function adxDiag(){
+  try{
+    const cs = (typeof candles!=='undefined' && candles) ? candles : [];
+    if(!cs.length){ alert('adxDiag: no hay velas cargadas todavía'); return; }
+    const tfL = ({'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'})[tf]||tf;
+    const adxOf = arr => { const o=calcADX(arr); return o? o.adx : null; };
+    const f = n => n==null ? '—' : n.toFixed(1);
+
+    // 1) ADX por ventana → ¿el largo de la serie mueve el número? (warmup/ventana)
+    const full = adxOf(cs);
+    const a120 = cs.length>=42 ? adxOf(cs.slice(-120)) : null;
+    const a90  = cs.length>=42 ? adxOf(cs.slice(-90))  : null;
+    const a60  = cs.length>=32 ? adxOf(cs.slice(-60))  : null;
+
+    // 2) ¿La última vela (overlay de precio vivo) infla? ADX sin la última.
+    const aNoLast = cs.length>3 ? adxOf(cs.slice(0,-1)) : null;
+
+    // 3) Velas malformadas: rangos atípicos (holidays/half-days/sesión incompleta)
+    const ranges = cs.map(b=>b.h-b.l).filter(r=>isFinite(r)&&r>=0).sort((x,y)=>x-y);
+    const med = ranges.length? ranges[Math.floor(ranges.length/2)] : 0;
+    const outliers = cs.filter(b=>med>0 && (b.h-b.l) > med*4);
+    const etTs = t => new Date(t*1000).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+
+    // 4) Fuente cruda (en 4H, vpBars = 15m crudos que alimentan el resample)
+    const rawN = (typeof vpBars!=='undefined' && vpBars) ? vpBars.length : 0;
+    const lastN = cs.slice(-3).map(b=>`${etTs(b.t)} O${b.o} H${b.h} L${b.l} C${b.c}`);
+
+    const lines = [
+      `── /diag ADX · ${sym} ${tfL} ──`,
+      `velas en serie (→calcADX): ${cs.length}` + (tf==='240'?`  ·  15m crudos: ${rawN}`:''),
+      `ADX completo:        ${f(full)}   ← el que muestra el mapa`,
+      `ADX últimas 120:     ${f(a120)}`,
+      `ADX últimas 90:      ${f(a90)}`,
+      `ADX últimas 60:      ${f(a60)}`,
+      `ADX sin última vela: ${f(aNoLast)}   (Δ ${full!=null&&aNoLast!=null?(full-aNoLast>=0?'+':'')+(full-aNoLast).toFixed(1):'—'})`,
+      `rango mediano: ${med.toFixed(2)}  ·  velas atípicas (>4× mediana): ${outliers.length}`,
+      outliers.length? '  '+outliers.slice(-4).map(b=>`${etTs(b.t)} rango ${(b.h-b.l).toFixed(2)}`).join('\n  ') : '  (sin atípicas)',
+      `últimas 3 velas:`,
+      '  '+lastN.join('\n  ')
+    ];
+    const report = lines.join('\n');
+    console.log('%c'+report, 'font-family:monospace;font-size:12px');
+
+    // Lectura automática (qué sospechar según los números)
+    let verdict = '';
+    if(full!=null && aNoLast!=null && Math.abs(full-aNoLast) > 4) verdict = '⚠ La ÚLTIMA vela infla el ADX (overlay de precio vivo / sesión incompleta).';
+    else if(outliers.length > 0) verdict = '⚠ Hay '+outliers.length+' vela(s) atípica(s) — rango anómalo infla DM/TR.';
+    else if(full!=null && a60!=null && Math.abs(full-a60) > 6) verdict = '⚠ El número cambia mucho con la ventana — sensible al largo de la serie.';
+    else verdict = '✅ ADX estable entre ventanas y sin atípicas — la serie luce sana.';
+
+    alert(report + '\n\n' + verdict + '\n\n(detalle completo en la consola F12)');
+    return report;
+  }catch(e){ alert('adxDiag error: '+e.message); console.error(e); }
+}
+window.adxDiag = adxDiag;
+document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==='D'||e.key==='d')){ e.preventDefault(); adxDiag(); } });
+
 const ARC_DEFAULTS = { accelRate:0.12, startMult:2.0, smooth:3, vwapAccelBoost:1.5,
   filterPeriod:'Session', initBars:100, maxLevels:10, anchorTz:'America/New_York' }; // BOLSA = ET
 const _arcToMs = t => (t < 1e12 ? t * 1000 : t);
