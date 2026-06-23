@@ -1000,6 +1000,67 @@ function calcADX(cs, len = ADX_LEN){
 }
 
 // ── NEURAL SCORE ───────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
+//  GOBERNADOR DE CONVICCIÓN (institucional · sesión 37) — DISPLAY, no veto.
+//  Modelo 4 pilares (tipo APEX): BIAS→RÉGIMEN→UBICACIÓN→SEÑAL+FILTRO.
+//  NO toca la dirección ni el score; gobierna el GRADO de convicción que se
+//  muestra, y explica POR QUÉ lo capó. Cap = mínimo de 3 gates:
+//   1) RÉGIMEN  (ADX<20 = rango → sin máxima convicción)
+//   2) UBICACIÓN(BUY solo en discount / SELL solo en premium; coherencia MTF+EMA200)
+//   3) INTEGRIDAD (calidad de confluencia + data parcial → "DATOS PARCIALES")
+// ════════════════════════════════════════════════════════════════════
+const GOV_GRADES = ['ESPERAR','DÉBIL','VÁLIDA','FUERTE','SNIPER'];
+const GOV_G = { ESPERAR:0, 'DÉBIL':1, 'VÁLIDA':2, FUERTE:3, SNIPER:4 };
+const GOV_PILLAR = { 'SuperTrend':'Momentum','ADX':'Momentum','CVD':'Volumen','Presión':'Volumen',
+  'BOS':'Estructura','CHoCH':'Estructura','VWAP':'Ubicación','Value Area':'Ubicación' };
+function govBaseGrade(rawScore, rawMax){
+  const frac = Math.min(1, Math.abs(rawScore)/(rawMax||12.5));
+  if(frac>=0.72) return GOV_G.SNIPER;
+  if(frac>=0.52) return GOV_G.FUERTE;
+  if(frac>=0.32) return GOV_G['VÁLIDA'];
+  if(frac>=0.16) return GOV_G['DÉBIL'];
+  return GOV_G.ESPERAR;
+}
+function governConviction(sig, ctx, opts){
+  opts = opts||{};
+  const rawMax=opts.rawMax!=null?opts.rawMax:12.5, adxMin=opts.adxMin!=null?opts.adxMin:20,
+        adxStrong=opts.adxStrong!=null?opts.adxStrong:30, minPillars=opts.minPillars!=null?opts.minPillars:3,
+        minLiveFrac=opts.minLiveFrac!=null?opts.minLiveFrac:0.6;
+  const dir=sig.type, dirSign=dir==='BUY'?1:dir==='SELL'?-1:0, caps=[];
+  let ceiling=govBaseGrade(sig.rawScore, rawMax);
+  if(dirSign===0) return { direction:'NEUTRAL', grade:'ESPERAR', gradeIdx:0, caps:[], liveLayers:0,
+    totalLayers:(sig.layers||[]).length, pillars:[], nPillars:0, partial:false };
+  // GATE 1 · RÉGIMEN
+  const adx = sig.adx ? sig.adx.adx : null;
+  if(adx==null){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('régimen sin ADX'); }
+  else if(adx<adxMin){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('rango — ADX '+adx.toFixed(1)+' <'+adxMin); }
+  else if(adx<adxStrong){ ceiling=Math.min(ceiling,GOV_G.FUERTE); }
+  if(sig.adx && sig.adx.strong){
+    const ok=(dirSign>0&&sig.adx.bull)||(dirSign<0&&sig.adx.bear);
+    if(!ok){ ceiling=Math.min(ceiling,GOV_G['VÁLIDA']); caps.push('DMI no confirma'); }
+  }
+  // GATE 2 · UBICACIÓN
+  if(ctx && ctx.zoneDir){
+    const good=(dirSign>0&&ctx.zoneDir>0)||(dirSign<0&&ctx.zoneDir<0);
+    if(!good){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push(dirSign>0?'comprando en PREMIUM (venta)':'vendiendo en DISCOUNT (compra)'); }
+  }
+  if(ctx){
+    const mtfAg = ctx.mtfBull!=null && ((dirSign>0&&ctx.mtfBull===false)||(dirSign<0&&ctx.mtfBull===true));
+    const trAg  = ctx.trendStr!=null && ((dirSign>0&&ctx.trendStr===false)||(dirSign<0&&ctx.trendStr===true));
+    if(mtfAg && trAg){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('contra el HTF (MTF 4H + EMA200)'); }
+    else if(mtfAg||trAg){ ceiling=Math.min(ceiling,GOV_G['VÁLIDA']); caps.push(mtfAg?'MTF 4H en contra':'lado equivocado de EMA200'); }
+  }
+  // GATE 3 · INTEGRIDAD
+  const layers=sig.layers||[], pillars=new Set(); let live=0;
+  for(const L of layers){ if(L&&L.dir!==0){ live++; if((dirSign>0&&L.dir>0)||(dirSign<0&&L.dir<0)){ const pi=GOV_PILLAR[L.name]; if(pi) pillars.add(pi); } } }
+  const nP=pillars.size, total=layers.length, partial=total>0&&live<Math.ceil(total*minLiveFrac);
+  if(partial){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('DATOS PARCIALES ('+live+'/'+total+' capas)'); }
+  if(nP<minPillars){ ceiling=Math.min(ceiling, nP<=1?GOV_G['DÉBIL']:GOV_G['VÁLIDA']); caps.push('confluencia floja ('+nP+'/4 pilares)'); }
+  ceiling=Math.max(0,Math.min(GOV_G.SNIPER,ceiling));
+  return { direction:dir, grade:GOV_GRADES[ceiling], gradeIdx:ceiling, caps, liveLayers:live, totalLayers:total, pillars:[...pillars], nPillars:nP, partial };
+}
+function govLabel(g){ return ({ SNIPER:'🎯 SNIPER',FUERTE:'🔥 FUERTE','VÁLIDA':'✅ VÁLIDA','DÉBIL':'⚠️ DÉBIL',ESPERAR:'⏸️ ESPERAR' })[g]||g; }
+
 function computeNeuralScore(p){
   if(!p || !vp) return { type:'NEUTRAL', score:0, rawScore:0, conf:[], superTrendDir:0, layers:[] };
   const conf = [];
@@ -1512,6 +1573,19 @@ function updateDerived(){
   set('ctx-ict', ctx.zoneTxt, ctx.zoneDir===1?'g':(ctx.zoneDir===-1?'r':''));
   if(ctx.mtfBull===null) set('ctx-mtf','—','');
   else set('ctx-mtf', ctx.mtfBull?'▲ Alcista':'▼ Bajista', ctx.mtfBull?'g':'r');
+  // ── GOBERNADOR DE CONVICCIÓN (institucional · display, no veto) ──
+  // Muestra el veredicto gobernado AL LADO del score actual, sin alterar
+  // el título ni el número. Etapa de comparación: ver "lo que grita vs lo honesto".
+  try {
+    const gov = governConviction(sig, { trendStr:ctx.trendStr, zoneDir:ctx.zoneDir, mtfBull:ctx.mtfBull });
+    if(sig.type !== 'NEUTRAL'){
+      const why = gov.caps.length ? ' · capó: '+gov.caps[0] : ' · confluencia limpia';
+      sesgoEl.textContent += '  🛡 ' + govLabel(gov.grade) + why;
+      // recolorea el medidor según la convicción GOBERNADA (no el bruto)
+      const govColor = gov.gradeIdx>=4?'var(--green)':gov.gradeIdx>=3?'var(--green)':gov.gradeIdx>=2?'var(--yellow)':gov.gradeIdx>=1?'var(--orange)':'var(--red)';
+      if(scoreFillEl) scoreFillEl.style.background = govColor;
+    }
+  } catch(e){ /* el gobernador nunca tumba el render */ }
   // Structure panel
   if(struct.choch){ set('s-choch',struct.choch.label,struct.choch.dir==='BULL'?'g':'r'); } else { set('s-choch','No detectado',''); }
   if(struct.bos){ set('s-bos',struct.bos.label,struct.bos.dir==='BULL'?'g':'r'); } else { set('s-bos','No detectado',''); }
