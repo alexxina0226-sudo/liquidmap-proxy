@@ -1295,9 +1295,11 @@ function tfToPolygon(t){
 
 async function loadCandles(){
   if(!POLY_KEY){ console.warn('loadCandles: sin Polygon API key'); return; }
-  // ROOT #5: en 4H pedimos 15m y resampleamos a sesión (09:30/13:30, como TV).
+  // ROOT #6: el 4H ya NO usa 15m (ese feed quedó pendiente de pago y su cobertura corta
+  // meses atrás → el 4H leía un régimen viejo). El 1H está fresco → el 4H pide 1H y
+  // resamplea a sesión (09:30/13:30, como TV). El 1H sigue su camino nativo.
   const is4H = (tf === '240');
-  const cfg = is4H ? {mult:15, span:'minute', days:300} : tfToPolygon(tf); // 4H: 300d de 15m → ~180+ velas de sesion, el arco inicializa con aire (pide 110+; con 120 daba solo 108)
+  const cfg = is4H ? {mult:1, span:'hour', days:120} : tfToPolygon(tf); // 4H: 120d de 1H → ~160 velas de sesión (el arco pide 110+)
   const fmt = d => new Date(d).toISOString().slice(0,10);
   const to = fmt(Date.now()), from = fmt(Date.now() - cfg.days*86400000);
   const url = `${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/${cfg.mult}/${cfg.span}/${from}/${to}`)}&adjusted=true&sort=asc&limit=50000`;
@@ -1308,6 +1310,7 @@ async function loadCandles(){
     if(!d.results || !d.results.length){ console.warn('Polygon sin velas para', sym, tf); return; }
     // t de Polygon viene en ms → convertir a segundos para el resto del motor
     let raw = d.results.map(b => ({ t: Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
+    raw.sort((a,b)=>a.t-b.t);  // asegurar ascendente sin importar el orden del feed (la última = la más reciente)
     // Overlay precio vivo sobre la última vela CRUDA antes de derivar nada
     if(quote.c && raw.length){
       const last = raw[raw.length-1];
@@ -1316,8 +1319,8 @@ async function loadCandles(){
       if(quote.l) last.l = Math.min(last.l, quote.l);
     }
     if(is4H){
-      vpBars  = raw;                            // 15m crudos = fuente de VWAP/POC de sesión (vía sessionBars)
-      candles = resampleSession4H(raw, false);  // velas 4H ancladas a sesión → chart / ST / estructura = TV
+      vpBars  = raw;                             // 1H crudos = fuente de VWAP/POC de sesión (vía sessionBars)
+      candles = resampleSession4Hh(raw, false);  // 4H ancladas a sesión DESDE 1H → chart / ST / estructura = TV (y fresco)
     } else {
       candles = raw;
       if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
@@ -1389,7 +1392,7 @@ function adxDiag(){
 
     const lines = [
       `── /diag ADX · ${sym} ${tfL} ──`,
-      `velas en serie (→calcADX): ${cs.length}` + (tf==='240'?`  ·  15m crudos: ${rawN}`:''),
+      `velas en serie (→calcADX): ${cs.length}` + (tf==='240'?`  ·  1H crudos: ${rawN}`:''),
       `ADX completo:        ${f(full)}   ← el que muestra el mapa`,
       `ADX últimas 120:     ${f(a120)}`,
       `ADX últimas 90:      ${f(a90)}`,
@@ -1826,6 +1829,30 @@ function resampleSession4H(bars, tMs){
     const mins = hh*60 + parseInt(g('minute'),10);     // minutos ET desde 00:00
     if(mins < 570 || mins >= 960) continue;            // fuera de RTH (570=9:30, 960=16:00)
     const slot = mins < 810 ? 'A' : 'B';               // 810 = 13:30
+    const key = `${g('year')}-${g('month')}-${g('day')}|${slot}`;
+    let bk = buckets.get(key);
+    if(!bk){ bk = { t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }; buckets.set(key,bk); order.push(key); }
+    else { bk.h=Math.max(bk.h,b.h); bk.l=Math.min(bk.l,b.l); bk.c=b.c; bk.v+=(b.v||0); }
+  }
+  return order.map(k=>buckets.get(k));
+}
+
+// 4H DESDE 1H (ROOT #6): el feed de 15m quedó pendiente de pago y su cobertura corta meses
+// atrás → el 4H leía un régimen viejo. El horario (1H) está fresco; el 4H se arma resampleando
+// 1H a sesión. Anclaje por HORA ET (robusto a si el feed estampa :00 o :30):
+//   mañana = horas 09–12 (≈09:30–13:30) · tarde = horas 13–15 (≈13:30–16:00). Sin pre/post.
+function resampleSession4Hh(bars, tMs){
+  if(!bars || !bars.length) return [];
+  const toMs = t => tMs ? t : t*1000;
+  const fmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit'});
+  const buckets = new Map(); const order = [];
+  for(const b of bars){
+    const p = fmt.formatToParts(new Date(toMs(b.t)));
+    const g = t => p.find(x=>x.type===t).value;
+    let hh = parseInt(g('hour'),10); if(hh===24) hh=0;
+    if(hh < 9 || hh > 15) continue;                    // fuera de RTH horario (09–15 ET)
+    const slot = hh < 13 ? 'A' : 'B';                  // mañana 09–12 · tarde 13–15
     const key = `${g('year')}-${g('month')}-${g('day')}|${slot}`;
     let bk = buckets.get(key);
     if(!bk){ bk = { t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }; buckets.set(key,bk); order.push(key); }
