@@ -1026,18 +1026,19 @@ function governConviction(sig, ctx, opts){
   const rawMax=opts.rawMax!=null?opts.rawMax:12.5, adxMin=opts.adxMin!=null?opts.adxMin:20,
         adxStrong=opts.adxStrong!=null?opts.adxStrong:30, minPillars=opts.minPillars!=null?opts.minPillars:3,
         minLiveFrac=opts.minLiveFrac!=null?opts.minLiveFrac:0.6;
-  const dir=sig.type, dirSign=dir==='BUY'?1:dir==='SELL'?-1:0, caps=[];
+  const dir=sig.type, dirSign=dir==='BUY'?1:dir==='SELL'?-1:0, caps=[], capList=[];
   let ceiling=govBaseGrade(sig.rawScore, rawMax);
-  if(dirSign===0) return { direction:'NEUTRAL', grade:'ESPERAR', gradeIdx:0, caps:[], liveLayers:0,
+  const capAt=(l,m)=>{ ceiling=Math.min(ceiling,l); capList.push({l,m}); caps.push(m); };
+  if(dirSign===0) return { direction:'NEUTRAL', grade:'ESPERAR', gradeIdx:0, caps:[], reason:null, liveLayers:0,
     totalLayers:(sig.layers||[]).length, pillars:[], nPillars:0, partial:false };
   // GATE 1 · RÉGIMEN
   const adx = sig.adx ? sig.adx.adx : null;
-  if(adx==null){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('régimen sin ADX'); }
-  else if(adx<adxMin){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('rango — ADX '+adx.toFixed(1)+' <'+adxMin); }
-  else if(adx<adxStrong){ ceiling=Math.min(ceiling,GOV_G.FUERTE); }
+  if(adx==null){ capAt(GOV_G['DÉBIL'], 'régimen sin ADX'); }
+  else if(adx<adxMin){ capAt(GOV_G['DÉBIL'], 'rango — ADX '+adx.toFixed(1)+' <'+adxMin); }
+  else if(adx<adxStrong){ capAt(GOV_G.FUERTE, 'régimen válido no fuerte (ADX '+adx.toFixed(1)+')'); }
   if(sig.adx && sig.adx.strong){
     const ok=(dirSign>0&&sig.adx.bull)||(dirSign<0&&sig.adx.bear);
-    if(!ok){ ceiling=Math.min(ceiling,GOV_G['VÁLIDA']); caps.push('DMI no confirma'); }
+    if(!ok){ capAt(GOV_G['VÁLIDA'], 'DMI no confirma'); }
   }
   // GATE 2 · UBICACIÓN — coherencia HTF primero (la usa el gate de ubicación)
   const mtfAg = ctx && ctx.mtfBull!=null && ((dirSign>0&&ctx.mtfBull===false)||(dirSign<0&&ctx.mtfBull===true));
@@ -1046,20 +1047,22 @@ function governConviction(sig, ctx, opts){
   if(ctx && ctx.zoneDir){
     const good=(dirSign>0&&ctx.zoneDir>0)||(dirSign<0&&ctx.zoneDir<0);
     // CALIBRACIÓN s38: ubicación adversa SOLA → VÁLIDA si el HTF confirma; DÉBIL solo si HTF en contra.
-    if(!good){ ceiling=Math.min(ceiling, htfAg?GOV_G['DÉBIL']:GOV_G['VÁLIDA']); const w=dirSign>0?'comprando en PREMIUM (venta)':'vendiendo en DISCOUNT (compra)'; caps.push(htfAg?w:w+' — HTF confirma → media'); }
+    if(!good){ const w=dirSign>0?'comprando en PREMIUM (venta)':'vendiendo en DISCOUNT (compra)'; capAt(htfAg?GOV_G['DÉBIL']:GOV_G['VÁLIDA'], htfAg?w:w+' — HTF confirma → media'); }
   }
   if(ctx){
-    if(mtfAg && trAg){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('contra el HTF (MTF 4H + EMA200)'); }
-    else if(mtfAg||trAg){ ceiling=Math.min(ceiling,GOV_G['VÁLIDA']); caps.push(mtfAg?'MTF 4H en contra':'lado equivocado de EMA200'); }
+    if(mtfAg && trAg){ capAt(GOV_G['DÉBIL'], 'contra el HTF (MTF 4H + EMA200)'); }
+    else if(mtfAg||trAg){ capAt(GOV_G['VÁLIDA'], mtfAg?'MTF 4H en contra':'lado equivocado de EMA200'); }
   }
   // GATE 3 · INTEGRIDAD
   const layers=sig.layers||[], pillars=new Set(); let live=0;
   for(const L of layers){ if(L&&L.dir!==0){ live++; if((dirSign>0&&L.dir>0)||(dirSign<0&&L.dir<0)){ const pi=GOV_PILLAR[L.name]; if(pi) pillars.add(pi); } } }
   const nP=pillars.size, total=layers.length, partial=total>0&&live<Math.ceil(total*minLiveFrac);
-  if(partial){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('DATOS PARCIALES ('+live+'/'+total+' capas)'); }
-  if(nP<minPillars){ ceiling=Math.min(ceiling, nP<=1?GOV_G['DÉBIL']:GOV_G['VÁLIDA']); caps.push('confluencia floja ('+nP+'/4 pilares)'); }
+  if(partial){ capAt(GOV_G['DÉBIL'], 'DATOS PARCIALES ('+live+'/'+total+' capas)'); }
+  if(nP<minPillars){ capAt(nP<=1?GOV_G['DÉBIL']:GOV_G['VÁLIDA'], 'confluencia floja ('+nP+'/4 pilares)'); }
   ceiling=Math.max(0,Math.min(GOV_G.SNIPER,ceiling));
-  return { direction:dir, grade:GOV_GRADES[ceiling], gradeIdx:ceiling, caps, liveLayers:live, totalLayers:total, pillars:[...pillars], nPillars:nP, partial };
+  const binding=capList.filter(c=>c.l===ceiling).map(c=>c.m);
+  const reason=binding.length?binding.join(' · '):(caps[0]||null);
+  return { direction:dir, grade:GOV_GRADES[ceiling], gradeIdx:ceiling, caps, reason, liveLayers:live, totalLayers:total, pillars:[...pillars], nPillars:nP, partial };
 }
 function govLabel(g){ return ({ SNIPER:'🎯 SNIPER',FUERTE:'🔥 FUERTE','VÁLIDA':'✅ VÁLIDA','DÉBIL':'⚠️ DÉBIL',ESPERAR:'⏸️ ESPERAR' })[g]||g; }
 
@@ -1645,7 +1648,7 @@ function updateDerived(){
   try {
     const gov = governConviction(sig, { trendStr:ctx.trendStr, zoneDir:ctx.zoneDir, mtfBull:ctx.mtfBull });
     if(sig.type !== 'NEUTRAL'){
-      const why = gov.caps.length ? ' · capó: '+gov.caps[0] : ' · confluencia limpia';
+      const why = gov.reason ? ' · capó: '+gov.reason : ' · confluencia limpia';
       sesgoEl.textContent += '  🛡 ' + govLabel(gov.grade) + why;
       // recolorea el medidor según la convicción GOBERNADA (no el bruto)
       const govColor = gov.gradeIdx>=4?'var(--green)':gov.gradeIdx>=3?'var(--green)':gov.gradeIdx>=2?'var(--yellow)':gov.gradeIdx>=1?'var(--orange)':'var(--red)';
