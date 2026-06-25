@@ -2130,14 +2130,16 @@ function governConviction(sig, ctx, opts){
   let ceiling=govBaseGrade(sig.score||0);
   if(dirSign===0) return { direction:'NEUTRAL', grade:'ESPERAR', gradeIdx:0, caps:[], liveLayers:0,
     totalLayers:(sig.layers||[]).length, pillars:[], nPillars:0, partial:false };
-  // GATE · UBICACIÓN (ICT premium/discount + MTF + EMA200)
+  // GATE · UBICACIÓN (ICT premium/discount + MTF + EMA200) — coherencia HTF primero
+  const mtfAg = ctx && ctx.mtfBull!=null && ((dirSign>0&&ctx.mtfBull===false)||(dirSign<0&&ctx.mtfBull===true));
+  const trAg  = ctx && ctx.trendStr!=null && ((dirSign>0&&ctx.trendStr===false)||(dirSign<0&&ctx.trendStr===true));
+  const htfAg = mtfAg || trAg;
   if(ctx && ctx.zoneDir){
     const good=(dirSign>0&&ctx.zoneDir>0)||(dirSign<0&&ctx.zoneDir<0);
-    if(!good){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push(dirSign>0?'comprando en PREMIUM (venta)':'vendiendo en DISCOUNT (compra)'); }
+    // CALIBRACIÓN s38: ubicación adversa SOLA → VÁLIDA si el HTF confirma; DÉBIL solo si HTF en contra.
+    if(!good){ ceiling=Math.min(ceiling, htfAg?GOV_G['DÉBIL']:GOV_G['VÁLIDA']); const w=dirSign>0?'comprando en PREMIUM (venta)':'vendiendo en DISCOUNT (compra)'; caps.push(htfAg?w:w+' — HTF confirma → media'); }
   }
   if(ctx){
-    const mtfAg = ctx.mtfBull!=null && ((dirSign>0&&ctx.mtfBull===false)||(dirSign<0&&ctx.mtfBull===true));
-    const trAg  = ctx.trendStr!=null && ((dirSign>0&&ctx.trendStr===false)||(dirSign<0&&ctx.trendStr===true));
     if(mtfAg && trAg){ ceiling=Math.min(ceiling,GOV_G['DÉBIL']); caps.push('contra el HTF (MTF 4H + EMA200)'); }
     else if(mtfAg||trAg){ ceiling=Math.min(ceiling,GOV_G['VÁLIDA']); caps.push(mtfAg?'MTF 4H en contra':'lado equivocado de EMA200'); }
   }
