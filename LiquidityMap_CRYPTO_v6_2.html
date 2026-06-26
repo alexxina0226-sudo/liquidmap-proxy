@@ -1456,17 +1456,12 @@ async function loadOIHistory(){
 // Long/Short Ratio — calculado desde Funding Rate (correlación directa)
 let lsRatioReal = null;
 async function loadLSRatio(){
-  // Binance globalLongShortAccountRatio también requiere auth
-  // FR positivo = más longs, FR negativo = más shorts (relación institucional conocida)
-  if(fundingRate !== 0){
-    const frBias = fundingRate * 1000; // normalizar
-    const longsEst = Math.min(72, Math.max(28, 50 + frBias * 15));
-    lsRatioReal = {
-      longs:  longsEst,
-      shorts: 100 - longsEst
-    };
+  // L/S ratio REAL de Binance (cuenta global). Es endpoint PÚBLICO — el viejo "requiere auth" era falso.
+  const d = await proxyGet(`path=/futures/data/globalLongShortAccountRatio&symbol=${sym}&period=5m&limit=1&futures=1`);
+  if(Array.isArray(d) && d.length && d[0] && d[0].longAccount != null){
+    lsRatioReal = { longs: parseFloat(d[0].longAccount)*100, shorts: parseFloat(d[0].shortAccount)*100 };
   } else {
-    lsRatioReal = null;
+    lsRatioReal = null;   // sin dato real → null (panel muestra —), NUNCA estimado del FR
   }
 }
 
@@ -1489,19 +1484,17 @@ function updateOIPanel(){
     set('oi-chg', '≈ —', '');
   }
 
-  // Long/Short Ratio REAL si disponible, sino estimado del FR
-  let longsEst, shortsEst;
+  // Long/Short Ratio REAL (Binance). Sin dato real → "—" honesto, NO estimar del FR.
+  let longsEst = null, shortsEst = null;
   if(lsRatioReal){
     longsEst  = lsRatioReal.longs;
     shortsEst = lsRatioReal.shorts;
+    set('oi-longs',  longsEst.toFixed(1)  + '%', longsEst > 60 ? 'r' : 'g');
+    set('oi-shorts', shortsEst.toFixed(1) + '%', shortsEst > 60 ? 'g' : 'r');
   } else {
-    const lPct = 50 + fundingRate * 200;
-    longsEst  = Math.min(70, Math.max(30, lPct));
-    shortsEst = 100 - longsEst;
+    set('oi-longs',  '—', '');
+    set('oi-shorts', '—', '');
   }
-  const lsSource = lsRatioReal ? '' : ' (est.)';
-  set('oi-longs',  longsEst.toFixed(1)  + '%' + lsSource, longsEst > 60 ? 'r' : 'g');
-  set('oi-shorts', shortsEst.toFixed(1) + '%' + lsSource, shortsEst > 60 ? 'g' : 'r');
 
   // Señal OI con lógica real — contrarian institucional
   if(longsEst > 65){
