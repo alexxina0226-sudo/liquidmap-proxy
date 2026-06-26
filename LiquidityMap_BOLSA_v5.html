@@ -1269,8 +1269,9 @@ async function loadQuote(){
       dp: prevClose ? ((live - prevClose) / prevClose * 100) : 0  // % real del día (vs cierre previo real)
     };
     updateQuotePanel(); updateMktStatus();
-    // Overlay precio vivo sobre la última vela real
-    if(candles.length){
+    // Overlay precio vivo sobre la última vela real — SOLO si la serie está fresca.
+    // Si está vieja, no la tocamos: nada de pintar el precio de hoy sobre una vela de junio.
+    if(candles.length && !DATA_STALE){
       const last = candles[candles.length-1];
       last.c = live;
       last.h = Math.max(last.h, live);
