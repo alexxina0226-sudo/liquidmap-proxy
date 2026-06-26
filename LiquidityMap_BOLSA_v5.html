@@ -566,7 +566,8 @@ const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/polygon'; // #4: la key
 let sym = 'SPY', tf = '60';
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
-let vpBars = [];   // ROOT #5: fuente de VWAP/POC. En 4H = velas de 15m (sesión); en el resto = candles.
+let vpBars = [];   // ROOT #5: fuente de VWAP/POC. En 4H = velas de 1H (sesión); en el resto = candles.
+let DATA_STALE = false, DATA_LAST_LABEL = '—';  // guarda de frescura: serie vieja = no confiable (vale para TODOS los tickers/TFs)
 let cvd = 0, buyV = 0, sellV = 0;
 let tickerCache = {}, tickIdx = 0;
 let lastSignal = '', audioCtx = null;
@@ -1031,6 +1032,8 @@ function governConviction(sig, ctx, opts){
   const capAt=(l,m)=>{ ceiling=Math.min(ceiling,l); capList.push({l,m}); caps.push(m); };
   if(dirSign===0) return { direction:'NEUTRAL', grade:'ESPERAR', gradeIdx:0, caps:[], reason:null, liveLayers:0,
     totalLayers:(sig.layers||[]).length, pillars:[], nPillars:0, partial:false };
+  // GATE 0 · FRESCURA — serie vieja = no confiable, sin importar lo que griten las capas
+  if(opts.stale){ capAt(GOV_G['DÉBIL'], opts.staleMsg || 'DATA VIEJA — no confiable'); }
   // GATE 1 · RÉGIMEN
   const adx = sig.adx ? sig.adx.adx : null;
   if(adx==null){ capAt(GOV_G['DÉBIL'], 'régimen sin ADX'); }
@@ -1311,8 +1314,17 @@ async function loadCandles(){
     // t de Polygon viene en ms → convertir a segundos para el resto del motor
     let raw = d.results.map(b => ({ t: Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
     raw.sort((a,b)=>a.t-b.t);  // asegurar ascendente sin importar el orden del feed (la última = la más reciente)
-    // Overlay precio vivo sobre la última vela CRUDA antes de derivar nada
-    if(quote.c && raw.length){
+    // GUARDA DE FRESCURA: ¿la última vela es de hoy o el feed se quedó viejo (ej. AAPL pegado al 1-jun)?
+    // Umbral conservador (5 días) → tolera findes/feriados, caza staleness grueso. Vale para TODOS los tickers/TFs.
+    const STALE_MAX_DAYS = 5;
+    const lastSec = raw.length ? raw[raw.length-1].t : 0;
+    const ageDays = lastSec ? (Date.now()/1000 - lastSec)/86400 : 999;
+    DATA_STALE = ageDays > STALE_MAX_DAYS;
+    DATA_LAST_LABEL = lastSec ? new Date(lastSec*1000).toLocaleDateString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric'}) : '—';
+    if(DATA_STALE) console.warn('DATA VIEJA', sym, tf, '— última vela', DATA_LAST_LABEL, '('+ageDays.toFixed(0)+'d)');
+    // Overlay precio vivo sobre la última vela CRUDA — SOLO si la serie está fresca.
+    // Si está vieja NO la tocamos: así el precio vivo no estira una vela vieja y arma el monstruo que infla ADX/ST.
+    if(quote.c && raw.length && !DATA_STALE){
       const last = raw[raw.length-1];
       last.c = quote.c;
       if(quote.h) last.h = Math.max(last.h, quote.h);
@@ -1649,7 +1661,8 @@ function updateDerived(){
   // Muestra el veredicto gobernado AL LADO del score actual, sin alterar
   // el título ni el número. Etapa de comparación: ver "lo que grita vs lo honesto".
   try {
-    const gov = governConviction(sig, { trendStr:ctx.trendStr, zoneDir:ctx.zoneDir, mtfBull:ctx.mtfBull });
+    const gov = governConviction(sig, { trendStr:ctx.trendStr, zoneDir:ctx.zoneDir, mtfBull:ctx.mtfBull },
+                                 { stale: DATA_STALE, staleMsg: 'DATA VIEJA (último '+DATA_LAST_LABEL+') — no confiable' });
     if(sig.type !== 'NEUTRAL'){
       const why = gov.reason ? ' · capó: '+gov.reason : ' · confluencia limpia';
       sesgoEl.textContent += '  🛡 ' + govLabel(gov.grade) + why;
