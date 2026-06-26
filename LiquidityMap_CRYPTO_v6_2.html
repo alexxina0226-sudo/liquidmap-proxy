@@ -1110,6 +1110,7 @@ let quote = {}, candles = [], zones = [], vp = null;
 let cvd = 0, buyV = 0, sellV = 0;
 let tickerCache = {}, lastAlertPrice = 0;
 let fundingRate = 0, openInterest = 0, fearGreed = 0;
+let noRealData = false;   // honestidad: true cuando Binance no mandó velas reales (no se inventa nada)
 let audioCtx = null;
 // Ballenas — trades institucionales grandes
 let whales = [];        // [{side,qty,price,usd,ts}]
@@ -1268,6 +1269,18 @@ async function initApp(){
 // ═══════════════════════════════════════════════════════════
 // DATA — BINANCE (sin API key)
 // ═══════════════════════════════════════════════════════════
+// Fetch real vía proxy con reintento + backoff. Devuelve JSON real o null.
+// NUNCA inventa: si no hay dato real, devuelve null y el llamador muestra "—".
+async function proxyGet(qs, tries=3){
+  for(let i=0;i<tries;i++){
+    try{
+      const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?${qs}`, {mode:'cors'});
+      if(r.ok){ const d = await r.json(); if(d && !d.code) return d; }
+    }catch(e){}
+    if(i<tries-1) await new Promise(res=>setTimeout(res, 600*(i+1)));  // 0.6s, 1.2s...
+  }
+  return null;
+}
 async function loadAll(){
   await Promise.all([loadQuote(), loadCandles(), loadFundingRate(), loadOpenInterest()]);
   updatePanels(); drawAll();
@@ -1308,40 +1321,20 @@ async function loadQuote(){
 }
 
 function bootstrapFromQuote(){
-  if(!quote.c) return;
-  const minsMap = {'1m':1,'5m':5,'15m':15,'1h':60,'4h':240,'1d':1440};
-  const mins = minsMap[tf] || 15;
-  const barsToday = Math.max(3, Math.floor(720 / mins)); // ~12h
-  const bars = [];
-  const range = Math.max(quote.h - quote.l, quote.c * 0.005);
-  const trend = (quote.c - quote.o) / barsToday;
-  const volPer = quote.v / barsToday;
-  let price = quote.o;
-  const baseT = Math.floor(Date.now()/1000) - barsToday * mins * 60;
-  for(let i = 0; i < barsToday; i++){
-    const isLast = i === barsToday - 1;
-    const noise = (Math.random() - 0.48) * range * 0.18;
-    const o = price;
-    const c = isLast ? quote.c : Math.max(quote.l * 0.999, Math.min(quote.h * 1.001, o + trend + noise));
-    bars.push({ t: baseT + i * mins * 60, o, h: isLast ? quote.h : Math.min(quote.h, Math.max(o,c) + range*0.05*Math.random()), l: isLast ? quote.l : Math.max(quote.l, Math.min(o,c) - range*0.05*Math.random()), c, v: volPer*(0.5+Math.random()) });
-    price = c;
-  }
-  candles = bars;
-  vp = buildVP(candles, 60); refreshVWAP();
-  zones = buildZones(quote.c);
-  cvd = bars.reduce((a,b) => a + (b.c >= b.o ? b.v : -b.v), 0);
+  // SIN datos sintéticos: si Binance no mandó velas reales, NO inventamos con Math.random.
+  // Quedan las velas vacías (estado honesto "sin datos") hasta que el reintento traiga las reales.
+  noRealData = true;
 }
 
 async function loadCandles(){
   try{
     const limit = tf === '1d' ? 200 : tf === '4h' ? 150 : 120;
-    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/api/v3/klines&symbol=${sym}&interval=${tf}&limit=${limit}`);
-    const d = await r.json();
+    const d = await proxyGet(`path=/api/v3/klines&symbol=${sym}&interval=${tf}&limit=${limit}`);  // real, con reintento
     if(!Array.isArray(d) || !d.length){
-      // Fallback: use bootstrap if no candles yet
-      if(!candles.length && quote.c) bootstrapFromQuote();
+      if(!candles.length) bootstrapFromQuote();   // honesto: sin datos reales, NO inventa velas
       drawAll(); return;
     }
+    noRealData = false;
     const bars = d.map(k => ({
       t: Math.floor(k[0]/1000), o: parseFloat(k[1]), h: parseFloat(k[2]),
       l: parseFloat(k[3]), c: parseFloat(k[4]), v: parseFloat(k[5]),
@@ -1386,35 +1379,28 @@ async function loadFundingRate(){
     'MATICUSDT','DOTUSDT','LINKUSDT','UNIUSDT','LTCUSDT','ATOMUSDT','FTMUSDT','ARBUSDT','OPUSDT','INJUSDT'];
   const isPerp = perpSyms.includes(sym.toUpperCase());
   if(!isPerp){
-    // Show estimated FR from CVD pressure
-    fundingRate = cvd > 0 ? 0.012 : -0.005;
-    updateFundingPanel(7, 59);
+    fundingNA('N/A · spot');   // los pares spot NO tienen funding — no se inventa
     return;
   }
-  try{
-    // Try Binance futures API
-    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/fapi/v1/premiumIndex&symbol=${sym}&futures=1`, {mode:'cors'});
-    if(!r.ok) throw new Error('CORS');
-    const d = await r.json();
-    if(!d || d.code) throw new Error('no data');
-    fundingRate = parseFloat(d.lastFundingRate) * 100;
-    const nextFund = new Date(parseInt(d.nextFundingTime));
-    const diffMs = nextFund - new Date();
-    const diffH = Math.max(0, Math.floor(diffMs / 3600000));
-    const diffM = Math.max(0, Math.floor((diffMs % 3600000) / 60000));
-    updateFundingPanel(diffH, diffM);
-  } catch(e){
-    // Fallback: estimate FR from market conditions
-    const h = new Date().getUTCHours();
-    // FR resets every 8h at 00:00, 08:00, 16:00 UTC
-    const nextReset = Math.ceil(h / 8) * 8;
-    const diffH = nextReset - h;
-    const diffM = 60 - new Date().getUTCMinutes();
-    // Estimate from buy/sell pressure
-    const bp = buyV / (buyV + sellV + 1);
-    fundingRate = (bp - 0.5) * 0.08; // rough estimate
-    updateFundingPanel(diffH, diffM % 60);
+  // Funding REAL de futuros Binance (con reintento). Sin dato real → "—", jamás estimado.
+  const d = await proxyGet(`path=/fapi/v1/premiumIndex&symbol=${sym}&futures=1`);
+  if(!d || d.lastFundingRate == null){
+    fundingNA('—');
+    return;
   }
+  fundingRate = parseFloat(d.lastFundingRate) * 100;
+  const nextFund = new Date(parseInt(d.nextFundingTime));
+  const diffMs = nextFund - new Date();
+  const diffH = Math.max(0, Math.floor(diffMs / 3600000));
+  const diffM = Math.max(0, Math.floor((diffMs % 3600000) / 60000));
+  updateFundingPanel(diffH, diffM);
+}
+
+// Estado honesto cuando NO hay funding real (spot, o futuros caído). No inventa número.
+function fundingNA(txt){
+  fundingRate = 0;
+  ['fr-val','k-fr'].forEach(id=>{ const e=document.getElementById(id); if(e){ e.textContent=txt; e.className='vl'; } });
+  const bar=document.getElementById('fr-bar'); if(bar) bar.style.width='0%';
 }
 
 function updateFundingPanel(diffH, diffM){
@@ -1437,19 +1423,15 @@ function updateFundingPanel(diffH, diffM){
 }
 
 async function loadOpenInterest(){
-  try{
-    const r = await fetch(`https://liquidmap-proxy.onrender.com/proxy?path=/fapi/v1/openInterest&symbol=${sym}&futures=1`, {mode:'cors'});
-    if(!r.ok) throw new Error('CORS');
-    const d = await r.json();
-    if(!d || d.code) throw new Error('no data');
-    openInterest = parseFloat(d.openInterest);
-    updateOIPanel();
-  } catch(e){
-    // Estimate OI from volume data
-    const p = quote.c || 1;
-    openInterest = (quote.v2 || 1000) * 0.15; // ~15% of daily volume as OI estimate
-    updateOIPanel();
+  // OI REAL de futuros Binance (con reintento). Sin dato real → "—", jamás estimado del volumen.
+  const d = await proxyGet(`path=/fapi/v1/openInterest&symbol=${sym}&futures=1`);
+  if(!d || d.openInterest == null){
+    openInterest = 0;
+    ['k-oi','oi-total'].forEach(id=>{ const e=document.getElementById(id); if(e){ e.textContent='—'; e.className='vl'; } });
+    return;
   }
+  openInterest = parseFloat(d.openInterest);
+  updateOIPanel();
 }
 
 // OI histórico — calculado desde velas (Binance bloquea openInterestHist sin auth)
@@ -2651,9 +2633,10 @@ function updateZonesList(){
 function updateGEXPanel(price, vwap, sigma){
   if(!document.getElementById('gex-bar')) return;
   const dec = price < 1 ? 5 : price < 100 ? 3 : price < 10000 ? 1 : 0;
-  // GEX estimated from price position relative to VWAP
+  // OJO: esto NO es GEX real. El GEX real necesita opciones (Deribit, solo BTC/ETH).
+  // Acá es un PROXY de posición vs VWAP — marcado como tal para no mentir.
   const dist = (price - vwap) / Math.max(sigma, 1);
-  const gexPositive = Math.abs(dist) < 1.5; // near VWAP = positive gamma (pinning)
+  const gexPositive = Math.abs(dist) < 1.5; // cerca de VWAP = comportamiento de pinning
   const gexNet = gexPositive ? '+' + (Math.abs(dist) < 0.5 ? 'ALTO' : 'MEDIO') : '-' + (Math.abs(dist) > 2 ? 'ALTO' : 'MEDIO');
   const callW = (price * (1 + (ATR_MAP[sym]||0.025) * 0.8)).toFixed(dec);
   const putW  = (price * (1 - (ATR_MAP[sym]||0.025) * 0.8)).toFixed(dec);
@@ -2664,7 +2647,7 @@ function updateGEXPanel(price, vwap, sigma){
   bar.style.background = gexPositive ? 'var(--green)' : 'var(--red)';
   set('gex-net', gexPositive ? '+ Long Gamma' : '- Short Gamma', gexPositive ? 'g' : 'r');
   set('gex-iv', ivEst + '% IV est.', 'y');
-  set('gex-reg', gexPositive ? '✓ POSITIVO' : '⚠ NEGATIVO', gexPositive ? 'g' : 'r');
+  set('gex-reg', gexPositive ? '✓ pinning · PROXY' : '⚠ expansión · PROXY', gexPositive ? 'g' : 'r');
   set('gex-cw', '$'+callW, 'g');
   set('gex-pw', '$'+putW, 'r');
   set('gex-zg', '$'+zeroG, 'y');
