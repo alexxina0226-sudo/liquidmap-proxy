@@ -1107,7 +1107,7 @@ function calcSmartTP(price, direction, currentTF) {
 let sym = 'BTCUSDT', tf = '15m';
 let ws = null, wsAll = null;
 let quote = {}, candles = [], zones = [], vp = null;
-let cvd = 0, buyV = 0, sellV = 0;
+let cvd = 0, buyV = 0, sellV = 0, cvdReal = false;
 let tickerCache = {}, lastAlertPrice = 0;
 let fundingRate = 0, openInterest = 0, fearGreed = 0;
 let noRealData = false;   // honestidad: true cuando Binance no mandó velas reales (no se inventa nada)
@@ -1355,11 +1355,17 @@ async function loadCandles(){
     const slice = candles.slice(-30);
     const hasTaker = slice.some(b => b.bv > 0);
     if(hasTaker){
+      // REAL: taker buy volume por vela (Binance campo [9])
       buyV = slice.reduce((a,b) => a + b.bv, 0);
       sellV = slice.reduce((a,b) => a + (b.v - b.bv), 0);
       cvd = buyV - sellV;
+      cvdReal = true;
     } else {
+      // Fallback (sin taker real): split aproximado por dirección de la vela. Marcado proxy.
+      buyV = slice.reduce((a,b) => a + (b.c >= b.o ? b.v : b.v*0.4), 0);
+      sellV = slice.reduce((a,b) => a + (b.c >= b.o ? b.v*0.4 : b.v), 0);
       cvd = slice.reduce((a,b) => a + (b.c >= b.o ? b.v : -b.v), 0);
+      cvdReal = false;
     }
     zones = buildZones(quote.c || candles[candles.length-1].c);
     updateSuperTrendJuez();
@@ -2486,7 +2492,7 @@ function updateDerived(){
   const bp = Math.min(95, Math.max(5, buyV/tot*100));
   const sp = 100 - bp;
   const cvdM = Math.abs(cvd) > 1e6 ? (cvd/1e6).toFixed(1)+'M' : Math.abs(cvd) > 1e3 ? (cvd/1e3).toFixed(1)+'K' : cvd.toFixed(0);
-  set('cvd-v', (cvd>=0?'+':'')+cvdM, cvd>=0?'g':'r');
+  set('cvd-v', (cvdReal?'📡 ':'≈ ')+(cvd>=0?'+':'')+cvdM, cvd>=0?'g':'r');
   document.getElementById('dbuy').style.width = bp + '%';
   document.getElementById('dsell').style.width = sp + '%';
   document.getElementById('bp-v').textContent = bp.toFixed(0) + '% Buy';
@@ -2751,10 +2757,13 @@ async function loadGEXDeribit(){
       spot, ccy, asof: now
     };
 
-    // ── MAX PAIN real (vencimiento más cercano) ──
-    let nearestExp = Infinity;
-    for(const o of opts){ if(o.expiryMs < nearestExp) nearestExp = o.expiryMs; }
-    const expOpts = opts.filter(o => o.expiryMs === nearestExp);
+    // ── MAX PAIN real — vencimiento con MAYOR OI (el que más imanta; comparable a Coinglass) ──
+    // (el más cercano suele ser el diario de hoy, con poco OI → daba ~spot y no cuadraba)
+    const oiByExp = {};
+    for(const o of opts){ oiByExp[o.expiryMs] = (oiByExp[o.expiryMs]||0) + o.oi; }
+    let domExp = null, domOI = -1;
+    for(const e in oiByExp){ if(oiByExp[e] > domOI){ domOI = oiByExp[e]; domExp = +e; } }
+    const expOpts = opts.filter(o => o.expiryMs === domExp);
     const strikes = [...new Set(expOpts.map(o => o.K))].sort((a,b)=>a-b);
     let mp = null, minPain = Infinity;
     for(const St of strikes){
@@ -2764,7 +2773,7 @@ async function loadGEXDeribit(){
       }
       if(pain < minPain){ minPain = pain; mp = St; }
     }
-    maxPainReal = (mp != null) ? { strike: mp, expiryMs: nearestExp, asof: now } : null;
+    maxPainReal = (mp != null) ? { strike: mp, expiryMs: domExp, asof: now } : null;
 
   }catch(e){
     console.warn('loadGEXDeribit('+ccy+'):', e.message);
