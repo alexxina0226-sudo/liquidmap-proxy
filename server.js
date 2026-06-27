@@ -226,6 +226,24 @@ app.get('/proxy', async (req, res) => {
     const apiPath = req.query.path;
     if (!apiPath) return res.status(400).json({ error: 'Missing path param' });
 
+    // 0) KLINES: preferir Binance — trae taker buy volume REAL en el campo [9]
+    //    → CVD/delta reales por vela. Frankfurt no está geobloqueado (fapi ya llega).
+    //    Si Binance falla, cae al adaptador Bybit de abajo (peor caso = comportamiento previo).
+    if (apiPath === '/api/v3/klines') {
+      try {
+        const p = new URLSearchParams();
+        if (req.query.symbol)   p.set('symbol', String(req.query.symbol).toUpperCase());
+        if (req.query.interval) p.set('interval', req.query.interval);
+        if (req.query.limit)    p.set('limit', req.query.limit);
+        const bUrl = `https://api.binance.com/api/v3/klines?${p.toString()}`;
+        const br = await fetch(bUrl, { headers: { 'Accept':'application/json', 'User-Agent':'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }, timeout: 10000 });
+        if (br.ok) {
+          const bd = await br.json();
+          if (Array.isArray(bd) && bd.length) return res.json(bd);   // [9]=takerBuyBase real
+        }
+      } catch (e) { /* sigue al adaptador Bybit */ }
+    }
+
     // 1) Intentar el adaptador Bybit para endpoints crypto conocidos
     try {
       const adapted = await bybitAdapter(apiPath, req.query);
