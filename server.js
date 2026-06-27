@@ -431,14 +431,26 @@ app.get('/health', (req, res) => {
 // ══════════════════════════════════════════════════════════════════
 const LIQ_WINDOW_SEC = 3600;                 // 1h de memoria rodante
 const LIQ_MAX_EVENTS = 6000;                 // tope duro por símbolo (anti-leak)
-// URL configurable: si Binance cambia el ruteo del stream, se ajusta por env sin tocar código.
-const LIQ_WS_URL = process.env.LIQ_WS_URL || 'wss://fstream.binance.com/stream?streams=!forceOrder@arr';
+// Endpoints candidatos. Post 23-abr-2026 las URLs legacy quedaron desmanteladas y las
+// conexiones sin ruta solo reciben /public → forceOrder (market) no empuja. Probamos
+// rutas hasta que una entregue. Si se setea LIQ_WS_URL por env, se usa solo esa.
+const LIQ_WS_CANDIDATES = process.env.LIQ_WS_URL
+  ? [process.env.LIQ_WS_URL]
+  : [
+      'wss://fstream.binance.com/market/stream?streams=!forceOrder@arr',
+      'wss://fstream.binance.com/public/stream?streams=!forceOrder@arr',
+      'wss://fstream.binance.com/stream?streams=!forceOrder@arr',
+    ];
 const LIQ_WS_OFF = /^(1|true|yes|on)$/i.test(process.env.LIQ_WS_OFF || '');
 
 const liqWindow = new Map();                 // symbol -> [{t, side:'long'|'short', usd}]
 let liqWsConnected = false;
 let liqLastEventTs = 0;
 let liqWsBackoff = 3000;
+let liqCandIdx = 0;                           // candidato actual
+let liqEventsSinceOpen = 0;                   // eventos recibidos en la conexión actual
+let liqProbeTimer = null;                     // watchdog "sin datos → rotar"
+function liqCurrentUrl(){ return LIQ_WS_CANDIDATES[liqCandIdx % LIQ_WS_CANDIDATES.length]; }
 
 function liqPrune(arr){
   const cutoff = Date.now() - LIQ_WINDOW_SEC * 1000;
@@ -469,23 +481,37 @@ function connectLiqWS(){
     console.error('❌ Liquidaciones: WebSocket global no disponible (Node <21). Endpoint dará ok:false honesto.');
     return;
   }
+  const url = liqCurrentUrl();
   let ws;
-  try { ws = new WebSocket(LIQ_WS_URL); }
-  catch (e){ console.error('❌ Liq WS no abrió:', e.message); scheduleLiqReconnect(); return; }
+  try { ws = new WebSocket(url); }
+  catch (e){ console.error('❌ Liq WS no abrió:', e.message); liqCandIdx++; scheduleLiqReconnect(); return; }
 
+  liqEventsSinceOpen = 0;
   ws.addEventListener('open', () => {
     liqWsConnected = true; liqWsBackoff = 3000;
-    console.log('✅ Liquidaciones WS conectado →', LIQ_WS_URL);
+    console.log('✅ Liquidaciones WS conectado →', url);
+    // Watchdog: si conecta pero en 90s no llega NINGÚN forceOrder, el endpoint no es el
+    // que empuja liquidaciones → rotar al siguiente candidato. (Solo si hay >1 candidato.)
+    if (LIQ_WS_CANDIDATES.length > 1){
+      clearTimeout(liqProbeTimer);
+      liqProbeTimer = setTimeout(() => {
+        if (liqEventsSinceOpen === 0){
+          console.warn('⚠️  Liq WS sin eventos en 90s →', url, '— rotando endpoint');
+          liqCandIdx++;
+          try { ws.close(); } catch(e){}   // close dispara reconnect con el siguiente
+        }
+      }, 90000);
+    }
   });
   ws.addEventListener('message', (ev) => {
     try {
       const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
       // Combined stream: {stream, data:{e:'forceOrder', o:{...}}}  ·  raw: {e:'forceOrder', o:{...}}
       const payload = msg.data || msg;
-      if (payload && payload.e === 'forceOrder' && payload.o) liqHandleOrder(payload.o);
+      if (payload && payload.e === 'forceOrder' && payload.o){ liqEventsSinceOpen++; liqHandleOrder(payload.o); }
     } catch (e) { /* ignora frames no-JSON */ }
   });
-  ws.addEventListener('close', () => { liqWsConnected = false; console.warn('⚠️  Liq WS cerrado — reconectando…'); scheduleLiqReconnect(); });
+  ws.addEventListener('close', () => { liqWsConnected = false; clearTimeout(liqProbeTimer); console.warn('⚠️  Liq WS cerrado — reconectando…'); scheduleLiqReconnect(); });
   ws.addEventListener('error', (e) => { liqWsConnected = false; console.warn('⚠️  Liq WS error:', e && e.message ? e.message : 'unknown'); });
 }
 function scheduleLiqReconnect(){
@@ -517,6 +543,7 @@ app.get('/liquidations', (req, res) => {
     count,
     lastEventTs: lastTs || null,
     wsConnected: liqWsConnected,
+    wsUrl: liqCurrentUrl(),
     feedLastEventTs: liqLastEventTs || null,   // último evento de CUALQUIER símbolo (salud del feed)
     serverTime: Date.now()
   });
