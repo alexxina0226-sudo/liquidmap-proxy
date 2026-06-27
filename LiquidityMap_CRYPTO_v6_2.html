@@ -568,12 +568,12 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div style="margin-top:4px;font-size:8px;color:#6a90b0;line-height:1.5">Est. basado en divergencia vol/precio. ~30% del vol crypto es OTC.</div>
     </div>
 
-    <!-- ORDER BOOK EST. -->
+    <!-- ORDER BOOK REAL (L2 Binance) -->
     <div class="ps">
-      <h3>📖 Order Book Est.</h3>
+      <h3>📖 Order Book (L2 real)</h3>
       <div class="mr"><span class="lb">Bid Wall</span><span class="vl g" id="ob-bid">—</span></div>
       <div class="mr"><span class="lb">Ask Wall</span><span class="vl r" id="ob-ask">—</span></div>
-      <div class="mr"><span class="lb">Stops est.</span><span class="vl y" id="ob-stop">—</span></div>
+      <div class="mr"><span class="lb">Profundidad</span><span class="vl y" id="ob-stop">—</span></div>
       <div class="mr"><span class="lb">Spread</span><span class="vl a" id="ob-spread">—</span></div>
       <div class="mr"><span class="lb">Presión neta</span><span class="vl" id="ob-pressure">—</span></div>
     </div>
@@ -1214,6 +1214,8 @@ async function initApp(){
   });
   loadGEXDeribit().then(() => updatePanels());     // GEX/MaxPain real (Deribit BTC/ETH/SOL)
   setInterval(loadGEXDeribit, 120000);             // opciones: refresco cada 2 min
+  loadOrderBook().then(() => updatePanels());      // order book real (L2 Binance)
+  setInterval(loadOrderBook, 5000);                // profundidad: refresco cada 5s
   loadWhales();
   setBar(0);
 
@@ -1553,6 +1555,37 @@ async function loadLiquidations(){
 }
 // alias compat (por si quedó alguna llamada vieja)
 const loadLiquidationsCoinglass = loadLiquidations;
+
+// ── ORDER BOOK REAL (profundidad L2 de Binance) ──
+// Reemplaza el viejo "order book estimado" (precio×offset inventado).
+// Bid/Ask wall = nivel con mayor cantidad real de órdenes. Spread y presión reales.
+let orderBookReal = null;
+async function loadOrderBook(){
+  try{
+    const d = await proxyGet(`path=/api/v3/depth&symbol=${sym}&limit=100`);
+    if(!d || !Array.isArray(d.bids) || !Array.isArray(d.asks) || !d.bids.length || !d.asks.length)
+      throw new Error('sin profundidad');
+    const bids = d.bids.map(x => [parseFloat(x[0]), parseFloat(x[1])]).filter(x => isFinite(x[0]) && isFinite(x[1]));
+    const asks = d.asks.map(x => [parseFloat(x[0]), parseFloat(x[1])]).filter(x => isFinite(x[0]) && isFinite(x[1]));
+    if(!bids.length || !asks.length) throw new Error('profundidad vacía');
+    const bestBid = bids[0][0], bestAsk = asks[0][0];
+    const mid = (bestBid + bestAsk) / 2;
+    let bw = bids[0], aw = asks[0], bidQty = 0, askQty = 0;
+    for(const b of bids){ bidQty += b[1]; if(b[1] > bw[1]) bw = b; }   // pared = mayor cantidad real
+    for(const a of asks){ askQty += a[1]; if(a[1] > aw[1]) aw = a; }
+    orderBookReal = {
+      bidWall: bw[0], bidWallUSD: bw[0]*bw[1],
+      askWall: aw[0], askWallUSD: aw[0]*aw[1],
+      spread: bestAsk - bestBid, spreadPct: (bestAsk - bestBid)/mid*100,
+      pressurePct: bidQty/(bidQty + askQty)*100,
+      depthUSD: bidQty*bestBid + askQty*bestAsk,
+      ts: Date.now()
+    };
+  }catch(e){
+    console.warn('loadOrderBook:', e.message);
+    orderBookReal = null;   // honesto: sin dato real → "—"
+  }
+}
 
 function updateLiquidationPanel(price){
   const set = (id, v, cls) => { const e = document.getElementById(id); if(e){ e.textContent = v; if(cls) e.className = 'vl ' + cls; } };
@@ -2502,14 +2535,21 @@ function updateDerived(){
   set('bvol-v', bv, 'g'); set('svol-v', sv, 'r');
   const imb = ((bp - 50) / 50 * 100).toFixed(0);
   set('imb-v', (imb>=0?'+':'')+imb+'%', imb>=0?'g':'r');
-  // Order book
-  const dec2 = p < 1 ? 5 : p < 100 ? 3 : p < 10000 ? 1 : 0;
-  set('ob-bid', '$' + (p * 0.998).toFixed(dec2), 'g');
-  set('ob-ask', '$' + (p * 1.002).toFixed(dec2), 'r');
-  set('ob-stop', '$' + (p * 1.015).toFixed(dec2), 'y');
-  const spread = (p * 0.004);
-  set('ob-spread', '$' + spread.toFixed(dec2) + ' (' + (spread/p*100).toFixed(3) + '%)', 'a');
-  set('ob-pressure', bp > 52 ? '▲ Compra neta' : bp < 48 ? '▼ Venta neta' : '⚖ Equilibrio', bp>52?'g':bp<48?'r':'y');
+  // Order Book REAL (profundidad L2 de Binance vía proxy)
+  if(orderBookReal){
+    const ob = orderBookReal;
+    const decob = p < 1 ? 5 : p < 100 ? 3 : p < 10000 ? 1 : 0;
+    const fmtUsd = v => v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
+    set('ob-bid', '$'+ob.bidWall.toFixed(decob)+' · '+fmtUsd(ob.bidWallUSD), 'g');
+    set('ob-ask', '$'+ob.askWall.toFixed(decob)+' · '+fmtUsd(ob.askWallUSD), 'r');
+    set('ob-stop', '$'+fmtUsd(ob.depthUSD)+' (±100 niv.)', 'y');
+    set('ob-spread', '$'+ob.spread.toFixed(decob)+' ('+ob.spreadPct.toFixed(3)+'%)', 'a');
+    const pp = ob.pressurePct;
+    set('ob-pressure', (pp>55?'▲ Compra neta':pp<45?'▼ Venta neta':'⚖ Equilibrio')+' '+pp.toFixed(0)+'%', pp>55?'g':pp<45?'r':'y');
+  } else {
+    set('ob-bid','—','a'); set('ob-ask','—','a'); set('ob-stop','—','a');
+    set('ob-spread','—','a'); set('ob-pressure','— sin order book','a');
+  }
   // VWAP real + Bandas sigma reales
   if(vp){
     const poc = getPOC(vp), va = getVA(vp);
@@ -2957,16 +2997,13 @@ function buildVP(bars, n){
       p[idx] += vol;
       continue;
     }
-    // Distribución triangular sesgada: más peso cerca del cierre
-    // Modela absorción institucional al precio de cierre
+    // Distribución UNIFORME del volumen entre high y low (método TPO estándar,
+    // igual que el perfil de volumen de TradingView). Sin sesgos inventados.
     const bins = Math.max(1, Math.ceil(rng / bs));
     for(let k = 0; k < bins; k++){
       const price = b.l + (k + 0.5) * (rng / bins);
       const idx   = Math.max(0, Math.min(n-1, Math.floor((price - mn) / bs)));
-      // Peso: inversamente proporcional a distancia del cierre
-      const distFromClose = Math.abs(price - b.c) / rng;
-      const weight = Math.max(0.1, 1 - distFromClose * 0.7);
-      p[idx] += (vol / bins) * weight;
+      p[idx] += vol / bins;
     }
   }
   // Normalizar para que el total sea correcto
@@ -3462,6 +3499,7 @@ async function selectSym(s, btn){
   sym = s; candles = []; zones = []; quote = {}; cvd = 0; buyV = 0; sellV = 0; lastPrice = 0;
   whales = []; structureEvents = []; oiHistory = []; lsRatioReal = null; liquidationsReal = null;
   gexReal = null; maxPainReal = null; loadGEXDeribit();
+  orderBookReal = null; loadOrderBook();
   document.querySelectorAll('.sym-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   // Stop polling
@@ -3635,8 +3673,7 @@ function monBuildVP(bars, n){
     for(let s=0; s<slots; s++){
       const price = bar.l + bs * s + bs/2;
       const idx = Math.min(bins-1, Math.floor((price - mn) / bs));
-      const distFromClose = Math.abs(price - bar.c) / (rng + 0.001);
-      p[idx] += vol * (1 + (1 - distFromClose) * 0.6);
+      p[idx] += vol;   // distribución uniforme H-L (igual que el mapa, sin sesgo al cierre)
     }
   });
   return { p, mn, bs, bins };
