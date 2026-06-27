@@ -2543,7 +2543,7 @@ function updateDerived(){
     set('ob-bid', '$'+ob.bidWall.toFixed(dec2)+' · '+fmtUsd(ob.bidWallUSD), 'g');
     set('ob-ask', '$'+ob.askWall.toFixed(dec2)+' · '+fmtUsd(ob.askWallUSD), 'r');
     set('ob-stop', '$'+fmtUsd(ob.depthUSD)+' (±100 niv.)', 'y');
-    set('ob-spread', '$'+ob.spread.toFixed(dec2)+' ('+ob.spreadPct.toFixed(3)+'%)', 'a');
+    set('ob-spread', '$'+ob.spread.toFixed(Math.max(2,dec2))+' ('+ob.spreadPct.toFixed(4)+'%)', 'a');
     const pp = ob.pressurePct;
     set('ob-pressure', (pp>55?'▲ Compra neta':pp<45?'▼ Venta neta':'⚖ Equilibrio')+' '+pp.toFixed(0)+'%', pp>55?'g':pp<45?'r':'y');
   } else {
@@ -3907,15 +3907,38 @@ function monComputeScore(bars, q, poc, va, vwap, atr, regime, struct, whale){
   // 7 — Regime bonus
   if(regime === 'TREND_STRONG'){ bull+=0.5; bear+=0.5; }
 
-  // Score final
-  const total = Math.max(bull, bear);
-  const score = Math.min(10, Math.round(total * 1.4));
+  // 8 — JUEZ SuperTrend (IDÉNTICO al mapa: el ST define el sesgo, las capas confirman)
+  //   computeSuperTrend(bars,10,3.0) es la misma función pura que usa el mapa (updateSuperTrendJuez).
+  const stArr = computeSuperTrend(bars, 10, 3.0);
+  let juezDir = 'NEUTRAL', juezScore = 0, stLine = 0;
+  if(stArr.length){
+    const last = stArr[stArr.length-1];
+    const consec = stArr.slice(-8).filter(s=>s.trend===last.trend).length;
+    juezDir   = last.trend===1 ? 'UP' : 'DOWN';
+    juezScore = Math.min(2, Math.min(1, consec/8) * 2);
+    stLine    = last.line;
+  }
+
+  // Combinación final — réplica exacta del mapa (FASE 3): el JUEZ suma a su lado
+  // y BLOQUEA la dirección contraria restándole 2.5 puntos.
+  let finalBull = bull + (juezDir==='UP'   ? juezScore : 0);
+  let finalBear = bear + (juezDir==='DOWN' ? juezScore : 0);
+  if(juezDir==='DOWN') finalBull -= 2.5;
+  if(juezDir==='UP')   finalBear -= 2.5;
+  if(juezDir==='UP')   confBull.push('ST▲');
+  if(juezDir==='DOWN') confBear.push('ST▼');
+
   let type = 'NEUTRAL';
+  let score = 0;
   let conf = [];
-  if(bull > bear && bull >= 3.5){ type='BUY';  conf=confBull.slice(0,4); }
-  else if(bear > bull && bear >= 3.5){ type='SELL'; conf=confBear.slice(0,4); }
-  else { conf=['Confluencia insuf.']; }
-  return { score, type, conf };
+  if(finalBull > finalBear && finalBull >= 3.5){
+    type='BUY';  score=Math.min(10, Math.round(finalBull * 1.4)); conf=confBull.filter((v,i,a)=>a.indexOf(v)===i).slice(0,4);
+  } else if(finalBear > finalBull && finalBear >= 3.5){
+    type='SELL'; score=Math.min(10, Math.round(finalBear * 1.4)); conf=confBear.filter((v,i,a)=>a.indexOf(v)===i).slice(0,4);
+  } else {
+    score=Math.round(Math.max(finalBull, finalBear) * 1.2); conf=['Confluencia insuf.'];
+  }
+  return { score, type, conf, stDir: juezDir, stLine };
 }
 
 // Format USD
