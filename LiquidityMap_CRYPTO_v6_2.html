@@ -1200,7 +1200,7 @@ async function initApp(){
     drawAll(); updatePanels();
   }, 30000);
   setInterval(loadFearGreed, 300000);
-  setInterval(loadLiquidationsCoinglass, 120000); // cada 2 min
+  setInterval(loadLiquidations, 120000); // cada 2 min
   setInterval(loadWhales, 15000); // ballenas cada 15s
   loadFearGreed();
   // Cargar datos extra y actualizar panel cuando lleguen
@@ -1208,10 +1208,12 @@ async function initApp(){
     updateOIPanel();
     updatePanels();
   });
-  loadLiquidationsCoinglass().then(() => {
+  loadLiquidations().then(() => {
     updateLiquidationPanel(quote.c || 0);
     updatePanels();
   });
+  loadGEXDeribit().then(() => updatePanels());     // GEX/MaxPain real (Deribit BTC/ETH/SOL)
+  setInterval(loadGEXDeribit, 120000);             // opciones: refresco cada 2 min
   loadWhales();
   setBar(0);
 
@@ -1520,60 +1522,70 @@ function updateOIPanel(){
 // Liquidaciones reales Coinglass — sin API key, endpoint público
 let liquidationsReal = null;
 
-async function loadLiquidationsCoinglass(){
-  // forceOrders y Coinglass requieren auth/CORS — calculamos desde OI + precio
-  // Metodología institucional: liq levels = precio ± ATR*3 aplicado al OI total
-  const price = quote.c || candles[candles.length-1]?.c || 1;
-  const atrPct = ATR_MAP[sym] || 0.025;
-  const oiUSD = openInterest * price;
-  // Longs liquidados cuando precio cae 3 ATR desde pico (estimación conservadora)
-  const longLiqEst  = oiUSD * atrPct * 0.8;
-  // Shorts liquidados cuando precio sube 3 ATR desde suelo
-  const shortLiqEst = oiUSD * atrPct * 0.6;
-  // Ajustar por dirección del precio en las últimas velas
-  const lastCandles = candles.slice(-6);
-  const priceDir = lastCandles.length > 1 ?
-    lastCandles[lastCandles.length-1].c - lastCandles[0].c : 0;
-  liquidationsReal = {
-    longUSD:  priceDir < 0 ? longLiqEst * 1.4 : longLiqEst * 0.6,
-    shortUSD: priceDir > 0 ? shortLiqEst * 1.4 : shortLiqEst * 0.6,
-    ts: Date.now(),
-    source: 'est'
-  };
+async function loadLiquidations(){
+  // REAL: Binance forceOrder agregado por el proxy (server-side, Frankfurt).
+  // Ventana rodante 1h. Si no hay liquidaciones recientes → estado honesto, NO inventa.
+  try{
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/liquidations?symbol=${sym}&window=3600`, {cache:'no-cache'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const d = await r.json();
+    if(!d || d.ok !== true) throw new Error('bad payload');
+    liquidationsReal = {
+      longUSD:  d.longUSD  || 0,
+      shortUSD: d.shortUSD || 0,
+      count:    d.count    || 0,
+      ts:       Date.now(),
+      lastEventTs: d.lastEventTs || null,
+      wsConnected: !!d.wsConnected,
+      // 'real' = hubo liquidaciones en la ventana · 'quiet' = feed vivo pero sin liq · 'down' = feed caído
+      source: (d.count > 0) ? 'real' : (d.wsConnected ? 'quiet' : 'down')
+    };
+  }catch(e){
+    console.warn('loadLiquidations:', e.message);
+    liquidationsReal = { longUSD:0, shortUSD:0, count:0, ts:Date.now(), source:'down' };
+  }
 }
+// alias compat (por si quedó alguna llamada vieja)
+const loadLiquidationsCoinglass = loadLiquidations;
 
 function updateLiquidationPanel(price){
   const set = (id, v, cls) => { const e = document.getElementById(id); if(e){ e.textContent = v; if(cls) e.className = 'vl ' + cls; } };
-  // Niveles de cascada basados en OI real + ATR
+  // Niveles PROYECTADOS de cascada (precio ± ATR*3) — son una proyección analítica de
+  // DÓNDE cascarían liquidaciones, no liquidaciones reales. Se etiquetan como tales.
   const atrPct = ATR_MAP[sym] || 0.03;
   const longLiqLevel  = (price * (1 - atrPct * 3)).toFixed(2);
   const shortLiqLevel = (price * (1 + atrPct * 3)).toFixed(2);
+  const fmtM = v => v >= 1e6 ? (v/1e6).toFixed(2)+'M' : v >= 1e3 ? (v/1e3).toFixed(0)+'K' : v.toFixed(0);
+  const src = liquidationsReal && liquidationsReal.source;
 
-  if(liquidationsReal && (liquidationsReal.longUSD > 0 || liquidationsReal.shortUSD > 0)){
-    // Datos reales de Coinglass o Binance forced orders
-    const fmtM = v => v > 1e6 ? (v/1e6).toFixed(1)+'M' : v > 1e3 ? (v/1e3).toFixed(0)+'K' : v.toFixed(0);
+  if(src === 'real'){
+    // Liquidaciones REALES de Binance forceOrder (muestreado 1/seg por símbolo)
     const total = liquidationsReal.longUSD + liquidationsReal.shortUSD;
-    const src = liquidationsReal.source === 'est' ? '≈' : '📡';
-    const lbl = liquidationsReal.source === 'est' ? ' (est.)' : '';
-    set('liq-total',  src + ' $' + fmtM(total) + lbl, 'y');
-    set('liq-longs',  '$' + fmtM(liquidationsReal.longUSD) + lbl, 'r');
-    set('liq-shorts', '$' + fmtM(liquidationsReal.shortUSD) + lbl, 'g');
+    set('liq-total',  '📡 $' + fmtM(total) + ' · 1h', 'y');
+    set('liq-longs',  '$' + fmtM(liquidationsReal.longUSD), 'r');
+    set('liq-shorts', '$' + fmtM(liquidationsReal.shortUSD), 'g');
     const ratio = liquidationsReal.shortUSD > 0
       ? (liquidationsReal.longUSD / liquidationsReal.shortUSD).toFixed(1)
-      : '—';
-    const dominaLongs = liquidationsReal.longUSD > liquidationsReal.shortUSD;
+      : '∞';
+    const dominaLongs = liquidationsReal.longUSD >= liquidationsReal.shortUSD;
     set('liq-ratio', ratio + 'x ' + (dominaLongs ? 'más longs liq.' : 'más shorts liq.'), dominaLongs ? 'r' : 'g');
+  } else if(src === 'quiet'){
+    // Feed vivo, sin liquidaciones en la ventana = mercado tranquilo. Estado honesto, no error.
+    set('liq-total',  '📡 sin liq. recientes (1h)', 'a');
+    set('liq-longs',  '—', 'r');
+    set('liq-shorts', '—', 'g');
+    set('liq-ratio',  '— mercado tranquilo', 'a');
   } else {
-    // loadLiquidationsCoinglass siempre establece liquidationsReal — esto no debería ocurrir
-    set('liq-total',  '≈ calculando...', 'y');
-    set('liq-longs',  '≈ calculando...', 'r');
-    set('liq-shorts', '≈ calculando...', 'g');
-    set('liq-ratio',  '—', 'y');
+    // Feed caído / sin conexión → honesto, NO inventa
+    set('liq-total',  '⚠ feed liq. offline', 'a');
+    set('liq-longs',  '—', 'r');
+    set('liq-shorts', '—', 'g');
+    set('liq-ratio',  '—', 'a');
   }
-  set('liq-zone', `Long liq. < $${longLiqLevel} | Short liq. > $${shortLiqLevel}`, 'y');
+  set('liq-zone', `Proy. long < $${longLiqLevel} | Proy. short > $${shortLiqLevel}`, 'y');
   document.getElementById('liq-list').innerHTML =
-    `<div class="liq-row"><span style="color:var(--muted)">Cascada longs si:</span><span class="liq-long">< $${longLiqLevel}</span></div>` +
-    `<div class="liq-row"><span style="color:var(--muted)">Cascada shorts si:</span><span class="liq-short">> $${shortLiqLevel}</span></div>`;
+    `<div class="liq-row"><span style="color:var(--muted)">Cascada longs (proy.):</span><span class="liq-long">< $${longLiqLevel}</span></div>` +
+    `<div class="liq-row"><span style="color:var(--muted)">Cascada shorts (proy.):</span><span class="liq-short">> $${shortLiqLevel}</span></div>`;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -1733,15 +1745,8 @@ function startBinanceWS(){
       if(!d || !d.price) return;
       document.getElementById('wsdot').className = 'live'; // confirm live
       const price = parseFloat(d.price);
-      // Vol real del último tick si disponible, sino estimado conservador
-      const vol = 0.05; // base tick vol
-      const isBuy = price >= lastPrice;
-      const delta = isBuy ? vol : -vol;
-
-      if(lastPrice > 0){
-        cvd += delta;
-        if(isBuy) buyV += vol; else sellV += vol;
-      }
+      // Reactividad de precio en vivo (real). El CVD NO se toca acá: se deriva del
+      // taker volume real por vela en loadCandles. No inventamos volumen por tick.
       lastPrice = price;
       quote.c = price;
       if(!quote.h || price > quote.h) quote.h = price;
@@ -2623,54 +2628,223 @@ function updateZonesList(){
 // ═══════════════════════════════════════════════════════════
 // GEX PANEL
 // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// GEX / MAX PAIN REALES — Deribit (opciones BTC/ETH/SOL)
+// Una sola llamada trae OI/IV/precio por strike. La gamma se calcula con
+// Black-Scholes local. Para pares SIN opciones (XRP, etc.) → N/D honesto.
+// ═══════════════════════════════════════════════════════════
+let gexReal = null;        // {net, regime, callWall, putWall, zeroGamma, atmIV, ivReal, totalOIusd, spot, asof}
+let maxPainReal = null;    // {strike, expiryMs, asof}
+const DERIBIT_CCY = { 'BTCUSDT':'BTC', 'ETHUSDT':'ETH', 'SOLUSDT':'SOL' };
+const YEAR_MS = 365.25*24*3600*1000;
+const MONTHS = {JAN:0,FEB:1,MAR:2,APR:3,MAY:4,JUN:5,JUL:6,AUG:7,SEP:8,OCT:9,NOV:10,DEC:11};
+
+function normPdf(x){ return Math.exp(-x*x/2)/Math.sqrt(2*Math.PI); }
+function bsGamma(S,K,T,sigma,r){
+  if(S<=0||K<=0||T<=0||sigma<=0) return 0;
+  const d1 = (Math.log(S/K) + (r + sigma*sigma/2)*T) / (sigma*Math.sqrt(T));
+  return normPdf(d1) / (S*sigma*Math.sqrt(T));
+}
+// "BTC-27JUN25-60000-C" → {strike, type:'C'|'P', expiryMs}
+function parseDeribitName(name){
+  const p = name.split('-');
+  if(p.length < 4) return null;
+  const ds = p[1]; const m = ds.match(/^(\d{1,2})([A-Z]{3})(\d{2})$/);
+  if(!m) return null;
+  const day = +m[1], mon = MONTHS[m[2]], yr = 2000 + (+m[3]);
+  if(mon === undefined) return null;
+  const expiryMs = Date.UTC(yr, mon, day, 8, 0, 0); // Deribit expira 08:00 UTC
+  return { strike: parseFloat(p[2]), type: p[3], expiryMs };
+}
+
+async function loadGEXDeribit(){
+  const ccy = DERIBIT_CCY[sym];
+  if(!ccy){ gexReal = null; maxPainReal = null; return; }   // sin opciones → N/D
+  try{
+    const r = await fetch(`https://liquidmap-proxy.onrender.com/deribit?path=/api/v2/public/get_book_summary_by_currency&currency=${ccy}&kind=option`, {cache:'no-cache'});
+    if(!r.ok) throw new Error('HTTP '+r.status);
+    const j = await r.json();
+    const rows = j && j.result;
+    if(!Array.isArray(rows) || !rows.length) throw new Error('sin cadena');
+
+    const now = Date.now();
+    let spot = 0;
+    const opts = [];
+    for(const it of rows){
+      const oi = parseFloat(it.open_interest);
+      if(!isFinite(oi) || oi <= 0) continue;
+      const meta = parseDeribitName(it.instrument_name);
+      if(!meta) continue;
+      const T = (meta.expiryMs - now)/YEAR_MS;
+      if(T <= 0) continue;                                   // vencida
+      const S = parseFloat(it.underlying_price) || spot;
+      if(S > spot) spot = S;
+      const iv = parseFloat(it.mark_iv);
+      const r0 = parseFloat(it.interest_rate) || 0;
+      opts.push({ K:meta.strike, type:meta.type, expiryMs:meta.expiryMs, oi, S, iv, r:r0 });
+    }
+    if(!opts.length || spot <= 0) throw new Error('sin OI válido');
+
+    // IV: real si Deribit la manda; sino fallback por moneda (marcado ivReal=false)
+    const IV_FALLBACK = { BTC:0.55, ETH:0.65, SOL:0.90 };
+    let ivRealCount = 0;
+    for(const o of opts){
+      if(isFinite(o.iv) && o.iv > 0){ o.sigma = o.iv/100; ivRealCount++; }
+      else o.sigma = IV_FALLBACK[ccy] || 0.6;
+    }
+    const ivReal = ivRealCount > opts.length*0.5;
+
+    // GEX por strike (dollar gamma por 1% de movimiento). Calls +, Puts −.
+    const callOI = {}, putOI = {};
+    let net = 0, totalOIcoins = 0;
+    const gexAtS = (Scand) => {
+      let n = 0;
+      for(const o of opts){
+        const T = (o.expiryMs - now)/YEAR_MS; if(T<=0) continue;
+        const g = bsGamma(Scand, o.K, T, o.sigma, o.r);
+        const dg = g * o.oi * Scand*Scand * 0.01;
+        n += (o.type === 'C') ? dg : -dg;
+      }
+      return n;
+    };
+    for(const o of opts){
+      const T = (o.expiryMs - now)/YEAR_MS; if(T<=0) continue;
+      const g = bsGamma(spot, o.K, T, o.sigma, o.r);
+      const dg = g * o.oi * spot*spot * 0.01;
+      net += (o.type === 'C') ? dg : -dg;
+      totalOIcoins += o.oi;
+      if(o.type === 'C') callOI[o.K] = (callOI[o.K]||0) + o.oi;
+      else               putOI[o.K]  = (putOI[o.K] ||0) + o.oi;
+    }
+    // Walls = mayor OI por lado (resistencia arriba del precio, soporte abajo).
+    const topStrike = (obj, pred) => { let bk=null,bv=-1; for(const k in obj){ if((!pred||pred(+k)) && obj[k]>bv){bv=obj[k];bk=+k;} } return bk; };
+    const callWall = topStrike(callOI, k => k >= spot) ?? topStrike(callOI);
+    const putWall  = topStrike(putOI,  k => k <= spot) ?? topStrike(putOI);
+
+    // Zero gamma (flip): escaneo de spot candidato donde el net GEX cruza cero
+    let zeroGamma = null;
+    const lo = spot*0.80, hi = spot*1.20, steps = 24;
+    let prevS = lo, prevN = gexAtS(lo);
+    for(let i=1;i<=steps;i++){
+      const Sc = lo + (hi-lo)*i/steps; const n = gexAtS(Sc);
+      if((prevN <= 0 && n > 0) || (prevN >= 0 && n < 0)){
+        zeroGamma = prevS + (Sc-prevS) * (0-prevN)/(n-prevN);   // interpolación lineal
+        break;
+      }
+      prevS = Sc; prevN = n;
+    }
+
+    // ATM IV real: instrumento de strike más cercano al spot (vencimiento más próximo)
+    let atmIV = null, bestScore = Infinity;
+    for(const o of opts){
+      if(!(isFinite(o.iv) && o.iv>0)) continue;
+      const T = (o.expiryMs - now)/YEAR_MS;
+      const score = Math.abs(o.K - spot)/spot + T*0.5;        // cerca de ATM y de vencimiento
+      if(score < bestScore){ bestScore = score; atmIV = o.iv; }
+    }
+
+    gexReal = {
+      net, regime: net >= 0 ? 'pos' : 'neg',
+      callWall, putWall, zeroGamma,
+      atmIV, ivReal,
+      totalOIusd: totalOIcoins * spot,
+      spot, ccy, asof: now
+    };
+
+    // ── MAX PAIN real (vencimiento más cercano) ──
+    let nearestExp = Infinity;
+    for(const o of opts){ if(o.expiryMs < nearestExp) nearestExp = o.expiryMs; }
+    const expOpts = opts.filter(o => o.expiryMs === nearestExp);
+    const strikes = [...new Set(expOpts.map(o => o.K))].sort((a,b)=>a-b);
+    let mp = null, minPain = Infinity;
+    for(const St of strikes){
+      let pain = 0;
+      for(const o of expOpts){
+        pain += (o.type === 'C') ? o.oi*Math.max(0, St - o.K) : o.oi*Math.max(0, o.K - St);
+      }
+      if(pain < minPain){ minPain = pain; mp = St; }
+    }
+    maxPainReal = (mp != null) ? { strike: mp, expiryMs: nearestExp, asof: now } : null;
+
+  }catch(e){
+    console.warn('loadGEXDeribit('+ccy+'):', e.message);
+    gexReal = null; maxPainReal = null;   // honesto: sin dato real → N/D
+  }
+}
+
 function updateGEXPanel(price, vwap, sigma){
   if(!document.getElementById('gex-bar')) return;
+  const set = (id, v, cls) => { const e = document.getElementById(id); if(e){ e.textContent = v; if(cls !== undefined) e.className = 'vl ' + cls; } };
   const dec = price < 1 ? 5 : price < 100 ? 3 : price < 10000 ? 1 : 0;
-  // OJO: esto NO es GEX real. El GEX real necesita opciones (Deribit, solo BTC/ETH).
-  // Acá es un PROXY de posición vs VWAP — marcado como tal para no mentir.
-  const dist = (price - vwap) / Math.max(sigma, 1);
-  const gexPositive = Math.abs(dist) < 1.5; // cerca de VWAP = comportamiento de pinning
-  const gexNet = gexPositive ? '+' + (Math.abs(dist) < 0.5 ? 'ALTO' : 'MEDIO') : '-' + (Math.abs(dist) > 2 ? 'ALTO' : 'MEDIO');
-  const callW = (price * (1 + (ATR_MAP[sym]||0.025) * 0.8)).toFixed(dec);
-  const putW  = (price * (1 - (ATR_MAP[sym]||0.025) * 0.8)).toFixed(dec);
-  const zeroG = vwap.toFixed(dec);
-  const ivEst = ((ATR_MAP[sym]||0.025) * Math.sqrt(365) * 100).toFixed(1);
   const bar = document.getElementById('gex-bar');
-  bar.style.width = gexPositive ? '65%' : '35%';
-  bar.style.background = gexPositive ? 'var(--green)' : 'var(--red)';
-  set('gex-net', gexPositive ? '+ Long Gamma' : '- Short Gamma', gexPositive ? 'g' : 'r');
-  set('gex-iv', ivEst + '% IV est.', 'y');
-  set('gex-reg', gexPositive ? '✓ pinning · PROXY' : '⚠ expansión · PROXY', gexPositive ? 'g' : 'r');
-  set('gex-cw', '$'+callW, 'g');
-  set('gex-pw', '$'+putW, 'r');
-  set('gex-zg', '$'+zeroG, 'y');
-  document.getElementById('gex-explain').textContent = gexPositive
-    ? 'GEX positivo — precio cerca del VWAP/POC. Baja volatilidad. Institucionales vendiendo opciones. Rango lateral posible.'
-    : 'GEX negativo — precio lejos del VWAP. Alta volatilidad. Movimientos amplificados. Ideal compra de opciones direccional.';
+  const fmtB = v => { const a = Math.abs(v); return a >= 1e9 ? (v/1e9).toFixed(2)+'B' : a >= 1e6 ? (v/1e6).toFixed(0)+'M' : (v/1e3).toFixed(0)+'K'; };
+
+  if(gexReal){
+    const pos = gexReal.regime === 'pos';
+    if(bar){ bar.style.width = pos ? '65%' : '35%'; bar.style.background = pos ? 'var(--green)' : 'var(--red)'; }
+    set('gex-net', (pos?'+ Long Gamma':'- Short Gamma') + ' $' + fmtB(gexReal.net), pos?'g':'r');
+    set('gex-iv', gexReal.atmIV != null ? gexReal.atmIV.toFixed(1)+'% IV'+(gexReal.ivReal?'':' (est.)') : '—', 'y');
+    set('gex-reg', (pos?'✓ pinning':'⚠ expansión') + ' · Deribit', pos?'g':'r');
+    set('gex-cw', gexReal.callWall != null ? '$'+formatPrice(gexReal.callWall) : '—', 'g');
+    set('gex-pw', gexReal.putWall  != null ? '$'+formatPrice(gexReal.putWall)  : '—', 'r');
+    set('gex-zg', gexReal.zeroGamma != null ? '$'+formatPrice(gexReal.zeroGamma) : '—', 'y');
+    const aboveFlip = gexReal.zeroGamma != null && price > gexReal.zeroGamma;
+    document.getElementById('gex-explain').textContent = pos
+      ? `GEX positivo (Long Gamma, OI real Deribit $${fmtB(gexReal.totalOIusd)}). Dealers amortiguan: volatilidad comprimida, precio imantado a strikes/cero-gamma. Rango lateral más probable.`
+      : `GEX negativo (Short Gamma). Dealers amplifican el movimiento: volatilidad expandida${gexReal.zeroGamma!=null?`, ${aboveFlip?'sobre':'bajo'} el cero-gamma $${formatPrice(gexReal.zeroGamma)}`:''}. Movimientos direccionales más fuertes.`;
+  } else {
+    // Par sin mercado de opciones (o Deribit no respondió) → N/D honesto, NO proxy
+    if(bar){ bar.style.width = '0%'; }
+    set('gex-net', 'N/D', 'a');
+    set('gex-iv',  'N/D', 'a');
+    set('gex-reg', 'sin opciones', 'a');
+    set('gex-cw',  '—', 'a');
+    set('gex-pw',  '—', 'a');
+    set('gex-zg',  '—', 'a');
+    document.getElementById('gex-explain').textContent =
+      `GEX real requiere mercado de opciones. ${DERIBIT_CCY[sym] ? 'Deribit no respondió — reintentando.' : sym.replace('USDT','')+' no tiene opciones listadas (solo BTC/ETH/SOL). Sin dato real → N/D.'}`;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
 // MAX PAIN / PIVOT PANEL
 // ═══════════════════════════════════════════════════════════
 function updateMaxPainPanel(price){
-  // In crypto: Max Pain = nearest round psychological level
-  const dec = price < 1 ? 5 : price < 100 ? 3 : price < 10000 ? 1 : 0;
-  const step = price > 50000 ? 1000 : price > 10000 ? 500 : price > 1000 ? 100 : price > 100 ? 10 : price > 1 ? 1 : 0.1;
-  const mp = Math.round(price / step) * step;
-  const dist = ((price - mp) / price * 100);
-  const mpPct = vp ? Math.max(0, Math.min(1, (mp - vp.min) / (vp.max - vp.min))) : 0.5;
+  const set = (id, v, cls) => { const e = document.getElementById(id); if(e){ e.textContent = v; if(cls !== undefined) e.className = 'vl ' + cls; } };
   const ndEl = document.getElementById('mpnd');
   const lbEl = document.getElementById('mplb');
-  if(ndEl) ndEl.style.left = (mpPct*100)+'%';
-  if(lbEl){ lbEl.textContent = '$'+formatPrice(mp); lbEl.style.left = (mpPct*100)+'%'; }
-  // Nearest even rounder level above and below
-  const bigStep = step * 5;
-  const psychLevel = Math.round(price / bigStep) * bigStep;
-  set('mp-p', '$'+formatPrice(mp), 'y');
-  set('mp-d', (dist>=0?'+':'')+dist.toFixed(2)+'%', Math.abs(dist)<0.5?'r':Math.abs(dist)<1?'y':'g');
-  set('mp-pin', Math.abs(dist)<0.5?'⚠ ALTO':Math.abs(dist)<1.5?'MEDIO':'BAJO', Math.abs(dist)<0.5?'y':'');
-  set('mp-psych', '$'+formatPrice(psychLevel)+' (R. grande)', 'a');
-  document.getElementById('mp-explain').textContent = `Nivel redondo $${formatPrice(mp)} = máxima concentración de stops y órdenes. El precio gravita hacia él.`;
+
+  if(maxPainReal){
+    // MAX PAIN REAL (Deribit, vencimiento más cercano)
+    const mp = maxPainReal.strike;
+    const dist = ((price - mp) / price * 100);
+    const mpPct = vp ? Math.max(0, Math.min(1, (mp - vp.min) / (vp.max - vp.min))) : 0.5;
+    if(ndEl) ndEl.style.left = (mpPct*100)+'%';
+    if(lbEl){ lbEl.textContent = '$'+formatPrice(mp); lbEl.style.left = (mpPct*100)+'%'; }
+    const exp = new Date(maxPainReal.expiryMs);
+    const expStr = exp.getUTCDate()+' '+['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'][exp.getUTCMonth()];
+    set('mp-p', '$'+formatPrice(mp), 'y');
+    set('mp-d', (dist>=0?'+':'')+dist.toFixed(2)+'%', Math.abs(dist)<0.5?'r':Math.abs(dist)<1?'y':'g');
+    set('mp-pin', Math.abs(dist)<0.5?'⚠ ALTO':Math.abs(dist)<1.5?'MEDIO':'BAJO', Math.abs(dist)<0.5?'y':'');
+    set('mp-psych', 'Venc. '+expStr+' · Deribit', 'a');
+    document.getElementById('mp-explain').textContent =
+      `Max Pain REAL $${formatPrice(mp)} (venc. ${expStr}) = strike donde más opciones expiran sin valor. El precio tiende a gravitar ahí cerca del vencimiento.`;
+  } else {
+    // Sin opciones → nivel redondo psicológico, ETIQUETADO honesto (NO es Max Pain)
+    const step = price > 50000 ? 1000 : price > 10000 ? 500 : price > 1000 ? 100 : price > 100 ? 10 : price > 1 ? 1 : 0.1;
+    const mp = Math.round(price / step) * step;
+    const dist = ((price - mp) / price * 100);
+    const mpPct = vp ? Math.max(0, Math.min(1, (mp - vp.min) / (vp.max - vp.min))) : 0.5;
+    if(ndEl) ndEl.style.left = (mpPct*100)+'%';
+    if(lbEl){ lbEl.textContent = '$'+formatPrice(mp); lbEl.style.left = (mpPct*100)+'%'; }
+    const psychLevel = Math.round(price / (step*5)) * (step*5);
+    set('mp-p', '$'+formatPrice(mp)+' (redondo)', 'y');
+    set('mp-d', (dist>=0?'+':'')+dist.toFixed(2)+'%', Math.abs(dist)<0.5?'r':Math.abs(dist)<1?'y':'g');
+    set('mp-pin', Math.abs(dist)<0.5?'⚠ ALTO':Math.abs(dist)<1.5?'MEDIO':'BAJO', Math.abs(dist)<0.5?'y':'');
+    set('mp-psych', '$'+formatPrice(psychLevel)+' (R. grande)', 'a');
+    document.getElementById('mp-explain').textContent =
+      `Nivel redondo $${formatPrice(mp)} (no es Max Pain — ${sym.replace('USDT','')} sin opciones). Concentración de stops/órdenes; el precio suele gravitar a redondos.`;
+  }
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -2696,9 +2870,8 @@ function updateDarkPoolPanel(price){
   const timeStr = String(now.getUTCHours()).padStart(2,'0')+':'+String(now.getUTCMinutes()).padStart(2,'0')+' UTC';
   set('dp-last', 'Buscando ballenas... ' + timeStr, 'p');
   set('dp-price', '$' + instPrice + ' (POC inst.)', 'p');
-  // Vol OTC estimado REAL: ~25-30% del vol diario es OTC en crypto
-  const otcEst = ((quote.v || 0) * 0.27 / 1e6).toFixed(1);
-  set('dp-vol', '~$' + otcEst + 'M OTC est. 24h', 'p');
+  // OTC es off-exchange por definición — NO hay fuente real gratis. Honesto: N/D.
+  set('dp-vol', 'OTC: N/D (off-exchange)', 'a');
   set('dp-sent', cvdDir ? '▲ CVD Alcista' : '▼ CVD Bajista', cvdDir?'g':'r');
   set('dp-div', hasDivergence ? '⚠ DIVERGENCIA CVD/Precio — Señal' : '✓ CVD alineado con precio', hasDivergence?'y':'g');
 }
@@ -3265,6 +3438,7 @@ async function selectSym(s, btn){
   // Clear state
   sym = s; candles = []; zones = []; quote = {}; cvd = 0; buyV = 0; sellV = 0; lastPrice = 0;
   whales = []; structureEvents = []; oiHistory = []; lsRatioReal = null; liquidationsReal = null;
+  gexReal = null; maxPainReal = null; loadGEXDeribit();
   document.querySelectorAll('.sym-btn').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   // Stop polling
