@@ -402,9 +402,135 @@ app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString(), service: 'LiquidMap PRO v2' });
 });
 
+// ══════════════════════════════════════════════════════════════════
+// LIQUIDACIONES REALES — Binance Futures forceOrder (websocket, gratis)
+// ──────────────────────────────────────────────────────────────────
+// El navegador (US) tiene Binance futuros geobloqueado → el WS lo sostiene
+// ESTE proxy (Render Frankfurt), agrega en ventana rodante y lo expone por REST.
+// El stream manda solo la liquidación más grande por símbolo cada 1000ms (snapshot,
+// no cada evento) → es flujo REAL pero muestreado. Mejor que cualquier estimación.
+// forceOrder side: SELL = un LONG fue liquidado · BUY = un SHORT fue liquidado.
+// ══════════════════════════════════════════════════════════════════
+const LIQ_WINDOW_SEC = 3600;                 // 1h de memoria rodante
+const LIQ_MAX_EVENTS = 6000;                 // tope duro por símbolo (anti-leak)
+// URL configurable: si Binance cambia el ruteo del stream, se ajusta por env sin tocar código.
+const LIQ_WS_URL = process.env.LIQ_WS_URL || 'wss://fstream.binance.com/stream?streams=!forceOrder@arr';
+const LIQ_WS_OFF = /^(1|true|yes|on)$/i.test(process.env.LIQ_WS_OFF || '');
+
+const liqWindow = new Map();                 // symbol -> [{t, side:'long'|'short', usd}]
+let liqWsConnected = false;
+let liqLastEventTs = 0;
+let liqWsBackoff = 3000;
+
+function liqPrune(arr){
+  const cutoff = Date.now() - LIQ_WINDOW_SEC * 1000;
+  let i = 0; while (i < arr.length && arr[i].t < cutoff) i++;
+  if (i > 0) arr.splice(0, i);
+  if (arr.length > LIQ_MAX_EVENTS) arr.splice(0, arr.length - LIQ_MAX_EVENTS);
+}
+
+function liqHandleOrder(o){
+  if (!o || !o.s) return;
+  const sym = o.s;
+  const qty = parseFloat(o.q);
+  const px  = parseFloat(o.ap || o.p);       // precio promedio si está, sino precio
+  if (!isFinite(qty) || !isFinite(px)) return;
+  const usd = qty * px;
+  const side = o.S === 'SELL' ? 'long' : 'short';   // SELL liquida un LONG
+  const t = parseInt(o.T) || Date.now();
+  if (!liqWindow.has(sym)) liqWindow.set(sym, []);
+  const arr = liqWindow.get(sym);
+  arr.push({ t, side, usd });
+  liqPrune(arr);
+  liqLastEventTs = Date.now();
+}
+
+function connectLiqWS(){
+  if (LIQ_WS_OFF) { console.log('⚙️  LIQ_WS_OFF=1 — liquidaciones WS apagado.'); return; }
+  if (typeof WebSocket === 'undefined'){
+    console.error('❌ Liquidaciones: WebSocket global no disponible (Node <21). Endpoint dará ok:false honesto.');
+    return;
+  }
+  let ws;
+  try { ws = new WebSocket(LIQ_WS_URL); }
+  catch (e){ console.error('❌ Liq WS no abrió:', e.message); scheduleLiqReconnect(); return; }
+
+  ws.addEventListener('open', () => {
+    liqWsConnected = true; liqWsBackoff = 3000;
+    console.log('✅ Liquidaciones WS conectado →', LIQ_WS_URL);
+  });
+  ws.addEventListener('message', (ev) => {
+    try {
+      const msg = JSON.parse(typeof ev.data === 'string' ? ev.data : ev.data.toString());
+      // Combined stream: {stream, data:{e:'forceOrder', o:{...}}}  ·  raw: {e:'forceOrder', o:{...}}
+      const payload = msg.data || msg;
+      if (payload && payload.e === 'forceOrder' && payload.o) liqHandleOrder(payload.o);
+    } catch (e) { /* ignora frames no-JSON */ }
+  });
+  ws.addEventListener('close', () => { liqWsConnected = false; console.warn('⚠️  Liq WS cerrado — reconectando…'); scheduleLiqReconnect(); });
+  ws.addEventListener('error', (e) => { liqWsConnected = false; console.warn('⚠️  Liq WS error:', e && e.message ? e.message : 'unknown'); });
+}
+function scheduleLiqReconnect(){
+  setTimeout(connectLiqWS, liqWsBackoff);
+  liqWsBackoff = Math.min(liqWsBackoff * 1.6, 60000);   // backoff hasta 60s
+}
+
+// ── ENDPOINT: liquidaciones agregadas por símbolo ─────────────────
+app.get('/liquidations', (req, res) => {
+  const sym = (req.query.symbol || '').toUpperCase();
+  let win = parseInt(req.query.window) || LIQ_WINDOW_SEC;
+  win = Math.max(60, Math.min(win, LIQ_WINDOW_SEC));
+  if (!sym) return res.status(400).json({ ok:false, error:'missing symbol' });
+  const arr = liqWindow.get(sym) || [];
+  const cutoff = Date.now() - win * 1000;
+  let longUSD = 0, shortUSD = 0, count = 0, lastTs = 0;
+  for (const e of arr){
+    if (e.t < cutoff) continue;
+    if (e.side === 'long') longUSD += e.usd; else shortUSD += e.usd;
+    count++; if (e.t > lastTs) lastTs = e.t;
+  }
+  const totalUSD = longUSD + shortUSD;
+  res.json({
+    ok: true,
+    symbol: sym,
+    windowSec: win,
+    longUSD, shortUSD, totalUSD,
+    ratio: shortUSD > 0 ? +(longUSD / shortUSD).toFixed(2) : null,
+    count,
+    lastEventTs: lastTs || null,
+    wsConnected: liqWsConnected,
+    feedLastEventTs: liqLastEventTs || null,   // último evento de CUALQUIER símbolo (salud del feed)
+    serverTime: Date.now()
+  });
+});
+
+// ── PROXY DERIBIT (opciones reales — para GEX/MaxPain de BTC y ETH) ──
+// Deribit JSON-RPC REST público (sin auth para market data). El mapa pide
+// /deribit?path=/api/v2/public/get_book_summary_by_currency&currency=BTC&kind=option
+app.get('/deribit', async (req, res) => {
+  try {
+    const apiPath = req.query.path;
+    if (!apiPath || !apiPath.startsWith('/api/v2/public/'))
+      return res.status(400).json({ error: 'path inválido (solo /api/v2/public/)' });
+    const params = Object.entries(req.query)
+      .filter(([k]) => k !== 'path')
+      .map(([k, v]) => `${k}=${encodeURIComponent(v)}`)
+      .join('&');
+    const url = params ? `https://www.deribit.com${apiPath}?${params}` : `https://www.deribit.com${apiPath}`;
+    const r = await fetch(url, { headers: { 'Accept': 'application/json' }, timeout: 12000 });
+    const text = await r.text();
+    if (!r.ok) return res.status(502).json({ error:'deribit_unavailable', upstream_status:r.status, sample:text.slice(0,160) });
+    let data; try { data = JSON.parse(text); } catch(e){ return res.status(502).json({ error:'invalid_json', sample:text.slice(0,160) }); }
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ── START ─────────────────────────────────────────
 const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`LiquidMap PRO running on port ${PORT}`));
+app.listen(PORT, () => {
+  console.log(`LiquidMap PRO running on port ${PORT}`);
+  connectLiqWS();   // arranca el feed de liquidaciones (independiente de los bots)
+});
 
 // ── MONITORES (bots) ──────────────────────────────
 // Los bots (crypto + bolsa) comparten ESTE proceso con los mapas y el proxy.
