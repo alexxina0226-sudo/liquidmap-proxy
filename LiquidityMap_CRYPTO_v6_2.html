@@ -2757,12 +2757,20 @@ async function loadGEXDeribit(){
       spot, ccy, asof: now
     };
 
-    // ── MAX PAIN real — vencimiento con MAYOR OI (el que más imanta; comparable a Coinglass) ──
-    // (el más cercano suele ser el diario de hoy, con poco OI → daba ~spot y no cuadraba)
+    // ── MAX PAIN real — vencimiento CERCANO con OI real (lo accionable) ──
+    // Ni el diario que vence en horas (da ~spot), ni el trimestral lejano (da números
+    // muy alejados). Salteamos vencimientos a <2 días y tomamos el más cercano que tenga
+    // al menos 15% del OI del vencimiento más cargado. Si ninguno califica, el de mayor OI.
     const oiByExp = {};
     for(const o of opts){ oiByExp[o.expiryMs] = (oiByExp[o.expiryMs]||0) + o.oi; }
-    let domExp = null, domOI = -1;
-    for(const e in oiByExp){ if(oiByExp[e] > domOI){ domOI = oiByExp[e]; domExp = +e; } }
+    const maxExpOI = Math.max(...Object.values(oiByExp));
+    const cutoff = now + 2*86400e3;
+    const near = Object.keys(oiByExp).map(Number)
+      .filter(e => e >= cutoff && oiByExp[e] >= 0.15*maxExpOI)
+      .sort((a,b) => a-b);
+    const domExp = near.length
+      ? near[0]
+      : Object.keys(oiByExp).map(Number).sort((a,b) => oiByExp[b]-oiByExp[a])[0];
     const expOpts = opts.filter(o => o.expiryMs === domExp);
     const strikes = [...new Set(expOpts.map(o => o.K))].sort((a,b)=>a-b);
     let mp = null, minPain = Infinity;
