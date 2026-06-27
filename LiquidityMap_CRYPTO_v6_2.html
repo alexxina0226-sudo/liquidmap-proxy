@@ -2830,14 +2830,22 @@ function updateMaxPainPanel(price){
   const set = (id, v, cls) => { const e = document.getElementById(id); if(e){ e.textContent = v; if(cls !== undefined) e.className = 'vl ' + cls; } };
   const ndEl = document.getElementById('mpnd');
   const lbEl = document.getElementById('mplb');
+  // Posiciona la aguja en un rango CENTRADO en el precio, ancho suficiente para que
+  // el max pain siempre se vea (aguja entre 4% y 96%, nunca pegada al borde).
+  // Derecha = max pain por encima del precio · Izquierda = por debajo.
+  const placeNeedle = (mp) => {
+    const half = Math.max(Math.abs(mp - price), price * 0.04) * 1.35;
+    let pct = (mp - (price - half)) / (2 * half);
+    pct = Math.max(0.06, Math.min(0.90, pct)) * 100;
+    if(ndEl) ndEl.style.left = pct + '%';
+    if(lbEl){ lbEl.textContent = '$' + formatPrice(mp); lbEl.style.left = pct + '%'; }
+  };
 
   if(maxPainReal){
-    // MAX PAIN REAL (Deribit, vencimiento más cercano)
+    // MAX PAIN REAL (Deribit, vencimiento cercano con OI real)
     const mp = maxPainReal.strike;
     const dist = ((price - mp) / price * 100);
-    const mpPct = vp ? Math.max(0, Math.min(1, (mp - vp.min) / (vp.max - vp.min))) : 0.5;
-    if(ndEl) ndEl.style.left = (mpPct*100)+'%';
-    if(lbEl){ lbEl.textContent = '$'+formatPrice(mp); lbEl.style.left = (mpPct*100)+'%'; }
+    placeNeedle(mp);
     const exp = new Date(maxPainReal.expiryMs);
     const expStr = exp.getUTCDate()+' '+['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'][exp.getUTCMonth()];
     set('mp-p', '$'+formatPrice(mp), 'y');
@@ -2851,9 +2859,7 @@ function updateMaxPainPanel(price){
     const step = price > 50000 ? 1000 : price > 10000 ? 500 : price > 1000 ? 100 : price > 100 ? 10 : price > 1 ? 1 : 0.1;
     const mp = Math.round(price / step) * step;
     const dist = ((price - mp) / price * 100);
-    const mpPct = vp ? Math.max(0, Math.min(1, (mp - vp.min) / (vp.max - vp.min))) : 0.5;
-    if(ndEl) ndEl.style.left = (mpPct*100)+'%';
-    if(lbEl){ lbEl.textContent = '$'+formatPrice(mp); lbEl.style.left = (mpPct*100)+'%'; }
+    placeNeedle(mp);
     const psychLevel = Math.round(price / (step*5)) * (step*5);
     set('mp-p', '$'+formatPrice(mp)+' (redondo)', 'y');
     set('mp-d', (dist>=0?'+':'')+dist.toFixed(2)+'%', Math.abs(dist)<0.5?'r':Math.abs(dist)<1?'y':'g');
