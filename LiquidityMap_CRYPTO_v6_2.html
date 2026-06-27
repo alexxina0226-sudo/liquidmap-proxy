@@ -1803,7 +1803,7 @@ function startBinanceWS(){
           last.h = Math.max(last.h, price);
           last.l = Math.min(last.l, price);
         } else {
-          candles.push({ t:barTs, o:price, h:price, l:price, c:price, v:vol });
+          candles.push({ t:barTs, o:price, h:price, l:price, c:price, v:0, bv:0 });
           if(candles.length > 400) candles.shift();
           vp = buildVP(candles, 60);
           zones = buildZones(price);
@@ -2535,15 +2535,15 @@ function updateDerived(){
   set('bvol-v', bv, 'g'); set('svol-v', sv, 'r');
   const imb = ((bp - 50) / 50 * 100).toFixed(0);
   set('imb-v', (imb>=0?'+':'')+imb+'%', imb>=0?'g':'r');
+  const dec2 = p < 1 ? 5 : p < 100 ? 3 : p < 10000 ? 1 : 0;
   // Order Book REAL (profundidad L2 de Binance vía proxy)
   if(orderBookReal){
     const ob = orderBookReal;
-    const decob = p < 1 ? 5 : p < 100 ? 3 : p < 10000 ? 1 : 0;
     const fmtUsd = v => v>=1e6?(v/1e6).toFixed(2)+'M':v>=1e3?(v/1e3).toFixed(0)+'K':v.toFixed(0);
-    set('ob-bid', '$'+ob.bidWall.toFixed(decob)+' · '+fmtUsd(ob.bidWallUSD), 'g');
-    set('ob-ask', '$'+ob.askWall.toFixed(decob)+' · '+fmtUsd(ob.askWallUSD), 'r');
+    set('ob-bid', '$'+ob.bidWall.toFixed(dec2)+' · '+fmtUsd(ob.bidWallUSD), 'g');
+    set('ob-ask', '$'+ob.askWall.toFixed(dec2)+' · '+fmtUsd(ob.askWallUSD), 'r');
     set('ob-stop', '$'+fmtUsd(ob.depthUSD)+' (±100 niv.)', 'y');
-    set('ob-spread', '$'+ob.spread.toFixed(decob)+' ('+ob.spreadPct.toFixed(3)+'%)', 'a');
+    set('ob-spread', '$'+ob.spread.toFixed(dec2)+' ('+ob.spreadPct.toFixed(3)+'%)', 'a');
     const pp = ob.pressurePct;
     set('ob-pressure', (pp>55?'▲ Compra neta':pp<45?'▼ Venta neta':'⚖ Equilibrio')+' '+pp.toFixed(0)+'%', pp>55?'g':pp<45?'r':'y');
   } else {
@@ -2942,37 +2942,92 @@ function updateDarkPoolPanel(price){
 // ═══════════════════════════════════════════════════════════
 // ZONES & VOL PROFILE
 // ═══════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════
+// ZONAS — Detección REAL de Order Blocks y Fair Value Gaps por
+// timeframe. Corre sobre las velas REALES de cada TF (el activo +
+// los superiores cacheados en multiTFCache). Cada zona lleva su TF
+// VERDADERO y su tipo detectado — no asignado por antigüedad.
+// ═══════════════════════════════════════════════════════════
+function detectFVG(bars, atr){
+  // FVG = imbalance de 3 velas sin rellenar. Gap > 0.25*ATR.
+  const out = [];
+  for(let i = 0; i < bars.length-2; i++){
+    const a = bars[i], c = bars[i+2];
+    if(a.h < c.l && (c.l - a.h) > atr*0.25){            // alcista (demanda)
+      const m = (a.h + c.l)/2; let filled = false;
+      for(let j=i+3;j<bars.length;j++){ if(bars[j].l <= m){ filled = true; break; } }
+      if(!filled) out.push({ price:m, lo:a.h, hi:c.l, kind:'bull', idx:i });
+    }
+    if(a.l > c.h && (a.l - c.h) > atr*0.25){             // bajista (oferta)
+      const m = (a.l + c.h)/2; let filled = false;
+      for(let j=i+3;j<bars.length;j++){ if(bars[j].h >= m){ filled = true; break; } }
+      if(!filled) out.push({ price:m, lo:c.h, hi:a.l, kind:'bear', idx:i });
+    }
+  }
+  return out;
+}
+function detectOB(bars, atr){
+  // OB = última vela opuesta antes de un desplazamiento que rompe su rango.
+  const out = [];
+  for(let i = 1; i < bars.length-2; i++){
+    const ob = bars[i], nx = bars[i+1];
+    const down = ob.c < ob.o, up = ob.c > ob.o;
+    if(down && nx.c > ob.h && (nx.c - ob.l) > atr)       // OB alcista (demanda)
+      out.push({ price:(ob.h+ob.l)/2, lo:ob.l, hi:ob.h, kind:'bull', idx:i });
+    if(up && nx.c < ob.l && (ob.h - nx.c) > atr)         // OB bajista (oferta)
+      out.push({ price:(ob.h+ob.l)/2, lo:ob.l, hi:ob.h, kind:'bear', idx:i });
+  }
+  return out;
+}
+function detectSwings(bars){
+  // Swings = pivotes reales = pools de liquidez (donde se acumulan stops).
+  const out = [];
+  for(let i=2;i<bars.length-2;i++){
+    const b = bars[i];
+    if(b.h>=bars[i-1].h && b.h>=bars[i-2].h && b.h>=bars[i+1].h && b.h>=bars[i+2].h)
+      out.push({ price:b.h, kind:'high', idx:i });
+    if(b.l<=bars[i-1].l && b.l<=bars[i-2].l && b.l<=bars[i+1].l && b.l<=bars[i+2].l)
+      out.push({ price:b.l, kind:'low', idx:i });
+  }
+  return out;
+}
+
 function buildZones(mid){
   if(!candles.length || !mid) return [];
-  const z = [], tfs = ['15m','1h','4h','1D'], types = ['STOP','OB','FVG','EQH/EQL','SWING','POI'];
-  const bars = candles.slice(-150), mv = Math.max(...bars.map(b=>b.v||1));
-  for(let i = 2; i < bars.length-2; i++){
-    const b = bars[i], age = (bars.length-i)/bars.length;
-    const st = Math.min(1, 0.4 + (1-age)*0.5 + (b.v/mv)*0.2);
-    if(b.h >= bars[i-1].h && b.h >= bars[i-2].h && b.h >= bars[i+1].h && b.h >= bars[i+2].h){
-      // TF basado en posición en el historial: velas viejas = TF mayor
-      const agePct = i / bars.length;
-      const zTF = agePct < 0.25 ? '1D' : agePct < 0.50 ? '4h' : agePct < 0.75 ? '1h' : '15m';
-      // Tipo basado en la fuerza: fuerte=OB, medio=STOP, bajo=FVG
-      const zType = st > 0.75 ? 'OB' : st > 0.55 ? 'STOP' : 'FVG';
-      z.push({ price:b.h, strength:st, tf:zTF, type:zType, side:b.h>mid?'above':'below', width:4+st*40 });
-    }
-    if(b.l <= bars[i-1].l && b.l <= bars[i-2].l && b.l <= bars[i+1].l && b.l <= bars[i+2].l){
-      const agePct2 = i / bars.length;
-      const zTF2 = agePct2 < 0.25 ? '1D' : agePct2 < 0.50 ? '4h' : agePct2 < 0.75 ? '1h' : '15m';
-      const zType2 = st > 0.75 ? 'OB' : st > 0.55 ? 'STOP' : 'FVG';
-      z.push({ price:b.l, strength:st, tf:zTF2, type:zType2, side:b.l<mid?'below':'above', width:4+st*40 });
-    }
+  const out = [];
+  const TF_W = { '1m':0.45, '5m':0.6, '15m':0.7, '1h':0.85, '4h':1.0, '1d':1.1, '1D':1.1 };
+  // Fuentes = TF activo + TFs superiores cacheados (velas REALES)
+  const sources = [{ tf, bars: candles.slice(-150) }];
+  for(const utf of (TF_UPPER[tf] || [])){
+    const data = multiTFCache[utf];
+    if(data && Array.isArray(data.bars) && data.bars.length >= 5) sources.push({ tf:utf, bars:data.bars });
   }
-  // Round number zones (psych levels for crypto)
+  for(const { tf:ztf, bars } of sources){
+    if(bars.length < 5) continue;
+    const atr = calcRealATR(bars, 14) || mid*0.01;
+    const w = TF_W[ztf] || 0.7, n = bars.length;
+    const rec = idx => 0.80 + 0.20*(idx/n);              // zona reciente = más relevante
+    for(const z of detectOB(bars, atr))
+      out.push({ price:z.price, lo:z.lo, hi:z.hi, type:'OB', tf:ztf, kind:z.kind,
+                 side: z.price>mid?'above':'below', strength: Math.min(1,(0.55+0.35*w)*rec(z.idx)), width:6 });
+    for(const z of detectFVG(bars, atr))
+      out.push({ price:z.price, lo:z.lo, hi:z.hi, type:'FVG', tf:ztf, kind:z.kind,
+                 side: z.price>mid?'above':'below', strength: Math.min(1,(0.45+0.30*w)*rec(z.idx)), width:4 });
+    for(const z of detectSwings(bars))
+      out.push({ price:z.price, type:'SWING', tf:ztf, kind:z.kind,
+                 side: z.price>mid?'above':'below', strength: Math.min(0.9,(0.38+0.28*w)*rec(z.idx)), width:3 });
+  }
+  // Niveles redondos psicológicos — etiquetados PSY (honesto: no son OB ni liquidez real)
   const step = mid > 10000 ? 1000 : mid > 1000 ? 100 : mid > 100 ? 10 : mid > 1 ? 1 : 0.1;
-  const base = Math.round(mid / step) * step;
-  for(let i = -8; i <= 8; i++){
-    if(!i) continue;
-    const isRound = (i % 5 === 0);
-    if(isRound) z.push({ price: base + i*step, strength: 0.82, tf:'1D', type: 'OB', side:(base+i*step)>mid?'above':'below', width:20 });
+  const base = Math.round(mid/step)*step;
+  for(let i=-6;i<=6;i++){ if(!i || i%5!==0) continue;
+    out.push({ price: base+i*step, type:'PSY', tf:'—', side:(base+i*step)>mid?'above':'below', strength:0.6, width:10 });
   }
-  return z.sort((a,b) => b.price - a.price);
+  // Dedupe: niveles muy cercanos → se queda el de mayor strength
+  out.sort((a,b)=> b.strength - a.strength);
+  const kept = [], tol = mid*0.0015;
+  for(const z of out){ if(kept.some(k => Math.abs(k.price - z.price) < tol)) continue; kept.push(z); }
+  return kept.sort((a,b)=> b.price - a.price);
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3203,8 +3258,8 @@ function drawAll(){
     });
   }
 
-  // Order Blocks — solo los más fuertes, sin stop clusters de ruido
-  zones.filter(z => z.type==='OB' && z.strength > 0.75).slice(0, 4).forEach(z => {
+  // Order Blocks y FVG reales — solo los más fuertes/recientes, sin ruido
+  zones.filter(z => (z.type==='OB' || z.type==='FVG') && z.strength > 0.70).slice(0, 6).forEach(z => {
     const y = pY(z.price), h = Math.max(5, z.strength*10);
     ctx.fillStyle = z.side==='above' ? 'rgba(255,45,107,.06)' : 'rgba(0,255,157,.07)';
     ctx.fillRect(0, y-h, W*.20, h*2);
