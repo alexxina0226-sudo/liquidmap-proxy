@@ -142,6 +142,16 @@ function calcRealVWAP(candles) {
   };
 }
 
+// EMA del último valor — MISMO método que el mapa (seed SMA + recursión EMA).
+// Se usa para la referencia HTF (EMA200 sobre 4H) en la GUARDA HTF (opción B).
+function emaLast(vals, period) {
+  if (!vals || vals.length < period) return null;
+  const k = 2 / (period + 1);
+  let e = vals.slice(0, period).reduce((a, b) => a + b, 0) / period; // seed = SMA
+  for (let i = period; i < vals.length; i++) e = vals[i] * k + e * (1 - k);
+  return e;
+}
+
 // Detectar Kill Zone UTC — ventanas institucionales reales
 function getKillZone() {
   const h = new Date().getUTCHours();
@@ -961,6 +971,32 @@ async function scanTicker(ticker) {
     if (layersInDirection.size < 3) {
       console.log(`[${ticker}] Solo ${layersInDirection.size} capas concordantes — necesita mínimo 3`);
       return;
+    }
+
+    // REGLA 7 · GUARDA HTF (opción B) — contra la tendencia mayor solo con BOS ──
+    // Criterio de Gonzalo: el CHoCH marca cambio de carácter pero a menudo NO lo sigue
+    // un movimiento sostenido; el BOS sí trae continuación violenta/prolongada. Por eso una
+    // señal CONTRA el HTF (EMA200 4H) se permite SOLO si hay un BOS en su dirección. El CHoCH
+    // NO se descarta (sigue sumando al score), pero por sí solo no habilita un disparo
+    // contra la tendencia. Si no se puede calcular la EMA200 → NO silencia (no inventamos veto).
+    {
+      const ema200_4H = (candlesArc4H && candlesArc4H.length >= 200)
+        ? emaLast(candlesArc4H.map(c => c.c), 200)
+        : null;
+      if (ema200_4H != null) {
+        const againstHTF = (result.direction === 'BUY'  && price < ema200_4H) ||
+                           (result.direction === 'SELL' && price > ema200_4H);
+        if (againstHTF) {
+          const st = result.struct4H;
+          const bosInDir = !!st && st.type.includes('BOS') &&
+            ((result.direction === 'BUY'  && st.type.includes('BUY')) ||
+             (result.direction === 'SELL' && st.type.includes('SELL')));
+          if (!bosInDir) {
+            console.log(`[${ticker}] Contra HTF (EMA200 4H ${fmt(ema200_4H, price)}) sin BOS confirmando — solo CHoCH/sin estructura → silencio (REGLA 7 · opción B)`);
+            return;
+          }
+        }
+      }
     }
 
     // ── PASO 5: TODAS LAS REGLAS PASADAS → DISPARAR ───────
