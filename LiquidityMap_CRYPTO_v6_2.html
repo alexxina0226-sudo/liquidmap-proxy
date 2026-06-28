@@ -1348,8 +1348,12 @@ async function loadCandles(){
     if(quote.c && candles.length > 0){
       const last = candles[candles.length-1];
       last.c = quote.c;
-      if(quote.h) last.h = Math.max(last.h, quote.h);
-      if(quote.l) last.l = Math.min(last.l, quote.l);
+      // intra-vela honesto: la vela EN CURSO se estira solo con el PRECIO vivo (quote.c),
+      // NUNCA con el high/low de 24h. quote.h/quote.l son el rango de 24h → estiraban la
+      // última vela a una "monster candle" que inflaba el ATR y volvía pegajoso al SuperTrend
+      // (divergía del monitor). Mismo guard que ya pusimos en el mapa bolsa.
+      last.h = Math.max(last.h, quote.c);
+      last.l = Math.min(last.l, quote.c);
     }
     vp = buildVP(candles, 60);
     refreshVWAP();
@@ -3982,6 +3986,16 @@ async function runMonitorScan(){
         monFetch24h(s)
       ]);
       if(!bars || bars.length < 20) continue;
+
+      // SYNC con el mapa (loadCandles): la vela EN CURSO usa el precio vivo (q24.c),
+      // estirando h/l SOLO con ese precio. Así ST/POC/VWAP/estructura del monitor
+      // calculan sobre la misma última vela que el mapa → mismas direcciones.
+      if(q24 && q24.c){
+        const lb = bars[bars.length-1];
+        lb.c = q24.c;
+        lb.h = Math.max(lb.h, q24.c);
+        lb.l = Math.min(lb.l, q24.c);
+      }
 
       const price   = q24 ? q24.c : bars[bars.length-1].c;
       const vp      = monBuildVP(bars, 80);
