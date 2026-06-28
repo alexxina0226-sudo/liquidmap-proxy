@@ -2345,6 +2345,24 @@ function computeSignal(price) {
     { name: 'Ballena',    val: whaleDir ? 1.5 : 0, dir: whaleDir, usd: whaleUSD }
   ];
 
+  // ── GATE s39 · OPCIÓN C: data parcial Y contra el HTF completo → ESPERAR ──
+  // Vive ACÁ (única fuente de verdad) para que el DISPLAY y el BOT de Telegram lo honren
+  // IGUAL — un mapa en ESPERAR mientras el bot manda BUY sería mentirnos. No inventa: SUPRIME
+  // una dirección que el motor no banca (pocas capas vivas + contra MTF 4H Y contra EMA200 a la
+  // vez). El Governor solo capaba la calidad (badge); esto sí apaga la flecha y la alerta.
+  // Si falta data HTF (mtfBull/trendStr = null) NO colapsa → cero falsos ESPERAR.
+  if (type !== 'NEUTRAL') {
+    const _ctxC = computeCryptoContext(candles, price);
+    const _ds   = type === 'BUY' ? 1 : -1;
+    const _mtfAg = _ctxC.mtfBull  != null && ((_ds > 0 && _ctxC.mtfBull  === false) || (_ds < 0 && _ctxC.mtfBull  === true));
+    const _trAg  = _ctxC.trendStr != null && ((_ds > 0 && _ctxC.trendStr === false) || (_ds < 0 && _ctxC.trendStr === true));
+    const _live  = layers.filter(L => L && L.dir !== 0).length;
+    const _partial = layers.length > 0 && _live < Math.ceil(layers.length * 0.6); // mismo umbral que el Governor (0.6)
+    if (_partial && _mtfAg && _trAg) {
+      return { type: 'NEUTRAL', score: finalScore, conf, stDir: juezDir, stLine: stJuez.stLine, stStrength: stJuez.strength, layers,
+               collapsed: true, collapseReason: 'data parcial ' + _live + '/' + layers.length + ' + contra HTF (4H+EMA200)' };
+    }
+  }
   return { type, score: finalScore, conf, stDir: juezDir, stLine: stJuez.stLine, stStrength: stJuez.strength, layers };
 }
 
@@ -2484,7 +2502,8 @@ function updateDerived(){
   set('sig-kz', kzLabel, kzLabel !== '—' ? 'y' : '');
   set('sig-conf', sig.conf.join(' · '), 'a');
   const q = evalQuality(sig.score);
-  set('sig-quality', q.label, q.ok ? 'g' : 'r');
+  if(sig.collapsed){ set('sig-quality', '⏸ ESPERAR · '+sig.collapseReason, 'r'); }
+  else { set('sig-quality', q.label, q.ok ? 'g' : 'r'); }
   // ── CONTEXTO MÚSCULO (Pine v6.1): EMA200 · Zona ICT · MTF 4H — solo display ──
   const mctx = computeCryptoContext(candles, p);
   if(mctx.trendStr===null) set('ctx-ema','—','');
