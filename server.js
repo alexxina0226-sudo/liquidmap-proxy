@@ -308,6 +308,78 @@ const POLYGON_HEADERS = {
   'Accept-Encoding': 'identity',
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
 };
+// ── PROXY ALPACA (SIP real-time — reemplaza el delay 15min de Polygon/Massive) ──
+// El mapa de bolsa pide /alpaca?path=/v2/aggs/ticker/{SYM}/range/{MULT}/{SPAN}/{FROM}/{TO}
+// (MISMO formato que /polygon). Acá traducimos a la API de Alpaca y devolvemos las barras
+// con la MISMA forma que Polygon ({status:'OK', results:[{t(ms),o,h,l,c,v,vw,n}]}) para que
+// el mapa cambie UNA sola línea (POLY_PROXY → /alpaca) y todo su motor siga igual.
+// Las keys viven server-side (NUNCA viajan al navegador). feed=sip (requiere Algo Trader Plus).
+const ALPACA_KEY_ID  = process.env.ALPACA_KEY_ID  || '';
+const ALPACA_SECRET  = process.env.ALPACA_SECRET_KEY || '';
+const ALPACA_DATA    = process.env.ALPACA_DATA_BASE || 'https://data.alpaca.markets';
+const ALPACA_HEADERS = {
+  'Accept': 'application/json',
+  'Accept-Encoding': 'identity',
+  'APCA-API-KEY-ID': ALPACA_KEY_ID,
+  'APCA-API-SECRET-KEY': ALPACA_SECRET,
+};
+// mult+span (estilo Polygon) → timeframe de Alpaca: 4/hour→4Hour · 15/minute→15Min · 1/day→1Day
+function alpacaTF(mult, span) {
+  const unit = { minute: 'Min', hour: 'Hour', day: 'Day', week: 'Week', month: 'Month' }[String(span).toLowerCase()];
+  if (!unit) return null;
+  return `${mult}${unit}`;
+}
+// adjusted=true (Polygon) ≈ adjustment=split (Alpaca: ajusta precio/volumen por splits)
+app.get('/alpaca', async (req, res) => {
+  try {
+    if (!ALPACA_KEY_ID || !ALPACA_SECRET) {
+      return res.status(500).json({ status: 'ERROR', error: 'ALPACA_KEY_ID/ALPACA_SECRET_KEY no configuradas en el servidor (Render → Environment)' });
+    }
+    const apiPath = req.query.path || '';
+    // Parsear el path estilo Polygon: /v2/aggs/ticker/SYM/range/MULT/SPAN/FROM/TO
+    const m = apiPath.match(/^\/v2\/aggs\/ticker\/([^/]+)\/range\/([^/]+)\/([^/]+)\/([^/]+)\/([^/]+)/);
+    if (!m) return res.status(400).json({ status: 'ERROR', error: 'path inválido (esperado /v2/aggs/ticker/SYM/range/MULT/SPAN/FROM/TO)' });
+    const sym  = decodeURIComponent(m[1]).toUpperCase();
+    const mult = m[2], span = m[3], from = m[4], to = m[5];
+    const timeframe = alpacaTF(mult, span);
+    if (!timeframe) return res.status(400).json({ status: 'ERROR', error: `span no soportado: ${span}` });
+    const sort       = (req.query.sort === 'desc') ? 'desc' : 'asc';
+    const adjustment = (String(req.query.adjusted) === 'true') ? 'split' : 'raw';
+    const wantLimit  = Math.max(1, Math.min(parseInt(req.query.limit, 10) || 50000, 50000));
+
+    // Alpaca pagina (máx 10000/página) → acumulamos siguiendo next_page_token.
+    const out = [];
+    let pageToken = '';
+    for (let page = 0; page < 8; page++) {
+      const qs = new URLSearchParams({
+        timeframe, start: from, end: to, adjustment, feed: 'sip', sort,
+        limit: String(Math.min(10000, wantLimit - out.length)),
+      });
+      if (pageToken) qs.set('page_token', pageToken);
+      const url = `${ALPACA_DATA}/v2/stocks/${encodeURIComponent(sym)}/bars?${qs.toString()}`;
+      let r, text;
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        try { r = await fetch(url, { headers: ALPACA_HEADERS, timeout: 12000 }); text = await r.text(); break; }
+        catch (e) { if (attempt === 2) throw e; await new Promise(rs => setTimeout(rs, 400)); }
+      }
+      let data;
+      try { data = JSON.parse(text); }
+      catch (e) { return res.status(502).json({ status: 'ERROR', error: 'alpaca_invalid_json', upstream_status: r.status, sample: text.slice(0, 160) }); }
+      if (!r.ok) return res.status(r.status).json({ status: 'ERROR', error: data.message || 'alpaca_error', upstream_status: r.status });
+      const bars = Array.isArray(data.bars) ? data.bars : [];
+      for (const b of bars) {
+        // Alpaca: t = RFC-3339 string → ms (Polygon entrega ms). Resto de campos idénticos.
+        out.push({ t: new Date(b.t).getTime(), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0, vw: b.vw, n: b.n });
+      }
+      pageToken = data.next_page_token || '';
+      if (!pageToken || out.length >= wantLimit) break;
+    }
+    return res.json({ status: 'OK', ticker: sym, resultsCount: out.length, results: out });
+  } catch (e) {
+    res.status(500).json({ status: 'ERROR', error: e.message });
+  }
+});
+
 app.get('/polygon', async (req, res) => {
   try {
     if (!POLYGON_KEY) return res.status(500).json({ error: 'POLYGON_KEY no configurada en el servidor (Render → Environment)' });
@@ -413,6 +485,32 @@ app.get('/polygon-diag', async (req, res) => {
   }
   const winner = results.find(x => x.ok);
   res.json({ veredicto: winner ? `✅ FUNCIONA: ${winner.name}` : '❌ ninguna estrategia trajo data', node: process.version, results });
+});
+
+// ── DIAGNÓSTICO ALPACA ────────────────────────────
+// Abrí /alpaca-diag y leé el JSON: confirma que las keys + el SIP andan (sirve con mercado cerrado).
+//   ok:true  + bars>0          → keys + SIP OK (data histórica trae barras)
+//   ok:false + status:401/403  → keys mal / cuenta sin Algo Trader Plus
+//   ok:false + msg 'subscription' → falta el plan SIP en la cuenta de esas keys
+app.get('/alpaca-diag', async (req, res) => {
+  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return res.json({ ok: false, error: 'ALPACA_KEY_ID/ALPACA_SECRET_KEY no configuradas' });
+  const to   = new Date().toISOString().slice(0, 10);
+  const from = new Date(Date.now() - 10 * 86400000).toISOString().slice(0, 10);
+  const url  = `${ALPACA_DATA}/v2/stocks/SPY/bars?timeframe=1Day&start=${from}&end=${to}&feed=sip&adjustment=split&limit=10`;
+  const started = Date.now();
+  try {
+    const r    = await fetch(url, { headers: ALPACA_HEADERS, timeout: 12000 });
+    const text = await r.text();
+    let body; try { body = JSON.parse(text); } catch { body = null; }
+    const bars = body && Array.isArray(body.bars) ? body.bars.length : 0;
+    res.json({
+      veredicto: r.ok && bars > 0 ? `✅ FUNCIONA — SIP trae ${bars} barras de SPY` : '❌ revisar (ver status/sample)',
+      ok: r.ok && bars > 0, status: r.status, ms: Date.now() - started,
+      key: ALPACA_KEY_ID.slice(0, 4) + '…', bars,
+      last: bars ? body.bars[bars - 1] : null,
+      sample: text.slice(0, 200),
+    });
+  } catch (e) { res.json({ ok: false, error: e.message, ms: Date.now() - started }); }
 });
 
 // ── HEALTH CHECK ─────────────────────────────────
