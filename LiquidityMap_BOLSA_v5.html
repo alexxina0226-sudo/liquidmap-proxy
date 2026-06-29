@@ -562,7 +562,7 @@ function showChangePass(){
 
 // ── STATE ─────────────────────────────────────────────────────
 let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: única fuente (velas + precio)
-const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/polygon'; // #4: la key vive en el servidor (oculta). El mapa pide /polygon?path=...
+const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/alpaca'; // ALPACA SIP real-time (reemplaza /polygon delay 15min). El proxy /alpaca devuelve las barras con forma Polygon → el motor del mapa no cambia.
 let sym = 'SPY', tf = '60';
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
