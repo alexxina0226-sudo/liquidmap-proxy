@@ -183,10 +183,18 @@ function isDST(date) {
 
 // ── SESIÓN NY ────────────────────────────────────────────────
 function getNYSession() {
+  // ET REAL vía Intl(America/New_York) — correcto en CUALQUIER TZ de servidor.
+  // FIX sesión: el isDST() de abajo usaba getTimezoneOffset(), que en el contenedor
+  // UTC de Render daba SIEMPRE false → asumía -5 (invierno) en pleno verano (-4) →
+  // corría toda la hora ET 1h atrás: mostraba "Pre-Market" con mercado abierto y
+  // desfasaba Power Hour. Intl con America/New_York respeta el DST US solo. Una verdad.
+  // (mismo patrón que ya usa resampleSession4H / currentSessionCandles)
   const now      = new Date();
-  const etOffset = isDST(now) ? -4 : -5;
-  const etHour   = (now.getUTCHours() + etOffset + 24) % 24;
-  const etMin    = now.getUTCMinutes();
+  const _etP     = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York',
+    hour12: false, hour: '2-digit', minute: '2-digit' }).formatToParts(now);
+  const _getET   = t => parseInt(_etP.find(x => x.type === t).value, 10);
+  let etHour     = _getET('hour'); if (etHour === 24) etHour = 0;   // Intl puede dar 24 a medianoche
+  const etMin    = _getET('minute');
   const etTime   = etHour + etMin / 60;
 
   const marketOpen      = etTime >= 9.5  && etTime < 16;
