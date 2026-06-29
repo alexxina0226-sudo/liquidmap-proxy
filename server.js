@@ -317,6 +317,7 @@ const POLYGON_HEADERS = {
 const ALPACA_KEY_ID  = process.env.ALPACA_KEY_ID  || '';
 const ALPACA_SECRET  = process.env.ALPACA_SECRET_KEY || '';
 const ALPACA_DATA    = process.env.ALPACA_DATA_BASE || 'https://data.alpaca.markets';
+const ALPACA_TRADE   = process.env.ALPACA_TRADE_BASE || 'https://api.alpaca.markets'; // contracts/open-interest (trading API)
 const ALPACA_HEADERS = {
   'Accept': 'application/json',
   'Accept-Encoding': 'identity',
@@ -511,6 +512,66 @@ app.get('/alpaca-diag', async (req, res) => {
       sample: text.slice(0, 200),
     });
   } catch (e) { res.json({ ok: false, error: e.message, ms: Date.now() - started }); }
+});
+
+// ── DIAGNÓSTICO OPCIONES ALPACA (¿revive GEX / Max Pain REAL?) ──────
+// GEX = gamma × open interest por strike · Max Pain = open interest por strike.
+// Mide si TU plan trae las DOS piezas crudas (sin inventar nada):
+//   1) GREEKS+IV  → market data : /v1beta1/options/snapshots/{SYM}  (feed indicative|opra)
+//   2) OPEN INT.  → trading API : /v2/options/contracts?underlying_symbols={SYM}
+// Probá:  /alpaca-options-diag             (feed indicative, base live)
+//         /alpaca-options-diag?feed=opra   (real-time; requiere entitlement OPRA)
+//         /alpaca-options-diag?paper=1     (si tus keys son de paper trading)
+app.get('/alpaca-options-diag', async (req, res) => {
+  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return res.json({ ok: false, error: 'ALPACA_KEY_ID/ALPACA_SECRET_KEY no configuradas' });
+  const sym       = String(req.query.sym  || 'SPY').toUpperCase();
+  const feed      = String(req.query.feed || 'indicative');
+  const tradeBase = req.query.paper ? 'https://paper-api.alpaca.markets' : ALPACA_TRADE;
+  const started   = Date.now();
+  const out = { sym, feed, greeks: {}, openInterest: {} };
+
+  // 1) GREEKS + IV → gamma para el GEX
+  try {
+    const url = `${ALPACA_DATA}/v1beta1/options/snapshots/${encodeURIComponent(sym)}?feed=${encodeURIComponent(feed)}&limit=100`;
+    const r = await fetch(url, { headers: ALPACA_HEADERS, timeout: 12000 });
+    const text = await r.text();
+    let body; try { body = JSON.parse(text); } catch { body = null; }
+    const snaps = body && body.snapshots ? Object.entries(body.snapshots) : [];
+    const withGamma = snaps.filter(([, v]) => v && v.greeks && typeof v.greeks.gamma === 'number');
+    const ej = withGamma[0];
+    out.greeks = {
+      status: r.status, contratos: snaps.length, con_gamma: withGamma.length,
+      tiene_gamma: withGamma.length > 0,
+      ejemplo: ej ? { symbol: ej[0], gamma: ej[1].greeks.gamma, iv: ej[1].impliedVolatility } : null,
+      sample: text.slice(0, 180),
+    };
+  } catch (e) { out.greeks = { error: e.message }; }
+
+  // 2) OPEN INTEREST → Max Pain + ponderación del GEX
+  try {
+    const url = `${tradeBase}/v2/options/contracts?underlying_symbols=${encodeURIComponent(sym)}&limit=100`;
+    const r = await fetch(url, { headers: ALPACA_HEADERS, timeout: 12000 });
+    const text = await r.text();
+    let body; try { body = JSON.parse(text); } catch { body = null; }
+    const cs = body && Array.isArray(body.option_contracts) ? body.option_contracts : [];
+    const withOI = cs.filter(c => c && c.open_interest != null && c.open_interest !== '');
+    const ej = withOI[0];
+    out.openInterest = {
+      status: r.status, base: tradeBase.includes('paper') ? 'paper' : 'live',
+      contratos: cs.length, con_oi: withOI.length, tiene_oi: withOI.length > 0,
+      ejemplo: ej ? { symbol: ej.symbol, strike: ej.strike_price, open_interest: ej.open_interest, fecha: ej.open_interest_date } : null,
+      sample: text.slice(0, 180),
+    };
+  } catch (e) { out.openInterest = { error: e.message }; }
+
+  out.ms = Date.now() - started;
+  const g = out.greeks.tiene_gamma, oi = out.openInterest.tiene_oi;
+  out.veredicto = (g && oi) ? '✅ GEX/Max Pain CONSTRUIBLE — gamma + open interest reales disponibles'
+    : g  ? '🟡 PARCIAL — hay gamma pero falta open interest (probá ?paper=1 o revisá la cuenta)'
+    : oi ? '🟡 PARCIAL — hay open interest pero falta gamma (probá ?feed=opra)'
+    :      '❌ sin gamma ni open interest con este feed/plan (probá ?feed=opra y/o ?paper=1)';
+  out.ok = !!(g && oi);
+  res.json(out);
 });
 
 // ── HEALTH CHECK ─────────────────────────────────
