@@ -1,7 +1,7 @@
 const express = require('express');
 const fetch   = require('node-fetch');
 const path    = require('path');
-const optMetrics = require('./options_metrics'); // GEX (BS) + Max Pain reales
+const optLive    = require('./options_live');    // capa I/O reusable (server + bot): GEX (BS) + Max Pain reales
 const app     = express();
 
 // ── CORS ─────────────────────────────────────────
@@ -576,98 +576,20 @@ app.get('/alpaca-options-diag', async (req, res) => {
 });
 
 // ── GEX (Black-Scholes) + MAX PAIN REALES (Opción B, sin add-on pago) ──
-// Junta dato REAL de Alpaca con el motor de options_metrics.js:
+// Junta dato REAL de Alpaca con el motor (vía la capa options_live.js que también usa el bot).
 //   · subyacente S → SIP (trades/latest)
 //   · open interest + precio opción → contracts (paper) + snapshots (dailyBar)
 //   · gamma → BS sobre IV implícita de precios reales (NO sintético)
-// Probá:  /alpaca-options-metrics?sym=SPY
-//         ?exp=2026-07-17  (exp puntual)  ·  ?days=8  (ventana p/elegir la más cercana)
-//         ?band=0.12 (±% strikes alrededor del spot)  ·  ?live=1 (si las keys son live)
+// Probá:  /alpaca-options-metrics?sym=SPY            (mensual por defecto)
+//         ?mode=nearest (0DTE)  ·  ?exp=2026-07-17 (exp puntual)  ·  ?band=0.12
+//         ?live=1 (si las keys son live)  ·  ?fresh=1 (saltea la caché de 10min)
 app.get('/alpaca-options-metrics', async (req, res) => {
-  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return res.json({ ok: false, error: 'ALPACA_KEY_ID/ALPACA_SECRET_KEY no configuradas' });
-  const t0        = Date.now();
-  const sym       = String(req.query.sym  || 'SPY').toUpperCase();
-  const band      = Math.min(0.5, Math.max(0.02, Number(req.query.band) || 0.12));
-  const days      = Math.min(60, Math.max(1, Number(req.query.days) || 8));
-  const r         = Number(req.query.r) || 0.045;
-  const expReq    = req.query.exp ? String(req.query.exp) : null;
-  const tradeBase = req.query.live ? ALPACA_TRADE : 'https://paper-api.alpaca.markets'; // keys de paper por defecto
-  const diag      = {};
-  try {
-    // 1) Subyacente real (SIP)
-    let spot = null;
-    try {
-      const rs = await fetch(`${ALPACA_DATA}/v2/stocks/${encodeURIComponent(sym)}/trades/latest?feed=sip`, { headers: ALPACA_HEADERS, timeout: 10000 });
-      const jb = await rs.json();
-      spot = jb && jb.trade && Number(jb.trade.p) > 0 ? Number(jb.trade.p) : null;
-      diag.spot_status = rs.status;
-    } catch (e) { diag.spot_err = e.message; }
-    if (!(spot > 0)) return res.json({ ok: false, error: 'no se pudo leer el spot de ' + sym, diag, ms: Date.now() - t0 });
-
-    // 2) Contratos (OI + precio + exp) dentro de la ventana y banda de strikes
-    const today = new Date().toISOString().slice(0, 10);
-    const to    = new Date(Date.now() + days * 864e5).toISOString().slice(0, 10);
-    const lo    = (spot * (1 - band)).toFixed(2), hi = (spot * (1 + band)).toFixed(2);
-    let raw = [], pageToken = null, pages = 0;
-    do {
-      let url = `${tradeBase}/v2/options/contracts?underlying_symbols=${encodeURIComponent(sym)}&status=active`
-        + `&strike_price_gte=${lo}&strike_price_lte=${hi}&limit=10000`;
-      url += expReq ? `&expiration_date=${expReq}` : `&expiration_date_gte=${today}&expiration_date_lte=${to}`;
-      if (pageToken) url += `&page_token=${encodeURIComponent(pageToken)}`;
-      const rc = await fetch(url, { headers: ALPACA_HEADERS, timeout: 12000 });
-      diag.contracts_status = rc.status;
-      const jc = await rc.json();
-      if (Array.isArray(jc.option_contracts)) raw = raw.concat(jc.option_contracts);
-      pageToken = jc.next_page_token || null;
-    } while (pageToken && ++pages < 5);
-    if (!raw.length) return res.json({ ok: false, error: 'sin contratos (revisá ?live=1 o la banda/ventana)', diag, ms: Date.now() - t0 });
-
-    // 3) Expiración objetivo: la pedida, o la más cercana disponible
-    const expiration = expReq || raw.map(c => c.expiration_date).filter(Boolean).sort()[0];
-    const expSyms = raw.filter(c => c.expiration_date === expiration).map(c => c.symbol);
-
-    // 4) Precio de cada opción (dailyBar.c) vía snapshots por símbolo (lotes de 100)
-    const snapshots = {};
-    for (let i = 0; i < expSyms.length; i += 100) {
-      const csv = expSyms.slice(i, i + 100).join(',');
-      try {
-        const rsn = await fetch(`${ALPACA_DATA}/v1beta1/options/snapshots?symbols=${encodeURIComponent(csv)}&feed=indicative&limit=100`, { headers: ALPACA_HEADERS, timeout: 12000 });
-        diag.snapshots_status = rsn.status;
-        const js = await rsn.json();
-        if (js && js.snapshots) Object.assign(snapshots, js.snapshots);
-      } catch (e) { diag.snapshots_err = e.message; }
-    }
-
-    // 5) Motor: contratos → Max Pain (OI) + GEX (gamma BS)
-    const built = optMetrics.buildContracts({ rawContracts: raw, snapshots, spot, expiration, r, nowMs: Date.now() });
-    const mp  = optMetrics.computeMaxPain(built.oiContracts);
-    const gex = optMetrics.aggregateGEX(built.gammaContracts, spot);
-
-    const tabla = gex.rows
-      .sort((a, b) => Math.abs(b.netGEX) - Math.abs(a.netGEX)).slice(0, 12)
-      .map(x => ({ strike: x.strike, callOI: x.callOI, putOI: x.putOI, netGEX_MM: +(x.netGEX / 1e6).toFixed(2) }))
-      .sort((a, b) => a.strike - b.strike);
-
-    const haveGEX = built.coverage.con_iv > 0, haveMP = mp.maxPain != null;
-    res.json({
-      ok: !!(haveGEX && haveMP), sym, spot,
-      expiration, dias_a_exp: +(built.T * 365.25).toFixed(1), banda: band, r,
-      cobertura: built.coverage,
-      maxPain: mp.maxPain,
-      gex: haveGEX ? {
-        total_MM: +(gex.totalGEX / 1e6).toFixed(2),
-        regimen: gex.regime === 'LONG_GAMMA' ? 'LONG GAMMA (pin / baja vol)' : 'SHORT GAMMA (amplifica / alta vol)',
-        callWall: gex.callWall, putWall: gex.putWall, gammaFlip: gex.gammaFlip,
-      } : null,
-      tabla,
-      veredicto: (haveGEX && haveMP) ? '✅ GEX (BS real) + Max Pain calculados con dato real'
-        : haveMP ? '🟡 Max Pain OK, pero sin IV/gamma (revisá precios de opción)'
-        : '❌ sin datos suficientes (revisá ?live=1 / banda / ventana)',
-      ms: Date.now() - t0,
-    });
-  } catch (e) {
-    res.json({ ok: false, error: e.message, diag, ms: Date.now() - t0 });
-  }
+  const out = await optLive.getOptionsMetrics(req.query.sym, {
+    mode: req.query.mode, exp: req.query.exp, band: req.query.band,
+    days: req.query.days, r: req.query.r, live: req.query.live,
+    ttl: req.query.fresh ? 0 : undefined,
+  });
+  res.json(out);
 });
 
 // ── HEALTH CHECK ─────────────────────────────────

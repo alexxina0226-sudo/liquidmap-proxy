@@ -173,8 +173,30 @@ function buildContracts({ rawContracts, snapshots, spot, expiration, r, nowMs })
   return { T, oiContracts, gammaContracts, coverage: { total, con_oi, con_precio, con_iv } };
 }
 
+// ── Elige la expiración objetivo desde el payload crudo de contratos ──
+// mode 'nearest'  → la más próxima (>= hoy)         [0DTE en SPY]
+// mode 'monthly'  → la de MAYOR open interest total  [auto-encuentra la mensual,
+//                   que es la más líquida, sin depender del 3er-viernes]
+// Devuelve 'YYYY-MM-DD' o null. today = 'YYYY-MM-DD'.
+function pickExpiration(rawContracts, mode, today) {
+  const byExp = new Map();                           // exp → OI total
+  for (const c of rawContracts) {
+    const e = c.expiration_date;
+    if (!e || (today && e < today)) continue;
+    byExp.set(e, (byExp.get(e) || 0) + (Number(c.open_interest) || 0));
+  }
+  const exps = [...byExp.keys()].sort();
+  if (!exps.length) return null;
+  if (mode === 'monthly') {
+    let best = exps[0], bestOI = -1;
+    for (const e of exps) { const oi = byExp.get(e); if (oi > bestOI) { bestOI = oi; best = e; } }
+    return best;
+  }
+  return exps[0];                                    // 'nearest' por defecto
+}
+
 module.exports = {
   normPdf, normCdf, bsD1, bsPrice, bsGamma, impliedVol,
   computeMaxPain, aggregateGEX,
-  etCloseMs, yearsToExpiry, buildContracts,
+  etCloseMs, yearsToExpiry, buildContracts, pickExpiration,
 };
