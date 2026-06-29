@@ -50,6 +50,24 @@ const POLYGON_HEADERS      = {
   'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
 };
 
+// ── ALPACA SIP (reemplaza Polygon/Massive — real-time, sin delay 15min) ───────
+// Keys server-side (Render Environment). feed=sip requiere Algo Trader Plus.
+// Las funciones fetchPolygonCandles/fetchQuote conservan nombre/firma/forma de retorno;
+// solo cambia la FUENTE adentro → cero cambios en los llamadores. Revert = restaurar backup.
+const ALPACA_KEY_ID  = process.env.ALPACA_KEY_ID  || '';
+const ALPACA_SECRET  = process.env.ALPACA_SECRET_KEY || '';
+const ALPACA_DATA    = process.env.ALPACA_DATA_BASE || 'https://data.alpaca.markets';
+const ALPACA_HEADERS = {
+  'Accept': 'application/json',
+  'Accept-Encoding': 'identity',
+  'APCA-API-KEY-ID': ALPACA_KEY_ID,
+  'APCA-API-SECRET-KEY': ALPACA_SECRET,
+};
+function alpacaTF(mult, span) {
+  const unit = { minute: 'Min', hour: 'Hour', day: 'Day', week: 'Week', month: 'Month' }[String(span).toLowerCase()];
+  return unit ? `${mult}${unit}` : null;
+}
+
 const STOCK_TICKERS = [
   'SPY', 'QQQ', 'NVDA', 'AAPL', 'AMZN',
   'TSLA', 'MSFT', 'META', 'GOOG', 'AMD',
@@ -194,19 +212,34 @@ function getNYSession() {
   };
 }
 
-// ── FETCH VELAS · POLYGON (reales SIP) ───────────────────────
+// ── FETCH VELAS · ALPACA SIP (real-time) ───────────────────────
+// Conserva firma (symbol, mult, span, fromDays) y forma de retorno {t(ms),o,h,l,c,v}
+// del Polygon original → los llamadores (fetchCandles) no cambian. feed=sip · paginado.
 async function fetchPolygonCandles(symbol, mult, span, fromDays) {
-  if (!POLYGON_KEY) return [];
+  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return [];
+  const timeframe = alpacaTF(mult, span);
+  if (!timeframe) return [];
   try {
     const fmtDate = d => new Date(d).toISOString().slice(0, 10);
     const to   = fmtDate(Date.now());
     const from = fmtDate(Date.now() - fromDays * 86400000);
-    const url  = `${POLYGON_BASE}/v2/aggs/ticker/${symbol}/range/${mult}/${span}/${from}/${to}?adjusted=true&sort=asc&limit=50000&apiKey=${POLYGON_KEY}`;
-    const r = await fetch(url, { headers: POLYGON_HEADERS, timeout: 10000 });
-    const d = await r.json();
-    if (d.status === 'ERROR' || d.error || !d.results || !d.results.length) return [];
-    // Polygon ya entrega t en ms — el monitor trabaja en ms internamente
-    return d.results.map(b => ({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 }));
+    const out = [];
+    let pageToken = '';
+    for (let page = 0; page < 8; page++) {
+      const qs = new URLSearchParams({
+        timeframe, start: from, end: to, adjustment: 'split', feed: 'sip', sort: 'asc', limit: '10000',
+      });
+      if (pageToken) qs.set('page_token', pageToken);
+      const url = `${ALPACA_DATA}/v2/stocks/${encodeURIComponent(symbol)}/bars?${qs.toString()}`;
+      const r = await fetch(url, { headers: ALPACA_HEADERS, timeout: 12000 });
+      const d = await r.json();
+      if (!r.ok || d.error || d.message && !d.bars) return [];
+      const bars = Array.isArray(d.bars) ? d.bars : [];
+      for (const b of bars) out.push({ t: new Date(b.t).getTime(), o: b.o, h: b.h, l: b.l, c: b.c, v: b.v || 0 });
+      pageToken = d.next_page_token || '';
+      if (!pageToken) break;
+    }
+    return out;
   } catch { return []; }
 }
 
@@ -225,18 +258,17 @@ async function fetchCandles(symbol, tf) {
 }
 
 async function fetchQuote(symbol) {
-  if (!POLYGON_KEY) return null;
+  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return null;
   try {
-    // SIN snapshot (el plan Starter no lo autoriza → 401). Día actual + día previo
-    // desde aggregates diarios, autorizado por el plan. Fuente única: Polygon.
+    // Día actual + previo desde daily bars de Alpaca (sort=desc → [0]=más reciente, [1]=previo).
     const to   = new Date().toISOString().slice(0, 10);
     const from = new Date(Date.now() - 7 * 86400000).toISOString().slice(0, 10); // 7d cubre findes/feriados
-    const url  = `${POLYGON_BASE}/v2/aggs/ticker/${symbol}/range/1/day/${from}/${to}?adjusted=true&sort=desc&limit=2&apiKey=${POLYGON_KEY}`;
-    const r    = await fetch(url, { headers: POLYGON_HEADERS });
+    const url  = `${ALPACA_DATA}/v2/stocks/${encodeURIComponent(symbol)}/bars?timeframe=1Day&start=${from}&end=${to}&feed=sip&adjustment=split&sort=desc&limit=2`;
+    const r    = await fetch(url, { headers: ALPACA_HEADERS, timeout: 12000 });
     const j    = await r.json();
-    if (j.status === 'ERROR' || j.error || !j.results || !j.results.length) return null;
-    const dayBar  = j.results[0];                               // sesión más reciente
-    const prevBar = j.results.length > 1 ? j.results[1] : null; // día previo
+    if (!r.ok || j.error || !Array.isArray(j.bars) || !j.bars.length) return null;
+    const dayBar  = j.bars[0];                               // sesión más reciente (sort=desc)
+    const prevBar = j.bars.length > 1 ? j.bars[1] : null;    // día previo
     const live      = dayBar.c;
     const prevClose = prevBar ? prevBar.c : dayBar.o;
     if (!live) return null;
@@ -1048,12 +1080,12 @@ console.log('   TP/SL     : ESTRUCTURALES (POC/VWAP/VAH-VAL/pools/máx-mín/proy
 console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10 · SOLO capas reales`);
 console.log('   Anti-spam : 1 señal por vela 4H · cooldown roto solo por estructura NUEVA');
 console.log('   Bot       : @liquidmapbolsa_bot');
-console.log('   Velas     : POLYGON.IO (SIP real) · Quote: aggregates diarios · FUENTE ÚNICA');
+console.log('   Velas     : ALPACA SIP (real-time, sin delay 15min) · Quote: daily bars · FUENTE ÚNICA');
 
-if (!POLYGON_KEY) {
-  console.error('⚠️  FALTA POLYGON_KEY — agregá la env var en Render (Environment → Add). El monitor no leerá velas reales sin ella.');
+if (!ALPACA_KEY_ID || !ALPACA_SECRET) {
+  console.error('⚠️  FALTAN ALPACA_KEY_ID / ALPACA_SECRET_KEY — agregalas en Render (Environment). El monitor no leerá velas sin ellas.');
 } else {
-  console.log(`   Polygon   : ✅ key cargada (${POLYGON_KEY.slice(0,4)}…)`);
+  console.log(`   Alpaca    : ✅ keys cargadas (${ALPACA_KEY_ID.slice(0,4)}…) · feed=sip`);
 }
 
 runScan();
