@@ -107,12 +107,15 @@ function aggregateGEX(contracts, S) {
     if (callWall === null || r.callGEX > callWall.callGEX) callWall = r;
     if (putWall  === null || r.putGEX  > putWall.putGEX)   putWall  = r;
   }
-  // Gamma flip (aprox): strike donde el GEX acumulado cruza cero
-  let cum = 0, prevCum = 0, flip = null;
-  for (const r of rows) {
-    prevCum = cum; cum += r.netGEX;
-    if (flip === null && rows.length && ((prevCum <= 0 && cum > 0) || (prevCum >= 0 && cum < 0)) && prevCum !== 0) {
-      flip = r.strike;
+  // Gamma flip: strike donde el GEX POR STRIKE cruza de negativo a positivo,
+  // el más cercano al spot. Debajo del flip mandan los puts (short gamma / volátil);
+  // arriba mandan los calls (long gamma / pin). Útil incluso en mensuales put-heavy
+  // donde el acumulado no cruza dentro de la banda.
+  let flip = null, flipDist = Infinity;
+  for (let i = 1; i < rows.length; i++) {
+    if (rows[i - 1].netGEX < 0 && rows[i].netGEX >= 0) {
+      const lvl = rows[i].strike, d = Math.abs(lvl - S);
+      if (d < flipDist) { flipDist = d; flip = lvl; }
     }
   }
   return {

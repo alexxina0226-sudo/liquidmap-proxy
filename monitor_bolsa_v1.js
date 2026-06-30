@@ -35,6 +35,13 @@ let computeArc = null;
 try { computeArc = require('./arc_boswaves.js').computeArc; }
 catch (e) { console.log('⚠️ arc_boswaves.js no encontrado — CAPA 14 (Arco) desactivada. Subir arc_boswaves.js al repo para activarla.'); }
 
+// ── OPCIONES: GEX (Black-Scholes) + Max Pain REALES (capa compartida con server/mapa) ──
+// Misma capa que la ruta /alpaca-options-metrics → bot y mapa muestran lo MISMO.
+// Si options_live.js no está en el repo, el bot sigue mostrando N/D (no crashea).
+let getOptionsMetrics = null;
+try { getOptionsMetrics = require('./options_live.js').getOptionsMetrics; }
+catch (e) { console.log('⚠️ options_live.js no encontrado — GEX/Max Pain reales desactivados (muestra N/D). Subir options_live.js + options_metrics.js para activarlos.'); }
+
 // ── CONFIG ──────────────────────────────────────────────────
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
@@ -873,8 +880,16 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const structL   = result.struct4H   ? `\n🔷 ${result.struct4H.label} 4H` : '';
   const shLine    = result.sh4H       ? `\n🎯 Stop Hunt ${result.sh4H.type==='SH_BUY'?'alcista':'bajista'} 4H` : '';
   const dpLine    = '';  // Dark Pool desactivado (FASE 4)
+  const om = result.optMetrics;
+  const gexReal = om && om.ok && om.gex;
+  const gexInfo = gexReal
+    ? ` · GEX ${om.gex.regimeCode === 'LONG_GAMMA' ? '🟢 LONG (pin)' : '🔴 SHORT (volátil)'}`
+      + `\n🧱 Call Wall $${om.gex.callWall} · Put Wall $${om.gex.putWall}`
+      + (om.gex.gammaFlip ? ` · Flip $${om.gex.gammaFlip}` : '')
+      + `\n🎯 Max Pain $${om.maxPain} · exp ${om.expiration}`
+    : ' · GEX/MaxPain: N/D (opciones FASE 4)';
   const gexLine   = (result.gex && result.gex.volRegime && result.gex.volRegime !== 'N/D')
-    ? `\n📊 Volatilidad: ${result.gex.volRegime} · GEX/MaxPain: N/D (opciones FASE 4)`
+    ? `\n📊 Volatilidad: ${result.gex.volRegime}${gexInfo}`
     : '';
   const escHTML  = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const confList  = result.confluences.map(c => `  • ${escHTML(c)}`).join('\n');
@@ -1033,6 +1048,15 @@ async function scanTicker(ticker, session) {
     }
 
     console.log(`[${ticker}] ✅ SEÑAL BOLSA v6: ${result.direction} score=${result.score}/10`);
+
+    // GEX (BS) + Max Pain REALES (mensual, cacheado 10min). NUNCA bloquea la señal:
+    // si Alpaca/opciones fallan, optMetrics queda null y se muestra el N/D de siempre.
+    result.optMetrics = null;
+    if (getOptionsMetrics) {
+      try { result.optMetrics = await getOptionsMetrics(ticker, { mode: 'monthly' }); }
+      catch (e) { console.log(`[${ticker}] GEX/MaxPain no disponible (${e.message}) — señal sigue`); }
+    }
+
     await sendTelegram(buildMessage(ticker, price, result, session, quote, candles4H));
 
     s.lastSignalDir = result.direction;
