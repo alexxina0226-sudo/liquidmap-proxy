@@ -53,6 +53,12 @@ const MIN_SCORE = 6;
 // hasta que el mercado cambie de estructura
 const COOLDOWN_MS = 4 * 60 * 60 * 1000; // 4H
 
+// ANTI-FLOOD (fix SOL): el cooldown de 4H se rompe solo con un CHoCH NUEVO.
+// Un CHoCH cuenta como "nuevo" solo si cambió de dirección o si su nivel se movió
+// ≥ MIN_CHOCH_ATR_MULT × ATR respecto del último disparado. Normalizado por
+// volatilidad → SOL/DOGE/AVAX dejan de re-disparar por micro-giros; BTC igual que antes.
+const MIN_CHOCH_ATR_MULT = 0.5;   // subir = más estricto (menos señales) · bajar = más permisivo
+
 // Scan cada 5 min — pero solo dispara cuando hay calidad real
 const SCAN_INTERVAL = 5 * 60 * 1000;
 
@@ -66,7 +72,8 @@ function getState(ticker) {
       lastSignalDir: null,
       lastSignalTs: 0,
       lastSignalPrice: 0,
-      lastChochSig: null,
+      lastChochType: null,
+      lastChochLevel: null,
       lastStructure: 'NEUTRAL',
       lastCVDDir: 'neutral',
       lastOITrend: 'neutral',
@@ -106,6 +113,18 @@ function calcRealATR(candles, period = 14) {
     atr = atr * (period - 1) / period + trList[i] / period;
   }
   return atr;
+}
+
+// ── ANTI-FLOOD: ¿el CHoCH es GENUINAMENTE NUEVO? (normalizado por ATR) ──
+// El cooldown de 4H se rompe SOLO con un CHoCH nuevo. Antes cualquier cambio de
+// nivel (centavos) contaba → las cripto choppy re-disparaban. Ahora es "nuevo"
+// solo si cambió de tipo/dirección o si el nivel se movió ≥ mult×ATR del último.
+function isNewChochATR(chochType, chochLevel, lastType, lastLevel, atr, mult) {
+  if (!chochType) return false;                          // no hay CHoCH → no es "nuevo"
+  if (lastType == null || lastLevel == null) return true; // sin historial → cuenta como nuevo
+  if (chochType !== lastType) return true;               // cambió de dirección → nuevo real
+  const minMove = Math.max((atr > 0 ? atr : 0) * mult, 1e-9);  // epsilon: nivel idéntico nunca es "nuevo"
+  return Math.abs(chochLevel - lastLevel) >= minMove;    // mismo tipo: solo si el nivel se movió ≥ mult×ATR
 }
 
 function getATR(ticker, price, candles) {
@@ -929,10 +948,13 @@ async function scanTicker(ticker) {
 
     // Firma del CHoCH actual (tipo + nivel). Si es igual a la última disparada,
     // NO se considera nuevo → no rompe el cooldown.
-    const chochSig = (result.struct4H && result.struct4H.type.includes('CHOCH'))
-      ? `${result.struct4H.type}@${(result.struct4H.level || 0).toFixed(2)}`
-      : null;
-    const isNewChoch = chochSig !== null && chochSig !== s.lastChochSig;
+    // CHoCH actual (tipo + nivel). "Nuevo" (rompe cooldown) solo si cambió de dirección
+    // o el nivel se movió ≥ MIN_CHOCH_ATR_MULT×ATR → mata el re-disparo por micro-giros (fix SOL).
+    const chochNow    = (result.struct4H && result.struct4H.type.includes('CHOCH')) ? result.struct4H : null;
+    const chochType   = chochNow ? chochNow.type : null;
+    const chochLevel  = chochNow ? (chochNow.level || 0) : null;
+    const atrForChoch = (dynATR && dynATR > 0) ? dynATR : price * 0.01;   // fallback 1% si no hay ATR
+    const isNewChoch  = isNewChochATR(chochType, chochLevel, s.lastChochType, s.lastChochLevel, atrForChoch, MIN_CHOCH_ATR_MULT);
 
     const sameDir    = s.lastSignalDir === result.direction;
     const sameCandle = s.lastProcessedCandle4H === candle4HId;
@@ -1009,7 +1031,8 @@ async function scanTicker(ticker) {
     s.lastSignalDir = result.direction;
     s.lastSignalTs  = Date.now();
     s.lastSignalPrice = price;
-    s.lastChochSig  = chochSig;       // recuerda el CHoCH ya disparado (no repetir)
+    s.lastChochType  = chochType;    // tipo del CHoCH ya disparado (anti-flood ATR)
+    s.lastChochLevel = chochLevel;   // nivel del CHoCH ya disparado (anti-flood ATR)
     s.lastStructure = result.direction;
     s.lastCVDDir    = result.cvd4H.bullish ? 'positive' : result.cvd4H.bearish ? 'negative' : 'neutral';
     s.lastOITrend   = oiHistory?.trend || 'neutral';
