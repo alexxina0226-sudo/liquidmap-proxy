@@ -222,25 +222,11 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
   </div>
 </div>
 
-<!-- SETUP SCREEN -->
-<div id="setup-screen" class="hidden">
-  <div class="setup-box">
-    <h1>CONFIGURAR POLYGON.IO</h1>
-    <p>Pega tu API Key de Polygon.io (plan Stocks Starter) para datos de mercado <b>reales</b> — velas SIP del 100% del volumen US.</p>
-    <div class="step"><div class="step-n">1</div><div class="step-t">Entra a <a href="https://polygon.io/dashboard/keys" target="_blank">polygon.io/dashboard/keys</a></div></div>
-    <div class="step"><div class="step-n">2</div><div class="step-t">Copia tu <code>API Key</code> (plan Acciones Starter activo)</div></div>
-    <div class="step"><div class="step-n">3</div><div class="step-t">Pégala abajo y conecta. Se guarda solo en tu navegador.</div></div>
-    <div class="setup-row">
-      <input class="setup-input" id="api-input" placeholder="tu-api-key-polygon" autocomplete="off">
-      <button class="setup-btn" id="conn-btn" onclick="doConnect()">CONECTAR</button>
-    </div>
-    <div id="setup-msg"></div>
-  </div>
-</div>
+<!-- SETUP SCREEN legacy de Polygon RETIRADO (la key vive server-side / Alpaca; ya no se pide en el navegador) -->
 
 <!-- TOPBAR -->
 <div id="topbar">
-  <div class="logo">LIQUIDMAP <span>PRO v7 · POLYGON</span></div>
+  <div class="logo">LIQUIDMAP <span>PRO v7 · ALPACA SIP</span></div>
   <div class="vsep"></div>
   <div id="sym-bar" style="display:flex;gap:3px;flex-wrap:wrap;">
     <button class="sym-btn active" data-sym="SPY" onclick="selectSym('SPY',this)">SPY</button>
@@ -318,6 +304,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
   <div class="leg"><div class="ldot" style="background:#ff9500;height:2px;width:14px"></div>🌀 Arco ↑</div>
   <div class="leg"><div class="ldot" style="background:#3d7dff;height:2px;width:14px"></div>🌀 Arco ↓</div>
   <div class="leg"><div class="ldot" style="background:#00ff9d;height:2px;width:14px"></div>Value Area (VAH/VAL)</div>
+  <div class="leg"><div class="ldot" style="background:#b44dff;height:2px;width:14px"></div>Paredes GEX (opciones)</div>
   <div class="leg"><span style="color:#00ff9d;font-size:9px">━</span> BOS</div>
   <div class="leg"><span style="color:#ff2d6b;font-size:9px">┅</span> CHoCH</div>
 </div>
@@ -435,6 +422,17 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div style="margin-top:4px;font-size:8px;color:var(--muted)">Equal highs/lows = stops acumulados (imán de precio)</div>
     </div>
 
+    <!-- GEX / MAX PAIN (opciones reales, Black-Scholes; misma ruta que el bot) -->
+    <div class="ps">
+      <h3>🎯 GEX / Max Pain <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· OPCIONES (BS real)</span></h3>
+      <div class="mr"><span class="lb">Régimen GEX</span><span class="vl" id="opt-reg">—</span></div>
+      <div class="mr"><span class="lb">Call Wall</span><span class="vl g" id="opt-cw">—</span></div>
+      <div class="mr"><span class="lb">Put Wall</span><span class="vl r" id="opt-pw">—</span></div>
+      <div class="mr"><span class="lb">Gamma Flip</span><span class="vl p" id="opt-flip">—</span></div>
+      <div class="mr"><span class="lb">Max Pain</span><span class="vl y" id="opt-mp">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted);line-height:1.5" id="opt-note">—</div>
+    </div>
+
     <!-- FLUJO & BALLENAS (RVOL real + capas que se activan con Developer $79) -->
     <div class="ps">
       <h3>🐋 Flujo &amp; Ballenas</h3>
@@ -492,7 +490,6 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <div class="ps">
       <h3>⚙ Config</h3>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
-        <button onclick="resetAPI()" style="flex:1;padding:4px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:3px;cursor:pointer;font-size:9px;">🔑 API Key</button>
         <button onclick="showChangePass()" style="flex:1;padding:4px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:3px;cursor:pointer;font-size:9px;">🔒 Pass</button>
       </div>
     </div>
@@ -564,6 +561,8 @@ function showChangePass(){
 let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: única fuente (velas + precio)
 const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/alpaca'; // ALPACA SIP real-time (reemplaza /polygon delay 15min). El proxy /alpaca devuelve las barras con forma Polygon → el motor del mapa no cambia.
 let sym = 'SPY', tf = '60';
+const OPT_METRICS_URL = POLY_PROXY.replace('/alpaca', '/alpaca-options-metrics'); // GEX/Max Pain reales (misma capa que el bot → coherencia total)
+let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si la ruta falla → degradación segura
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
 let vpBars = [];   // ROOT #5: fuente de VWAP/POC. En 4H = velas de 1H (sesión); en el resto = candles.
@@ -1171,29 +1170,8 @@ function renderConfMeter(sig){
   }).join('');
 }
 
-// ── SETUP ─────────────────────────────────────────────────────
-function showSetup(){ document.getElementById('setup-screen').classList.remove('hidden'); }
-function hideSetup(){ document.getElementById('setup-screen').classList.add('hidden'); }
-function resetAPI(){ localStorage.removeItem('poly_key'); POLY_KEY=''; showSetup(); }
-function initAfterLock(){ POLY_KEY = 'server-side'; try{ localStorage.removeItem('poly_key'); }catch(e){} initApp(); } // #4: la key vive en el servidor; el navegador ya no la necesita ni la guarda
-
-async function doConnect(){
-  const key = document.getElementById('api-input').value.trim();
-  const msg = document.getElementById('setup-msg'), btn = document.getElementById('conn-btn');
-  if(!key || key.length < 8){ msg.textContent='❌ API Key inválida'; msg.className='err'; return; }
-  msg.textContent='⟳ Verificando con Polygon...'; msg.className='ok'; btn.disabled=true; setBar(30);
-  try{
-    const r = await fetch(`https://api.polygon.io/v2/aggs/ticker/SPY/prev?adjusted=true&apiKey=${key}`);
-    const d = await r.json();
-    const ok = (d.status==='OK' || d.status==='DELAYED' || (Array.isArray(d.results) && d.results.length));
-    if(!ok || d.error) throw new Error(d.error||d.message||'bad');
-    POLY_KEY = key; localStorage.setItem('poly_key', key);
-    setBar(80); hideSetup(); await initApp(); setBar(0);
-  } catch(e){
-    msg.textContent='❌ Key inválida o sin plan Acciones (Stocks). Verifica en polygon.io/dashboard'; msg.className='err'; btn.disabled=false; setBar(0);
-  }
-}
-function setBar(p){ document.getElementById('lbar').style.width = p+'%'; }
+// ── LOCK → INIT (key server-side; setup legacy de Polygon retirado) ────────────
+function initAfterLock(){ POLY_KEY = 'server-side'; try{ localStorage.removeItem('poly_key'); }catch(e){} initApp(); } // la key vive en el servidor (Alpaca); el navegador ya no la necesita ni la guarda
 
 // ── INIT APP ─────────────────────────────────────────────────
 async function initApp(){
@@ -1214,7 +1192,7 @@ async function initApp(){
   startTicker();
   setInterval(updateClock, 1000);
   setInterval(updateMktStatus, 5000);
-  setInterval(async () => { await loadCandles(); recomputeIndicators(); drawAll(); updatePanels(); }, 60000);
+  setInterval(async () => { await loadCandles(); await loadOptionsMetrics(); recomputeIndicators(); drawAll(); updatePanels(); }, 60000);
   setInterval(loadQuote, 8000);  // refresca precio/día desde aggregates Polygon
   setInterval(() => { if(candles.length > 0){ recomputeIndicators(); drawAll(); updatePanels(); } }, 5000);
   updateClock(); updateMktStatus();
@@ -1223,7 +1201,16 @@ async function initApp(){
 }
 
 // ── DATA ──────────────────────────────────────────────────────
-async function loadAll(){ await loadQuote(); drawAll(); await loadCandles(); recomputeIndicators(); updatePanels(); drawAll(); }
+// ── OPCIONES REALES (GEX / Max Pain, BS) · misma ruta que el bot ──────────────
+async function loadOptionsMetrics(){
+  try {
+    const r = await fetch(`${OPT_METRICS_URL}?sym=${encodeURIComponent(sym)}`);
+    const j = await r.json();
+    optMetrics = (j && j.ok) ? j : null;   // ok=false (ticker sin cadena) → null limpio
+  } catch(e){ optMetrics = null; }         // falla de red → null, el mapa sigue andando igual
+}
+
+async function loadAll(){ await loadQuote(); drawAll(); await loadCandles(); await loadOptionsMetrics(); recomputeIndicators(); updatePanels(); drawAll(); }
 
 async function loadQuote(){
   if(!POLY_KEY) return;
@@ -1285,7 +1272,7 @@ async function loadQuote(){
   } catch(e){ console.warn('loadQuote error:', e); }
 }
 
-// ── VELAS REALES · POLYGON.IO (sin nada sintético) ────────────
+// ── VELAS REALES · ALPACA SIP (vía proxy /alpaca; sin nada sintético) ────────────
 // TF → config de aggregates Polygon. El 4H es nativo (mult 4 / hour).
 function tfToPolygon(t){
   return ({
@@ -1567,7 +1554,26 @@ function toggleAlertModal(){ const m=document.getElementById('alert-modal'); m.c
 function toggleAL(el){ el.classList.toggle('on'); const id=el.id.replace('al-',''); alertCfg[id]=el.classList.contains('on'); }
 
 // ── PANELS ────────────────────────────────────────────────────
-function updatePanels(){ updateQuotePanel(); updateDerived(); updateVP(); updateZonesList(); updateCandleList(); }
+function updatePanels(){ updateQuotePanel(); updateDerived(); updateVP(); updateZonesList(); updateCandleList(); updateOptionsPanel(); }
+
+// Panel GEX / Max Pain — se puebla con optMetrics (real). Si no hay dato → todo en "—".
+function updateOptionsPanel(){
+  const o = optMetrics;
+  const S = id => document.getElementById(id);
+  const money = v => (v==null||!isFinite(v)) ? '—' : '$'+(+v).toFixed(2);
+  if(!o || !o.ok || !o.gex){
+    ['opt-reg','opt-cw','opt-pw','opt-flip','opt-mp'].forEach(k=>{ const e=S(k); if(e) e.textContent='—'; });
+    const n=S('opt-note'); if(n) n.textContent='Sin datos de opciones (ticker sin cadena o ruta caída).';
+    return;
+  }
+  const long = o.gex.regimeCode === 'LONG_GAMMA';
+  const reg=S('opt-reg'); if(reg){ reg.textContent = long ? '🟢 LONG (pin)' : '🔴 SHORT (volátil)'; reg.className = 'vl '+(long?'g':'r'); }
+  if(S('opt-cw'))   S('opt-cw').textContent   = money(o.gex.callWall);
+  if(S('opt-pw'))   S('opt-pw').textContent   = money(o.gex.putWall);
+  if(S('opt-flip')) S('opt-flip').textContent = o.gex.gammaFlip ? money(o.gex.gammaFlip) : '—';
+  if(S('opt-mp'))   S('opt-mp').textContent   = money(o.maxPain);
+  if(S('opt-note')) S('opt-note').textContent = `exp ${o.expiration} · GEX ${o.gex.total_MM} MM · ${o.dias_a_exp}d`;
+}
 
 function updateQuotePanel(){
   const d=quote; if(!d||!d.c) return;
@@ -1957,8 +1963,26 @@ function drawAll(){
     if(s>0.75){ ctx.fillStyle=col+'0.65)'; ctx.font='8px Space Mono,monospace'; ctx.fillText('$'+z.price.toFixed(2),4,y-3); }
   });
 
-  // GEX walls / Dark Pool prints: ELIMINADOS — requieren cadena de opciones y trades
-  // reales (add-on opciones Polygon, FASE 4). No se dibujan niveles inventados.
+  // GEX walls / Max Pain / Gamma Flip — OPCIONES REALES (BS, /alpaca-options-metrics).
+  // Solo se dibujan si hay dato real y si el nivel cae dentro del rango visible. Nunca inventa.
+  if(optMetrics && optMetrics.ok && optMetrics.gex){
+    const walls = [
+      {p:optMetrics.gex.callWall,  c:'#00ff9d', t:'CALL WALL'},  // resistencia gamma
+      {p:optMetrics.gex.putWall,   c:'#ff2d6b', t:'PUT WALL'},   // soporte gamma
+      {p:optMetrics.maxPain,       c:'#ffe000', t:'MAX PAIN'},   // imán de precio
+      {p:optMetrics.gex.gammaFlip, c:'#b44dff', t:'γ FLIP'},     // divisoria de régimen
+    ];
+    for(const w of walls){
+      if(w.p==null || !isFinite(w.p)) continue;
+      const y=pY(w.p); if(y<0||y>H) continue;
+      ctx.save();
+      ctx.strokeStyle=w.c; ctx.globalAlpha=.55; ctx.setLineDash([5,4]); ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W-63,y); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1; ctx.fillStyle=w.c; ctx.font='9px Space Mono,monospace';
+      ctx.fillText(`${w.t} $${(+w.p).toFixed(2)}`, 4, y-2);
+      ctx.restore();
+    }
+  }
 
   // Volume Profile
   if(vp){
