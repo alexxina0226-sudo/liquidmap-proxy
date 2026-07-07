@@ -277,8 +277,10 @@ async function fetchLSRatio(symbol) {
 }
 
 // ── CAPA 1: VOLUME PROFILE → POC + VALUE AREA ──────────────
-// Idéntico al mapa HTML — base del análisis institucional
-function buildVolumeProfile(candles, bins = 100) {
+// Idéntico al mapa HTML — base del análisis institucional.
+// bins = 60 para COINCIDIR con el mapa crypto (HTML ~3745) → POC/VAH/VAL
+// iguales map↔monitor. Antes era 100 y divergía (FUGA E medida en fotos).
+function buildVolumeProfile(candles, bins = 60) {
   const mn = Math.min(...candles.map(c => c.l));
   const mx = Math.max(...candles.map(c => c.h));
   if (mx <= mn) return null;
@@ -906,7 +908,7 @@ async function scanTicker(ticker) {
     } catch (e) { console.error(`[${ticker}] ARCO flip error:`, e.message); }
 
     // ── PASO 2: Volume Profile sobre 4H ──────────────────
-    const vp     = buildVolumeProfile(candles4H, 100);
+    const vp     = buildVolumeProfile(candles4H, 60);  // 60 = igual que el mapa (coherencia POC/VAH/VAL)
     const vwapData = calcRealVWAP(candles4H.slice(-80));
     const dynATR   = calcRealATR(candles4H, 14);
 
