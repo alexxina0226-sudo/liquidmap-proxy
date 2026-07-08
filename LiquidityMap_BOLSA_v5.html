@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>LiquidityMap PRO v7 — Neuronal Institucional</title>
+<title>LiquidityMap PRO v6 — Neuronal Institucional</title>
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CjxyZWN0IHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgcng9IjYiIGZpbGw9IiMwMjA0MGMiLz4KPHJlY3QgeD0iNSIgeT0iMTgiIHdpZHRoPSIzIiBoZWlnaHQ9IjkiIHJ4PSIxIiBmaWxsPSIjMDBlNWZmIi8+CjxyZWN0IHg9IjExIiB5PSIxMyIgd2lkdGg9IjMiIGhlaWdodD0iMTQiIHJ4PSIxIiBmaWxsPSIjMDBmZjlkIi8+CjxyZWN0IHg9IjE3IiB5PSI4IiB3aWR0aD0iMyIgaGVpZ2h0PSIxOSIgcng9IjEiIGZpbGw9IiMwMGZmOWQiLz4KPHJlY3QgeD0iMjMiIHk9IjE0IiB3aWR0aD0iMyIgaGVpZ2h0PSIxMyIgcng9IjEiIGZpbGw9IiNmZjJkNmIiLz4KPHBhdGggZD0iTTUgMTYgTDEzIDExIEwxOSA2IEwyNyAxMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZlMDAwIiBzdHJva2Utd2lkdGg9IjEuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=">
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap');
@@ -213,7 +213,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 <div id="lock-screen">
   <div class="lock-box">
     <div class="lock-logo">LIQUIDMAP</div>
-    <div class="lock-sub">PRO v7 · Neuronal Institucional</div>
+    <div class="lock-sub">PRO v6 · Neuronal Institucional</div>
     <input class="lock-input" id="lock-input" type="password" placeholder="••••••••" autocomplete="off">
     <button class="lock-btn" onclick="checkPass()">ACCEDER</button>
     <div class="lock-error" id="lock-err"></div>
@@ -498,7 +498,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 
 <!-- BOTTOM BAR -->
 <div id="bot">
-  <span style="color:var(--accent);font-family:'Bebas Neue',sans-serif;letter-spacing:2px;font-size:11px">LIQUIDMAP PRO v7</span>
+  <span style="color:var(--accent);font-family:'Bebas Neue',sans-serif;letter-spacing:2px;font-size:11px">LIQUIDMAP PRO v6</span>
   <div class="vsep" style="height:14px"></div>
   <div id="ticker-wrap"><span style="color:var(--muted)">Conectando...</span></div>
   <div class="vsep" style="height:14px"></div>
@@ -532,7 +532,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 
 <script>
 // ═══════════════════════════════════════════════════════════════
-//  LIQUIDMAP PRO v7 — NEURONAL INSTITUCIONAL
+//  LIQUIDMAP PRO v6 — NEURONAL INSTITUCIONAL
 //  6 Capas REALES: SuperTrend + VWAP + CVD + CHoCH/BOS + Presión + Value Area
 //  (GEX/MaxPain = FASE 4, requieren cadena de opciones real)
 // ═══════════════════════════════════════════════════════════════
@@ -650,7 +650,7 @@ ${arrow}
 🔶 TP3: ${fmtP(tp3)}${t3Lb} · dejar 20%
 📌 Al llegar a TP1 → mover SL a breakeven
 
-⚡ LiquidMap PRO · Bolsa v7`;
+⚡ LiquidMap PRO · Bolsa v6`;
 
   try{
     await Promise.all(TG_CHAT_IDS.map(id =>
@@ -1284,6 +1284,21 @@ function tfToPolygon(t){
   })[t] || {mult:1, span:'hour', days:90};
 }
 
+// ── RTH FILTER · intradía → sesión regular 09:30–16:00 ET (= TV "Regular") ──
+// Alpaca trae horario extendido; TV calcula en RTH. Sin esto el ADX/estructura del 5m/15m/1h
+// leía bajo por velas finas de pre/post market. Mismo criterio que resampleSession4H (570=9:30, 960=16:00).
+const _rthFmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,hour:'2-digit',minute:'2-digit'});
+function filterRTH(bars){
+  if(!bars || !bars.length) return bars;
+  return bars.filter(b=>{
+    const p = _rthFmt.formatToParts(new Date(b.t*1000));
+    let hh = parseInt(p.find(x=>x.type==='hour').value,10); if(hh===24) hh=0;
+    const mm = parseInt(p.find(x=>x.type==='minute').value,10);
+    const mins = hh*60+mm;
+    return mins >= 570 && mins < 960;
+  });
+}
+
 async function loadCandles(){
   if(!POLY_KEY){ console.warn('loadCandles: sin Polygon API key'); return; }
   // ROOT #6: el 4H ya NO usa 15m (ese feed quedó pendiente de pago y su cobertura corta
@@ -1323,6 +1338,7 @@ async function loadCandles(){
       candles = resampleSession4Hh(raw, false);  // 4H ancladas a sesión DESDE 1H → chart / ST / estructura = TV (y fresco)
     } else {
       candles = raw;
+      if(tf !== 'D') candles = filterRTH(candles);
       if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
       vpBars  = candles;                        // resto de TFs: VWAP/POC sobre las mismas velas (igual que antes)
     }
@@ -2313,7 +2329,7 @@ document.getElementById('lock-input').addEventListener('keydown',e=>{ if(e.key==
 <!-- LEGEND MODAL -->
 <div id="legend-modal">
   <div class="lm-box">
-    <h1>📖 LIQUIDMAP PRO v7 — GUÍA NEURONAL INSTITUCIONAL</h1>
+    <h1>📖 LIQUIDMAP PRO v6 — GUÍA NEURONAL INSTITUCIONAL</h1>
     <div class="sub">6 Capas · SuperTrend JUEZ · CHoCH/BOS · Ballenas · Score 10pts</div>
     <div class="lm-grid">
       <div class="lm-section">
