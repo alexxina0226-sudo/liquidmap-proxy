@@ -1,0 +1,2371 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiquidityMap PRO v7 — Neuronal Institucional</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAzMiAzMiI+CjxyZWN0IHdpZHRoPSIzMiIgaGVpZ2h0PSIzMiIgcng9IjYiIGZpbGw9IiMwMjA0MGMiLz4KPHJlY3QgeD0iNSIgeT0iMTgiIHdpZHRoPSIzIiBoZWlnaHQ9IjkiIHJ4PSIxIiBmaWxsPSIjMDBlNWZmIi8+CjxyZWN0IHg9IjExIiB5PSIxMyIgd2lkdGg9IjMiIGhlaWdodD0iMTQiIHJ4PSIxIiBmaWxsPSIjMDBmZjlkIi8+CjxyZWN0IHg9IjE3IiB5PSI4IiB3aWR0aD0iMyIgaGVpZ2h0PSIxOSIgcng9IjEiIGZpbGw9IiMwMGZmOWQiLz4KPHJlY3QgeD0iMjMiIHk9IjE0IiB3aWR0aD0iMyIgaGVpZ2h0PSIxMyIgcng9IjEiIGZpbGw9IiNmZjJkNmIiLz4KPHBhdGggZD0iTTUgMTYgTDEzIDExIEwxOSA2IEwyNyAxMiIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjZmZlMDAwIiBzdHJva2Utd2lkdGg9IjEuNiIgc3Ryb2tlLWxpbmVjYXA9InJvdW5kIiBzdHJva2UtbGluZWpvaW49InJvdW5kIi8+Cjwvc3ZnPgo=">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap');
+:root{
+  --bg:#03050d;--panel:#080d1a;--panel2:#0c1220;--border:#162035;
+  --accent:#00e5ff;--green:#00ff9d;--red:#ff2d6b;--yellow:#ffe000;
+  --purple:#b44dff;--orange:#ff8c00;--pink:#ff4da6;--teal:#00ffcc;
+  --text:#b8cce0;--muted:#3a5070;--white:#e8f4ff;
+  --gex-pos:#00ff9d;--gex-neg:#ff2d6b;--dp:#b44dff;
+}
+*{margin:0;padding:0;box-sizing:border-box;}
+html,body{width:100%;height:100%;overflow:hidden;}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-size:11px;display:flex;flex-direction:column;}
+
+/* ══ PASSWORD SCREEN ══ */
+#lock-screen{position:fixed;inset:0;background:var(--bg);z-index:2000;display:flex;align-items:center;justify-content:center;flex-direction:column;}
+#lock-screen.hidden{display:none;}
+.lock-box{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:40px 44px;max-width:380px;width:90%;text-align:center;}
+.lock-logo{font-family:'Bebas Neue',sans-serif;font-size:32px;color:var(--accent);letter-spacing:4px;margin-bottom:4px;}
+.lock-sub{font-size:10px;color:var(--muted);letter-spacing:3px;text-transform:uppercase;margin-bottom:28px;}
+.lock-input{width:100%;background:#0a1020;border:1px solid var(--border);border-radius:6px;padding:12px 16px;color:var(--white);font-family:'Space Mono',monospace;font-size:14px;text-align:center;letter-spacing:4px;outline:none;margin-bottom:12px;transition:border-color .2s;}
+.lock-input:focus{border-color:var(--accent);}
+.lock-btn{width:100%;padding:12px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;font-family:'Bebas Neue',sans-serif;font-size:16px;letter-spacing:2px;cursor:pointer;transition:opacity .2s;}
+.lock-btn:hover{opacity:.85;}
+.lock-error{color:var(--red);font-size:10px;margin-top:8px;min-height:16px;}
+.lock-hint{margin-top:16px;font-size:9px;color:var(--muted);}
+.lock-change{margin-top:8px;font-size:9px;color:var(--accent);cursor:pointer;text-decoration:underline;}
+
+/* ══ SETUP SCREEN ══ */
+#setup-screen{position:fixed;inset:0;background:rgba(3,5,13,.98);z-index:1500;display:flex;align-items:center;justify-content:center;}
+#setup-screen.hidden{display:none;}
+.setup-box{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:32px 36px;max-width:480px;width:92%;}
+.setup-box h1{font-family:'Bebas Neue',sans-serif;font-size:24px;color:var(--accent);letter-spacing:3px;margin-bottom:4px;}
+.setup-box p{color:var(--muted);font-size:11px;line-height:1.7;margin-bottom:16px;}
+.step{display:flex;gap:10px;margin-bottom:12px;}
+.step-n{width:22px;height:22px;border-radius:50%;background:var(--accent);color:var(--bg);font-weight:700;font-size:10px;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px;font-family:'Space Mono',monospace;}
+.step-t{font-size:11px;line-height:1.7;}
+.step-t a{color:var(--accent);text-decoration:none;}
+.step-t code{background:#0d1428;padding:2px 6px;border-radius:3px;color:var(--yellow);font-family:'Space Mono',monospace;font-size:10px;}
+.setup-row{display:flex;gap:8px;margin-top:16px;}
+.setup-input{flex:1;background:#0a1020;border:1px solid var(--border);border-radius:6px;padding:9px 12px;color:var(--white);font-family:'Space Mono',monospace;font-size:11px;outline:none;transition:border-color .2s;}
+.setup-input:focus{border-color:var(--accent);}
+.setup-input::placeholder{color:var(--muted);}
+.setup-btn{padding:9px 18px;background:var(--accent);color:var(--bg);border:none;border-radius:6px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;transition:opacity .2s;}
+.setup-btn:hover{opacity:.85;}
+.setup-btn:disabled{opacity:.35;cursor:default;}
+#setup-msg{font-size:10px;margin-top:8px;min-height:16px;}
+#setup-msg.ok{color:var(--green);}
+#setup-msg.err{color:var(--red);}
+
+/* ══ TOPBAR ══ */
+#topbar{display:flex;align-items:center;gap:5px;padding:5px 10px;background:var(--panel);border-bottom:1px solid var(--border);flex-shrink:0;flex-wrap:wrap;min-height:36px;}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:16px;color:var(--accent);letter-spacing:3px;margin-right:4px;}
+.logo span{color:var(--yellow);font-size:10px;vertical-align:middle;}
+.sym-btn{padding:3px 9px;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:3px;cursor:pointer;font-family:'Space Mono',monospace;font-size:10px;font-weight:700;transition:all .15s;}
+.sym-btn.active,.sym-btn:hover{border-color:var(--accent);color:var(--accent);background:rgba(0,229,255,.07);}
+.tf-btn{padding:2px 6px;border:1px solid var(--border);background:transparent;color:var(--muted);border-radius:2px;cursor:pointer;font-family:'Space Mono',monospace;font-size:9px;transition:all .15s;}
+.tf-btn.active,.tf-btn:hover{border-color:var(--yellow);color:var(--yellow);}
+.vsep{width:1px;height:18px;background:var(--border);margin:0 3px;flex-shrink:0;}
+#price-big{font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--green);letter-spacing:1px;}
+#chg-disp{font-size:10px;font-family:'Space Mono',monospace;}
+#chg-disp.up{color:var(--green);}
+#chg-disp.dn{color:var(--red);}
+.kpi{padding:2px 7px;border:1px solid var(--border);border-radius:2px;background:var(--panel2);font-size:9px;font-family:'Space Mono',monospace;white-space:nowrap;}
+.kpi .k{color:var(--muted);}
+.kpi .v{color:var(--accent);}
+#mkst{padding:2px 9px;border-radius:2px;font-size:9px;font-family:'Space Mono',monospace;font-weight:700;margin-left:auto;}
+#mkst.open{background:rgba(0,255,157,.1);color:var(--green);border:1px solid var(--green);}
+#mkst.closed{background:rgba(255,45,107,.1);color:var(--red);border:1px solid var(--red);}
+#mkst.pre{background:rgba(255,224,0,.1);color:var(--yellow);border:1px solid var(--yellow);}
+#wsdot{width:7px;height:7px;border-radius:50%;background:var(--muted);flex-shrink:0;}
+#wsdot.live{background:var(--green);box-shadow:0 0 8px var(--green);animation:blink 1.5s infinite;}
+@keyframes blink{0%,100%{opacity:1;}50%{opacity:.3;}}
+#sym-add-wrap{display:flex;gap:4px;align-items:center;}
+#sym-add-input{width:72px;background:var(--panel2);border:1px solid var(--border);border-radius:3px;padding:3px 6px;color:var(--white);font-family:'Space Mono',monospace;font-size:10px;outline:none;}
+#sym-add-input:focus{border-color:var(--yellow);}
+#sym-add-btn{padding:3px 7px;background:var(--yellow);color:var(--bg);border:none;border-radius:3px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:11px;letter-spacing:1px;}
+
+/* ══ SIGNAL PANEL GRANDE ══ */
+#signal-bar{padding:6px 10px;background:linear-gradient(90deg,rgba(8,13,26,0.95),rgba(12,18,32,0.95));border-bottom:1px solid var(--border);display:flex;align-items:center;gap:10px;flex-shrink:0;}
+#sig-main{font-family:'Bebas Neue',sans-serif;font-size:28px;letter-spacing:3px;padding:4px 18px;border-radius:5px;transition:all .3s;}
+#sig-main.buy{color:#00ff9d;background:rgba(0,255,157,.12);border:2px solid #00ff9d;box-shadow:0 0 18px rgba(0,255,157,.3);}
+#sig-main.sell{color:#ff2d6b;background:rgba(255,45,107,.12);border:2px solid #ff2d6b;box-shadow:0 0 18px rgba(255,45,107,.3);}
+#sig-main.neutral{color:#ffe000;background:rgba(255,224,0,.08);border:2px solid rgba(255,224,0,.4);}
+.sig-meta{display:flex;flex-direction:column;gap:2px;}
+#sig-sesgo{font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:2px;color:var(--muted);}
+#sig-quality{font-size:9px;font-family:'Space Mono',monospace;color:var(--accent);}
+/* ── CONFLUENCE METER PREMIUM ── */
+#conf-meter{display:none;gap:6px;flex-wrap:wrap;align-items:stretch;padding:7px 12px;background:linear-gradient(180deg,rgba(8,12,24,.6),rgba(8,12,24,.2));border-bottom:1px solid var(--border);}
+.cf-chip{display:flex;flex-direction:column;gap:3px;min-width:84px;flex:1;padding:5px 8px;border-radius:6px;background:rgba(255,255,255,.02);border:1px solid rgba(255,255,255,.05);position:relative;overflow:hidden;}
+.cf-chip .cf-name{font-size:8px;font-family:'Space Mono',monospace;color:var(--muted);letter-spacing:.4px;text-transform:uppercase;white-space:nowrap;}
+.cf-chip .cf-val{font-size:11px;font-weight:700;display:flex;align-items:center;gap:4px;}
+.cf-chip .cf-track{height:3px;border-radius:2px;background:rgba(255,255,255,.06);overflow:hidden;margin-top:1px;}
+.cf-chip .cf-bar{height:100%;border-radius:2px;transition:width .5s;}
+.cf-bull{color:var(--green);} .cf-bull .cf-bar{background:var(--green);}
+.cf-bear{color:var(--red);} .cf-bear .cf-bar{background:var(--red);}
+.cf-neut{color:var(--muted);} .cf-neut .cf-bar{background:var(--muted);}
+.cf-chip.lit{box-shadow:0 0 0 1px currentColor inset, 0 0 12px -4px currentColor;}
+.score-wrap{display:flex;flex-direction:column;gap:3px;min-width:120px;}
+.score-label{font-size:9px;color:var(--muted);font-family:'Space Mono',monospace;display:flex;justify-content:space-between;}
+.score-bar{height:8px;background:#0a1020;border-radius:4px;overflow:hidden;}
+.score-fill{height:100%;border-radius:4px;transition:width .5s,background .3s;}
+.tp-sl-row{display:flex;gap:8px;flex-wrap:wrap;}
+.tp-item{font-size:9px;font-family:'Space Mono',monospace;padding:2px 6px;border-radius:2px;border:1px solid var(--border);}
+.tp-item.sl{color:var(--red);border-color:rgba(255,45,107,.4);}
+.tp-item.tp1{color:var(--green);border-color:rgba(0,255,157,.4);}
+.tp-item.tp2{color:var(--yellow);border-color:rgba(255,224,0,.4);}
+.tp-item.tp3{color:var(--orange);border-color:rgba(255,140,0,.4);}
+.kill-badge{font-family:'Space Mono',monospace;font-size:9px;padding:2px 7px;border-radius:2px;font-weight:700;}
+.kill-badge.active{background:rgba(255,224,0,.15);color:var(--yellow);border:1px solid var(--yellow);animation:blink 1s infinite;}
+.kill-badge.off{color:var(--muted);border:1px solid var(--border);}
+.struct-badge{font-size:9px;font-family:'Space Mono',monospace;padding:2px 6px;border-radius:2px;}
+.struct-badge.bull{color:var(--green);border:1px solid rgba(0,255,157,.4);background:rgba(0,255,157,.05);}
+.struct-badge.bear{color:var(--red);border:1px solid rgba(255,45,107,.4);background:rgba(255,45,107,.05);}
+.whale-badge{font-size:9px;font-family:'Space Mono',monospace;padding:2px 6px;border-radius:2px;color:var(--purple);border:1px solid rgba(180,77,255,.4);background:rgba(180,77,255,.06);}
+
+/* ══ LEGENDS ══ */
+#legends{display:flex;gap:10px;padding:3px 10px;border-bottom:1px solid var(--border);background:var(--panel);flex-shrink:0;flex-wrap:wrap;align-items:center;}
+.leg{display:flex;align-items:center;gap:4px;font-size:9px;color:var(--muted);}
+.ldot{width:10px;height:3px;border-radius:1px;flex-shrink:0;}
+#alert-bell{margin-left:auto;cursor:pointer;font-size:14px;opacity:.6;transition:opacity .2s;}
+#alert-bell:hover{opacity:1;}
+#alert-bell.on{opacity:1;color:var(--yellow);}
+
+/* ══ MAIN ══ */
+#main{display:flex;flex:1;overflow:hidden;}
+#of-panel{width:62px;background:var(--panel);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;}
+#of-panel .ptitle{padding:3px 5px;font-size:8px;color:var(--muted);border-bottom:1px solid var(--border);text-transform:uppercase;letter-spacing:1px;font-family:'Space Mono',monospace;}
+#of-canvas{flex:1;display:block;width:100%;}
+#chart-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;}
+#chart-canvas{flex:1;display:block;width:100%;min-height:300px;}
+#alert-popup{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(255,224,0,.12);border:1px solid var(--yellow);border-radius:6px;padding:8px 16px;font-family:'Space Mono',monospace;font-size:11px;color:var(--yellow);display:none;z-index:100;text-align:center;white-space:nowrap;}
+#rp{width:210px;background:var(--panel);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;}
+.ps{border-bottom:1px solid var(--border);padding:6px 8px;}
+.ps h3{font-family:'Bebas Neue',sans-serif;font-size:11px;color:var(--accent);letter-spacing:2px;margin-bottom:5px;}
+.mr{display:flex;justify-content:space-between;align-items:center;padding:2px 0;border-bottom:1px solid rgba(255,255,255,.03);}
+.mr .lb{color:var(--muted);font-size:9px;}
+.mr .vl{font-size:10px;font-weight:500;font-family:'Space Mono',monospace;}
+.vl.g{color:var(--green);}.vl.r{color:var(--red);}.vl.y{color:var(--yellow);}.vl.p{color:var(--purple);}.vl.o{color:var(--orange);}.vl.a{color:var(--accent);}.vl.pk{color:var(--pink);}
+.dbar{margin:4px 0;height:8px;background:#0a1020;border-radius:2px;overflow:hidden;position:relative;}
+.dbuy{position:absolute;left:0;top:0;bottom:0;background:var(--green);transition:width .5s;}
+.dsell{position:absolute;right:0;top:0;bottom:0;background:var(--red);transition:width .5s;}
+.dctr{position:absolute;left:50%;top:0;bottom:0;width:1px;background:var(--border);}
+.dlbl{display:flex;justify-content:space-between;font-size:8px;margin-top:2px;font-family:'Space Mono',monospace;}
+.gex-bar-wrap{margin:3px 0;height:6px;background:#0a1020;border-radius:2px;overflow:hidden;}
+.gex-bar-fill{height:100%;border-radius:2px;transition:width .5s,background .3s;}
+.mpw{position:relative;height:32px;margin:4px 0;}
+.mptr{height:7px;background:linear-gradient(to right,var(--red),var(--yellow),var(--green));border-radius:3px;margin-top:13px;}
+.mpnd{position:absolute;top:1px;width:2px;height:18px;background:white;border-radius:1px;transform:translateX(-50%);transition:left .5s;}
+.mplb{font-size:8px;color:var(--yellow);position:absolute;top:0;transform:translateX(-50%);white-space:nowrap;font-family:'Space Mono',monospace;}
+.vol-bar{margin-top:3px;height:5px;background:#0a1020;border-radius:1px;overflow:hidden;}
+.vol-fill{height:100%;background:var(--accent);border-radius:1px;transition:width .4s;}
+.zi{display:flex;align-items:center;gap:5px;padding:2px 0;}
+.zd{width:7px;height:7px;border-radius:50%;flex-shrink:0;}
+.zp{font-weight:600;font-size:10px;font-family:'Space Mono',monospace;}
+.zt{color:var(--muted);font-size:8px;}
+
+/* ══ BOTTOM BAR ══ */
+#bot{height:21px;background:var(--panel);border-top:1px solid var(--border);display:flex;align-items:center;padding:0 10px;gap:10px;flex-shrink:0;font-size:9px;font-family:'Space Mono',monospace;}
+#ticker-wrap{display:flex;gap:10px;overflow:hidden;flex:1;}
+.ti{white-space:nowrap;}.ti.up{color:var(--green);}.ti.dn{color:var(--red);}
+#clock-el{color:var(--accent);font-weight:700;}
+
+/* ══ TOOLTIP ══ */
+#tip{position:fixed;background:rgba(3,5,13,.97);border:1px solid var(--border);border-radius:5px;padding:7px 11px;font-size:10px;pointer-events:none;z-index:500;display:none;min-width:170px;}
+#tip .th{color:var(--accent);font-family:'Bebas Neue',sans-serif;font-size:13px;letter-spacing:1px;margin-bottom:4px;}
+#tip .tr{display:flex;justify-content:space-between;gap:14px;font-family:'Space Mono',monospace;font-size:9px;}
+#tip .tk{color:var(--muted);}
+
+::-webkit-scrollbar{width:3px;}
+::-webkit-scrollbar-track{background:var(--bg);}
+::-webkit-scrollbar-thumb{background:var(--border);border-radius:2px;}
+
+#alert-modal{position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:800;display:none;align-items:center;justify-content:center;}
+#alert-modal.show{display:flex;}
+.am-box{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:24px;width:300px;}
+.am-box h2{font-family:'Bebas Neue',sans-serif;font-size:18px;color:var(--accent);letter-spacing:2px;margin-bottom:14px;}
+.am-row{display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;font-size:10px;}
+.am-row label{color:var(--text);}
+.am-toggle{width:36px;height:18px;background:var(--border);border-radius:9px;position:relative;cursor:pointer;transition:background .2s;}
+.am-toggle.on{background:var(--green);}
+.am-toggle::after{content:'';position:absolute;width:14px;height:14px;border-radius:50%;background:white;top:2px;left:2px;transition:left .2s;}
+.am-toggle.on::after{left:20px;}
+.am-close{width:100%;margin-top:14px;padding:8px;background:var(--accent);color:var(--bg);border:none;border-radius:4px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:14px;letter-spacing:1px;}
+#lbar{height:2px;background:linear-gradient(90deg,var(--accent),var(--purple));position:fixed;top:0;left:0;width:0%;transition:width .3s;z-index:9999;}
+#legend-modal{position:fixed;inset:0;background:rgba(3,5,13,.92);z-index:900;display:none;align-items:center;justify-content:center;padding:20px;}
+#legend-modal.show{display:flex;}
+.lm-box{background:#0a0f1e;border:1px solid #1a2340;border-radius:10px;padding:24px 28px;max-width:820px;width:100%;max-height:88vh;overflow-y:auto;}
+.lm-box h1{font-family:'Bebas Neue',sans-serif;font-size:22px;color:#00e5ff;letter-spacing:3px;margin-bottom:4px;}
+.lm-box .sub{font-size:10px;color:#3a5070;letter-spacing:2px;text-transform:uppercase;margin-bottom:18px;}
+.lm-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
+.lm-section{background:#0c1220;border:1px solid #1a2340;border-radius:6px;padding:12px 14px;}
+.lm-section h3{font-size:11px;font-weight:700;color:#00e5ff;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;border-bottom:1px solid #1a2340;padding-bottom:5px;}
+.lm-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}
+.lm-icon{font-size:14px;flex-shrink:0;margin-top:1px;}
+.lm-text strong{display:block;font-size:10px;color:#e8f4ff;font-weight:600;}
+.lm-text span{font-size:9px;color:#4a6080;line-height:1.5;}
+.lm-close{width:100%;margin-top:16px;padding:10px;background:#00e5ff;color:#03050d;border:none;border-radius:5px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:16px;letter-spacing:2px;}
+.lm-warn{background:rgba(255,224,0,.08);border:1px solid rgba(255,224,0,.3);border-radius:5px;padding:8px 12px;margin-top:12px;font-size:9px;color:#ffe000;text-align:center;}
+@media(max-width:600px){.lm-grid{grid-template-columns:1fr;}}
+</style>
+</head>
+<body>
+<div id="lbar"></div>
+
+<!-- LOCK SCREEN -->
+<div id="lock-screen">
+  <div class="lock-box">
+    <div class="lock-logo">LIQUIDMAP</div>
+    <div class="lock-sub">PRO v7 · Neuronal Institucional</div>
+    <input class="lock-input" id="lock-input" type="password" placeholder="••••••••" autocomplete="off">
+    <button class="lock-btn" onclick="checkPass()">ACCEDER</button>
+    <div class="lock-error" id="lock-err"></div>
+    <div class="lock-hint">liquidmapro · acceso institucional</div>
+    <div class="lock-change" onclick="showChangePass()">cambiar contraseña</div>
+  </div>
+</div>
+
+<!-- SETUP SCREEN legacy de Polygon RETIRADO (la key vive server-side / Alpaca; ya no se pide en el navegador) -->
+
+<!-- TOPBAR -->
+<div id="topbar">
+  <div class="logo">LIQUIDMAP <span>PRO v7 · ALPACA SIP</span></div>
+  <div class="vsep"></div>
+  <div id="sym-bar" style="display:flex;gap:3px;flex-wrap:wrap;">
+    <button class="sym-btn active" data-sym="SPY" onclick="selectSym('SPY',this)">SPY</button>
+    <button class="sym-btn" data-sym="QQQ" onclick="selectSym('QQQ',this)">QQQ</button>
+    <button class="sym-btn" data-sym="TSLA" onclick="selectSym('TSLA',this)">TSLA</button>
+    <button class="sym-btn" data-sym="NVDA" onclick="selectSym('NVDA',this)">NVDA</button>
+    <button class="sym-btn" data-sym="AAPL" onclick="selectSym('AAPL',this)">AAPL</button>
+    <button class="sym-btn" data-sym="AMZN" onclick="selectSym('AMZN',this)">AMZN</button>
+    <button class="sym-btn" data-sym="META" onclick="selectSym('META',this)">META</button>
+    <button class="sym-btn" data-sym="MSFT" onclick="selectSym('MSFT',this)">MSFT</button>
+  </div>
+  <div class="vsep"></div>
+  <div id="sym-add-wrap">
+    <input id="sym-add-input" placeholder="TICKER" maxlength="6" onkeydown="if(event.key==='Enter')addSymbol()">
+    <button id="sym-add-btn" onclick="addSymbol()">+ADD</button>
+  </div>
+  <div class="vsep"></div>
+  <div style="display:flex;gap:3px;">
+    <button class="tf-btn" onclick="selectTF('5',this)">5m</button>
+    <button class="tf-btn" onclick="selectTF('15',this)">15m</button>
+    <button class="tf-btn active" onclick="selectTF('60',this)">1H</button>
+    <button class="tf-btn" onclick="selectTF('240',this)">4H</button>
+    <button class="tf-btn" onclick="selectTF('D',this)">1D</button>
+  </div>
+  <div class="vsep"></div>
+  <span id="price-big">—</span>
+  <span id="chg-disp">—</span>
+  <div class="vsep"></div>
+  <div class="kpi"><span class="k">H </span><span class="v" id="k-h">—</span></div>
+  <div class="kpi"><span class="k">L </span><span class="v" id="k-l">—</span></div>
+  <div class="kpi"><span class="k">VOL </span><span class="v" id="k-vol">—</span></div>
+  <div class="kpi"><span class="k">RÉGIMEN </span><span class="v" id="k-gex">—</span></div>
+  <div class="kpi"><span class="k">IMÁN POC </span><span class="v" id="k-mp">—</span></div>
+  <div class="vsep"></div>
+  <div id="wsdot"></div>
+  <span id="mkst" class="closed">○ CLOSED</span>
+</div>
+
+<!-- SIGNAL BAR GRANDE -->
+<div id="signal-bar">
+  <div id="sig-main" class="neutral">◈ NEUTRAL</div>
+  <div class="sig-meta">
+    <div id="sig-sesgo">SESGO 1H — Esperando datos</div>
+    <div id="sig-quality">—</div>
+  </div>
+  <div class="score-wrap">
+    <div class="score-label"><span>SCORE NEURONAL</span><span id="score-val">0/10</span></div>
+    <div class="score-bar"><div class="score-fill" id="score-fill" style="width:0%;background:var(--yellow)"></div></div>
+  </div>
+  <div class="tp-sl-row">
+    <div class="tp-item sl" id="sig-stop">SL —</div>
+    <div class="tp-item tp1" id="sig-t1">TP1 —</div>
+    <div class="tp-item tp2" id="sig-t2">TP2 —</div>
+    <div class="tp-item tp3" id="sig-t3">TP3 —</div>
+  </div>
+  <div id="kill-zone-badge" class="kill-badge off">— KILL ZONE</div>
+  <div id="struct-badge" class="struct-badge" style="display:none">—</div>
+  <div id="whale-badge" class="whale-badge" style="display:none">🐋 —</div>
+  <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
+    <span id="alert-bell" class="on" onclick="toggleAlertModal()">🔔</span>
+    <button onclick="toggleLegend()" style="background:rgba(0,229,255,.08);border:1px solid var(--border);color:var(--accent);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">📖 GUÍA</button>
+  </div>
+</div>
+
+<!-- CONFLUENCE METER PREMIUM -->
+<div id="conf-meter"></div>
+
+<!-- LEGENDS -->
+<div id="legends">
+  <div class="leg"><div class="ldot" style="background:#ffe000"></div>Liquidez fuerte</div>
+  <div class="leg"><div class="ldot" style="background:#00ff9d"></div>Soporte</div>
+  <div class="leg"><div class="ldot" style="background:#ff2d6b"></div>Resistencia</div>
+  <div class="leg"><div class="ldot" style="background:#b44dff;height:2px;width:14px"></div>VWAP real</div>
+  <div class="leg"><div class="ldot" style="background:#00e5ff"></div>SuperTrend</div>
+  <div class="leg"><div class="ldot" style="background:#ff9500;height:2px;width:14px"></div>🌀 Arco ↑</div>
+  <div class="leg"><div class="ldot" style="background:#3d7dff;height:2px;width:14px"></div>🌀 Arco ↓</div>
+  <div class="leg"><div class="ldot" style="background:#00ff9d;height:2px;width:14px"></div>Value Area (VAH/VAL)</div>
+  <div class="leg"><div class="ldot" style="background:#b44dff;height:2px;width:14px"></div>Paredes GEX (opciones)</div>
+  <div class="leg"><span style="color:#00ff9d;font-size:9px">━</span> BOS</div>
+  <div class="leg"><span style="color:#ff2d6b;font-size:9px">┅</span> CHoCH</div>
+</div>
+
+<!-- MAIN -->
+<div id="main">
+  <!-- Order Flow Left Panel -->
+  <div id="of-panel">
+    <div class="ptitle">OF</div>
+    <canvas id="of-canvas"></canvas>
+  </div>
+
+  <!-- Chart -->
+  <div id="chart-wrap">
+    <canvas id="chart-canvas"></canvas>
+    <div id="alert-popup"></div>
+  </div>
+
+  <!-- Right Panel -->
+  <div id="rp">
+    <!-- Quote -->
+    <div class="ps">
+      <h3>📊 Quote</h3>
+      <div class="mr"><span class="lb">Precio</span><span class="vl g" id="rq-p">—</span></div>
+      <div class="mr"><span class="lb">Open</span><span class="vl a" id="rq-o">—</span></div>
+      <div class="mr"><span class="lb">High</span><span class="vl g" id="rq-h">—</span></div>
+      <div class="mr"><span class="lb">Low</span><span class="vl r" id="rq-l">—</span></div>
+      <div class="mr"><span class="lb">Prev Close</span><span class="vl" id="rq-pc">—</span></div>
+      <div class="mr"><span class="lb">Cambio $</span><span class="vl" id="rq-d">—</span></div>
+      <div class="mr"><span class="lb">Cambio %</span><span class="vl" id="rq-dp">—</span></div>
+    </div>
+
+    <!-- SuperTrend JUEZ -->
+    <div class="ps">
+      <h3>⚡ SUPERTREND JUEZ</h3>
+      <div class="mr"><span class="lb">Dirección</span><span class="vl" id="st-dir">—</span></div>
+      <div class="mr"><span class="lb">Línea ST</span><span class="vl" id="st-line">—</span></div>
+      <div class="mr"><span class="lb">Dist. precio</span><span class="vl" id="st-dist">—</span></div>
+      <div class="mr"><span class="lb">ATR(10)</span><span class="vl a" id="st-atr">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)" id="st-note">Calculando...</div>
+    </div>
+
+    <!-- Contexto músculo (Pine v6.1): EMA200 · Zona ICT · MTF 4H -->
+    <div class="ps">
+      <h3>🧭 CONTEXTO <span style="font-size:7px;color:var(--muted);font-weight:400">· como TV</span></h3>
+      <div class="mr"><span class="lb">Tendencia</span><span class="vl" id="ctx-ema">—</span></div>
+      <div class="mr"><span class="lb">Zona ICT</span><span class="vl" id="ctx-ict">—</span></div>
+      <div class="mr"><span class="lb">MTF 4H</span><span class="vl" id="ctx-mtf">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">Contexto institucional — no modifica el score, te da criterio.</div>
+    </div>
+
+    <!-- Estructura CHoCH/BOS -->
+    <div class="ps">
+      <h3>🏗 ESTRUCTURA</h3>
+      <div class="mr"><span class="lb">CHoCH</span><span class="vl" id="s-choch">—</span></div>
+      <div class="mr"><span class="lb">BOS</span><span class="vl" id="s-bos">—</span></div>
+      <div class="mr"><span class="lb">Último swing H</span><span class="vl g" id="s-swh">—</span></div>
+      <div class="mr"><span class="lb">Último swing L</span><span class="vl r" id="s-swl">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)" id="s-note">—</div>
+    </div>
+
+    <!-- CVD/Delta -->
+    <div class="ps">
+      <h3>📈 CVD / Delta</h3>
+      <div class="mr"><span class="lb">CVD neto</span><span class="vl" id="cvd-v">—</span></div>
+      <div class="dbar"><div class="dbuy" id="dbuy" style="width:50%"></div><div class="dsell" id="dsell" style="width:50%"></div><div class="dctr"></div></div>
+      <div class="dlbl"><span id="bp-v" style="color:var(--green)">50% Buy</span><span id="sp-v" style="color:var(--red)">50% Sell</span></div>
+      <div class="mr"><span class="lb">Buy Vol</span><span class="vl g" id="bvol-v">—</span></div>
+      <div class="mr"><span class="lb">Sell Vol</span><span class="vl r" id="svol-v">—</span></div>
+      <div class="mr"><span class="lb">Imbalance</span><span class="vl" id="imb-v">—</span></div>
+    </div>
+
+    <!-- Ballenas / Volumen -->
+    <div class="ps">
+      <h3>🐋 Ballenas / Vol</h3>
+      <div class="mr"><span class="lb">Whale alert</span><span class="vl p" id="wh-alert">—</span></div>
+      <div class="mr"><span class="lb">Vol ratio</span><span class="vl a" id="wh-ratio">—</span></div>
+      <div class="mr"><span class="lb">Dir ballena</span><span class="vl" id="wh-dir">—</span></div>
+      <div class="mr"><span class="lb">Vol sesión</span><span class="vl" id="wh-vol">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">Vol >3× promedio = acumulación inst.</div>
+    </div>
+
+    <!-- RÉGIMEN DE VOLATILIDAD (rol del GEX, 100% real desde aggregates) -->
+    <div class="ps">
+      <h3>📊 Régimen de Volatilidad <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· REAL</span></h3>
+      <div class="mr"><span class="lb">Régimen</span><span class="vl" id="fl-reg">—</span></div>
+      <div class="gex-bar-wrap"><div class="gex-bar-fill" id="fl-reg-bar" style="width:50%"></div></div>
+      <div class="mr"><span class="lb">Vol. realizada</span><span class="vl a" id="fl-vol">—</span></div>
+      <div class="mr"><span class="lb">ATR(14)</span><span class="vl a" id="fl-atr">—</span></div>
+      <div class="mr"><span class="lb">Expansión</span><span class="vl" id="fl-exp">—</span></div>
+      <div class="mr"><span class="lb">Reacción POC</span><span class="vl" id="fl-react">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted);line-height:1.5" id="fl-reg-note">—</div>
+    </div>
+
+    <!-- IMÁN DE VOLUMEN (rol del Max Pain, 100% real: POC + VWAP) -->
+    <div class="ps">
+      <h3>🧲 Imán de Volumen <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· REAL</span></h3>
+      <div class="mpw">
+        <div class="mplb" id="mplb" style="left:50%">—</div>
+        <div class="mptr"></div>
+        <div class="mpnd" id="mpnd" style="left:50%;top:10px"></div>
+      </div>
+      <div class="mr"><span class="lb">Imán POC</span><span class="vl y" id="fl-poc">—</span></div>
+      <div class="mr"><span class="lb">Dist. precio</span><span class="vl" id="fl-pocd">—</span></div>
+      <div class="mr"><span class="lb">Fuerza imán</span><span class="vl y" id="fl-magnet">—</span></div>
+      <div class="mr"><span class="lb">VWAP anclado</span><span class="vl p" id="fl-vwap">—</span></div>
+    </div>
+
+    <!-- POOLS DE LIQUIDEZ (rol de las walls, 100% real: equal highs/lows) -->
+    <div class="ps">
+      <h3>💎 Pools de Liquidez <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· REAL</span></h3>
+      <div class="mr"><span class="lb">Pool resistencia</span><span class="vl g" id="fl-res">—</span></div>
+      <div class="mr"><span class="lb">Pool soporte</span><span class="vl r" id="fl-sup">—</span></div>
+      <div class="mr"><span class="lb">Objetivo cercano</span><span class="vl" id="fl-target">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">Equal highs/lows = stops acumulados (imán de precio)</div>
+    </div>
+
+    <!-- GEX / MAX PAIN (opciones reales, Black-Scholes; misma ruta que el bot) -->
+    <div class="ps">
+      <h3>🎯 GEX / Max Pain <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· OPCIONES (BS real)</span></h3>
+      <div class="mr"><span class="lb">Régimen GEX</span><span class="vl" id="opt-reg">—</span></div>
+      <div class="mr"><span class="lb">Call Wall</span><span class="vl g" id="opt-cw">—</span></div>
+      <div class="mr"><span class="lb">Put Wall</span><span class="vl r" id="opt-pw">—</span></div>
+      <div class="mr"><span class="lb">Gamma Flip</span><span class="vl p" id="opt-flip">—</span></div>
+      <div class="mr"><span class="lb">Max Pain</span><span class="vl y" id="opt-mp">—</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted);line-height:1.5" id="opt-note">—</div>
+    </div>
+
+    <!-- FLUJO & BALLENAS (RVOL real + capas que se activan con Developer $79) -->
+    <div class="ps">
+      <h3>🐋 Flujo &amp; Ballenas</h3>
+      <div class="mr"><span class="lb">RVOL (huella)</span><span class="vl y" id="fl-rvol">—</span></div>
+      <div class="mr"><span class="lb">Dirección huella</span><span class="vl" id="fl-foot">—</span></div>
+      <div class="mr"><span class="lb">Prints &gt;$1M</span><span class="vl" id="fl-prints" style="color:var(--muted)">🔒 Developer $79</span></div>
+      <div class="mr"><span class="lb">Dark Pool real</span><span class="vl" id="fl-dpool" style="color:var(--muted)">🔒 Developer $79</span></div>
+      <div class="mr"><span class="lb">CVD por agresor</span><span class="vl" id="fl-cvdagg" style="color:var(--muted)">🔒 Developer $79</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">RVOL real (huella de vol.). Print-level/dark pool/CVD agresor requieren endpoint Trades (Developer $79).</div>
+    </div>
+
+    <!-- ZONAS LIQUIDEZ -->
+    <div class="ps">
+      <h3>💧 Zonas Liquidez</h3>
+      <div id="zones-list"><span style="color:var(--muted);font-size:9px">Cargando...</span></div>
+    </div>
+
+    <!-- VWAP / POC -->
+    <div class="ps">
+      <h3>📐 VWAP / POC</h3>
+      <div class="mr"><span class="lb">POC</span><span class="vl p" id="vwap-v">—</span></div>
+      <div class="mr"><span class="lb">+1σ</span><span class="vl" id="vwap-up" style="color:rgba(180,77,255,.7)">—</span></div>
+      <div class="mr"><span class="lb">-1σ</span><span class="vl" id="vwap-dn" style="color:rgba(180,77,255,.7)">—</span></div>
+      <div class="mr"><span class="lb">Dist. VWAP</span><span class="vl" id="vwap-dist">—</span></div>
+    </div>
+
+    <!-- VOL PROFILE -->
+    <div class="ps">
+      <h3>📈 Vol. Profile</h3>
+      <div class="mr"><span class="lb">POC</span><span class="vl o" id="poc-v">—</span></div>
+      <div class="mr"><span class="lb">VAH</span><span class="vl g" id="vah-v">—</span></div>
+      <div class="mr"><span class="lb">VAL</span><span class="vl r" id="val-v">—</span></div>
+      <div class="mr"><span class="lb">HVN</span><span class="vl o" id="hvn-v">—</span></div>
+      <div class="mr"><span class="lb">LVN</span><span class="vl" id="lvn-v" style="color:var(--muted)">—</span></div>
+      <div class="vol-bar"><div class="vol-fill" id="vf" style="width:0%"></div></div>
+    </div>
+
+    <!-- SESIÓN NY -->
+    <div class="ps">
+      <h3>🕐 Sesión NY</h3>
+      <div class="mr"><span class="lb">Open</span><span class="vl a">09:30 ET</span></div>
+      <div class="mr"><span class="lb">Close</span><span class="vl a">16:00 ET</span></div>
+      <div class="mr"><span class="lb">Pre-Mkt</span><span class="vl y">04:00–09:30</span></div>
+      <div class="mr"><span class="lb">After-Hrs</span><span class="vl y">16:00–20:00</span></div>
+      <div class="mr"><span class="lb">Kill Zone</span><span class="vl y" id="kz-name">—</span></div>
+    </div>
+
+    <!-- ÚLTIMAS VELAS -->
+    <div class="ps">
+      <h3>🕯 Últimas Velas</h3>
+      <div id="candle-list"></div>
+    </div>
+
+    <!-- CONFIG -->
+    <div class="ps">
+      <h3>⚙ Config</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+        <button onclick="showChangePass()" style="flex:1;padding:4px;background:var(--panel2);border:1px solid var(--border);color:var(--text);border-radius:3px;cursor:pointer;font-size:9px;">🔒 Pass</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- BOTTOM BAR -->
+<div id="bot">
+  <span style="color:var(--accent);font-family:'Bebas Neue',sans-serif;letter-spacing:2px;font-size:11px">LIQUIDMAP PRO v7</span>
+  <div class="vsep" style="height:14px"></div>
+  <div id="ticker-wrap"><span style="color:var(--muted)">Conectando...</span></div>
+  <div class="vsep" style="height:14px"></div>
+  <span style="color:var(--muted)">NY:</span> <span id="clock-el">—</span>
+</div>
+
+<div id="tip">
+  <div class="th" id="tip-t">—</div>
+  <div class="tr"><span class="tk">O</span><span id="tip-o">—</span></div>
+  <div class="tr"><span class="tk">H</span><span id="tip-h">—</span></div>
+  <div class="tr"><span class="tk">L</span><span id="tip-l">—</span></div>
+  <div class="tr"><span class="tk">C</span><span id="tip-c">—</span></div>
+  <div class="tr"><span class="tk">Vol</span><span id="tip-v">—</span></div>
+  <div class="tr"><span class="tk">Zona</span><span id="tip-z">—</span></div>
+</div>
+
+<!-- ALERT MODAL -->
+<div id="alert-modal">
+  <div class="am-box">
+    <h2>🔔 Alertas</h2>
+    <div class="am-row"><label>Señal BUY/SELL</label><div class="am-toggle on" id="al-buy" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>Zona liquidez</label><div class="am-toggle on" id="al-zone" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>Régimen vol. <span style="font-size:8px;color:var(--muted)">(contexto)</span></label><div class="am-toggle" id="al-mp" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>RVOL ballena <span style="font-size:8px;color:var(--muted)">(contexto)</span></label><div class="am-toggle" id="al-gex" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>Dark Pool <span style="font-size:8px;color:var(--muted)">($79)</span></label><div class="am-toggle" id="al-dp" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>Ballena detectada</label><div class="am-toggle on" id="al-whale" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>CHoCH / BOS</label><div class="am-toggle on" id="al-struct" onclick="toggleAL(this)"></div></div>
+    <button class="am-close" onclick="toggleAlertModal()">CERRAR</button>
+  </div>
+</div>
+
+<script>
+// ═══════════════════════════════════════════════════════════════
+//  LIQUIDMAP PRO v7 — NEURONAL INSTITUCIONAL
+//  6 Capas REALES: SuperTrend + VWAP + CVD + CHoCH/BOS + Presión + Value Area
+//  (GEX/MaxPain = FASE 4, requieren cadena de opciones real)
+// ═══════════════════════════════════════════════════════════════
+
+// ── PASSWORD ─────────────────────────────────────────────────
+const DEFAULT_PASS = 'trader2026';
+function getPass(){ return localStorage.getItem('lm_pass') || DEFAULT_PASS; }
+function checkPass(){
+  const val = document.getElementById('lock-input').value;
+  if(val === getPass()){
+    document.getElementById('lock-screen').classList.add('hidden');
+    document.getElementById('lock-err').textContent = '';
+    initAfterLock();
+  } else {
+    document.getElementById('lock-err').textContent = '❌ Contraseña incorrecta';
+    document.getElementById('lock-input').value = '';
+  }
+}
+function showChangePass(){
+  const np = prompt('Nueva contraseña (mín 6 caracteres):');
+  if(np && np.length >= 6){ localStorage.setItem('lm_pass', np); alert('✅ Contraseña cambiada: ' + np); }
+  else if(np !== null){ alert('❌ Mínimo 6 caracteres.'); }
+}
+
+// ── STATE ─────────────────────────────────────────────────────
+let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: única fuente (velas + precio)
+const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/alpaca'; // ALPACA SIP real-time (reemplaza /polygon delay 15min). El proxy /alpaca devuelve las barras con forma Polygon → el motor del mapa no cambia.
+let sym = 'SPY', tf = '60';
+const OPT_METRICS_URL = POLY_PROXY.replace('/alpaca', '/alpaca-options-metrics'); // GEX/Max Pain reales (misma capa que el bot → coherencia total)
+let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si la ruta falla → degradación segura
+let ws = null;
+let quote = {}, candles = [], zones = [], vp = null;
+let vpBars = [];   // ROOT #5: fuente de VWAP/POC. En 4H = velas de 1H (sesión); en el resto = candles.
+let DATA_STALE = false, DATA_LAST_LABEL = '—';  // guarda de frescura: serie vieja = no confiable (vale para TODOS los tickers/TFs)
+let cvd = 0, buyV = 0, sellV = 0;
+let tickerCache = {}, tickIdx = 0;
+let lastSignal = '', audioCtx = null;
+let stResult = [], struct = { choch: null, bos: null, swings: [] };
+let whaleDetected = null;
+let arcResult = { initialized:false, series:[], trendSeries:[], plot:[], flips:[], levels:[], trend:'BULL' }; // Arc VWAP Supertrend [BOSWaves]
+const TICKERS = ['SPY','QQQ','TSLA','AMZN','AAPL','NVDA','META','MSFT','JPM','GOOG'];
+const alertCfg = { buy:true, zone:true, mp:true, gex:true, dp:true, whale:true, struct:true };
+
+// ── ATR MAP ───────────────────────────────────────────────────
+const ATR_MAP = {
+  'SPY':0.008,'QQQ':0.010,'IWM':0.010,'DIA':0.008,'VXX':0.040,
+  'AAPL':0.012,'MSFT':0.012,'GOOG':0.013,'GOOGL':0.013,
+  'AMZN':0.015,'META':0.018,'NFLX':0.020,'ORCL':0.015,
+  'NVDA':0.022,'AMD':0.025,'MU':0.025,'INTC':0.020,'TSM':0.018,
+  'TSLA':0.030,'COIN':0.035,'MSTR':0.045,'HOOD':0.030,
+  'JPM':0.010,'BAC':0.012,'GS':0.012,'MS':0.012,'C':0.012,
+  'UBER':0.020,'ABNB':0.022,'SNAP':0.035,
+};
+// Factor ATR por timeframe — distancias reales según TF activo
+const TF_ATR_FACTOR = {'5':0.10,'15':0.18,'60':0.35,'240':0.60,'D':1.00};
+function getATR(ticker, price, currentTF){
+  const pct    = ATR_MAP[(ticker||'').toUpperCase()] || 0.015;
+  const factor = TF_ATR_FACTOR[currentTF || tf || '60'] || 0.35;
+  return parseFloat(price) * pct * factor;
+}
+
+// ── TELEGRAM DIRECTO — LiquidMap BOLSA ────────────────────────
+// Bot: @liquidmapbolsa_bot — envío directo, sin webhook intermediario
+const TG_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
+const TG_CHAT_IDS    = ['1218461753', '1373309702'];
+const COOLDOWN_MS    = 300000;
+if(!window._tgCool) window._tgCool = {};
+
+async function sendTelegram(signal, ticker, price, score, extra){
+  const t = (ticker || sym || '?').toUpperCase();
+  const p = parseFloat(price);
+  if(!p || isNaN(p) || p <= 0) return;
+  const coolKey = `${signal}_${t}`;
+  const now = Date.now();
+  if(window._tgCool[coolKey] && now - window._tgCool[coolKey] < COOLDOWN_MS) return;
+  window._tgCool[coolKey] = now;
+
+  const isBuy  = signal === 'BUY';
+  const isSell = signal === 'SELL';
+  const isMain = isBuy || isSell;
+  const tg   = isMain ? getTargets(p, signal, tf, t) : null;
+  const sl   = tg ? tg.sl.price.toFixed(2) : '—';
+  const tp1  = (tg && tg.tps[0]) ? tg.tps[0].price.toFixed(2) : '—';
+  const tp2  = (tg && tg.tps[1]) ? tg.tps[1].price.toFixed(2) : '—';
+  const tp3  = (tg && tg.tps[2]) ? tg.tps[2].price.toFixed(2) : '—';
+  const slLb = tg ? ' · '+tg.sl.label : '';
+  const t1Lb = (tg && tg.tps[0]) ? ' · '+tg.tps[0].label : '';
+  const t2Lb = (tg && tg.tps[1]) ? ' · '+tg.tps[1].label : '';
+  const t3Lb = (tg && tg.tps[2]) ? ' · '+tg.tps[2].label : '';
+  const kz   = getKillZone();
+  const tfLabel = {'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'}[tf] || tf;
+  const arrow   = isBuy ? '▲ BUY — COMPRA 🟢' : isSell ? '▼ SELL — VENTA 🔴' : '⚡ ALERTA';
+  const quality = (score||0) >= 8 ? '🔥 MÁXIMA CALIDAD' : (score||0) >= 6 ? '⭐ INSTITUCIONAL' : '✅ VÁLIDA';
+  const escHTML = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const extraNote = (extra && extra.note) ? `\n💡 ${escHTML(extra.note)}` : '';
+  const confStr = (extra && extra.conf) ? `\n📊 <b>Confluencias:</b>\n${escHTML(extra.conf)}` : '';
+
+  const fmtP = v => {
+    const n = parseFloat(v);
+    if(isNaN(n)) return v;
+    return n >= 100 ? '$'+n.toFixed(2) : n >= 1 ? '$'+n.toFixed(3) : '$'+n.toFixed(5);
+  };
+
+  const text = `📊 <b>LIQUIDMAP PRO — BOLSA</b>
+${arrow}
+
+🎯 <b>${t}</b> · ${tfLabel} · 🕐 ${kz.name}
+💰 Precio: <b>${fmtP(p)}</b>
+⭐ Score: ${score ? score+'/10' : '—'} · ${quality}
+🌐 Origen: 🖥️ LiquidMap PRO · Bolsa${extraNote}${confStr}
+
+🛑 SL:  ${fmtP(sl)}${slLb}
+✅ TP1: ${fmtP(tp1)}${t1Lb} · cerrar 50%
+✅ TP2: ${fmtP(tp2)}${t2Lb} · cerrar 30%
+🔶 TP3: ${fmtP(tp3)}${t3Lb} · dejar 20%
+📌 Al llegar a TP1 → mover SL a breakeven
+
+⚡ LiquidMap PRO · Bolsa v7`;
+
+  try{
+    await Promise.all(TG_CHAT_IDS.map(id =>
+      fetch(`https://api.telegram.org/bot${TG_TOKEN_BOLSA}/sendMessage`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ chat_id: id, text, parse_mode: 'HTML', disable_web_page_preview: true })
+      })
+    ));
+  } catch(e){}
+}
+
+// ── AUDIO ─────────────────────────────────────────────────────
+function initAudio(){ if(audioCtx) return; audioCtx = new (window.AudioContext || window.webkitAudioContext)(); }
+function playTone(freq, dur, type='sine', vol=0.3){
+  if(!audioCtx) return;
+  try{
+    const o = audioCtx.createOscillator(), g = audioCtx.createGain();
+    o.connect(g); g.connect(audioCtx.destination);
+    o.type = type; o.frequency.value = freq;
+    g.gain.setValueAtTime(vol, audioCtx.currentTime);
+    g.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + dur);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch(e){}
+}
+
+// ── KILL ZONE ─────────────────────────────────────────────────
+function getKillZone(){
+  const now = new Date();
+  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
+  if(utcMin >= 480 && utcMin < 570)  return { active:true, name:'🇬🇧 LONDON OPEN', weight:1.3 };
+  if(utcMin >= 780 && utcMin < 870)  return { active:true, name:'🔄 NY-LON OVERLAP', weight:1.4 };
+  if(utcMin >= 870 && utcMin < 960)  return { active:true, name:'🇺🇸 NY OPEN', weight:1.5 };
+  if(utcMin >= 930 && utcMin < 960)  return { active:true, name:'⚡ POWER HOUR', weight:1.2 };
+  return { active:false, name:'—', weight:1.0 };
+}
+
+// ── SUPERTREND ─────────────────────────────────────────────────
+function computeSuperTrend(bars, period, mult){
+  if(!bars || bars.length < period + 1) return [];
+  // --- True Range serie ---
+  const tr = [];
+  for(let i = 0; i < bars.length; i++){
+    if(i === 0) tr.push(bars[i].h - bars[i].l);
+    else tr.push(Math.max(
+      bars[i].h - bars[i].l,
+      Math.abs(bars[i].h - bars[i-1].c),
+      Math.abs(bars[i].l - bars[i-1].c)
+    ));
+  }
+  // --- ATR Wilder (RMA), idéntico a ta.atr() del Pine ---
+  const atrArr = new Array(bars.length).fill(NaN);
+  let atrPrev = 0, seed = 0;
+  for(let i = 0; i < bars.length; i++){
+    if(i < period){ seed += tr[i]; if(i === period - 1){ atrPrev = seed / period; atrArr[i] = atrPrev; } }
+    else { atrPrev = (atrPrev * (period - 1) + tr[i]) / period; atrArr[i] = atrPrev; }
+  }
+  // --- SuperTrend: bandas con ratchet + giro contra banda de la vela PREVIA (como Pine) ---
+  const result = [];
+  let finalUpperPrev = 0, finalLowerPrev = 0, trendPrev = 1, started = false;
+  for(let i = period - 1; i < bars.length; i++){
+    const atr = atrArr[i];
+    if(isNaN(atr)) continue;
+    const hl2 = (bars[i].h + bars[i].l) / 2;
+    const upper = hl2 + mult * atr;
+    const lower = hl2 - mult * atr;
+    let finalUpper, finalLower, trend;
+    if(!started){
+      finalUpper = upper; finalLower = lower; trend = bars[i].c >= hl2 ? 1 : -1; started = true;
+    } else {
+      finalUpper = (upper < finalUpperPrev || bars[i-1].c > finalUpperPrev) ? upper : finalUpperPrev;
+      finalLower = (lower > finalLowerPrev || bars[i-1].c < finalLowerPrev) ? lower : finalLowerPrev;
+      trend = bars[i].c > finalUpperPrev ? 1 : bars[i].c < finalLowerPrev ? -1 : trendPrev;
+    }
+    result.push({ i, upper:finalUpper, lower:finalLower, trend, line: trend===1?finalLower:finalUpper, atr });
+    finalUpperPrev = finalUpper; finalLowerPrev = finalLower; trendPrev = trend;
+  }
+  return result;
+}
+
+// ── MÚSCULO PINE v6.1: EMA200 · Discount/Premium · MTF 4H ───────
+//   CONTEXTO para el dashboard (idéntico al Pine). NO toca el score —
+//   en el Pine v6.1 estas tres también son solo filas de contexto.
+function emaLast(vals, period){
+  if(!vals || vals.length < period) return null;
+  const k = 2/(period+1);
+  let e = vals.slice(0, period).reduce((a,b)=>a+b,0)/period;     // seed = SMA, igual que ta.ema
+  for(let i=period;i<vals.length;i++) e = vals[i]*k + e*(1-k);
+  return e;
+}
+// pivote con 20 barras a cada lado — clon de ta.pivothigh/low(20,20)
+function lastPivot(bars, len, hi){
+  if(!bars || bars.length < len*2+1) return null;
+  for(let i = bars.length-1-len; i >= len; i--){
+    const v = hi ? bars[i].h : bars[i].l;
+    let ok = true;
+    for(let j=i-len; j<=i+len; j++){
+      if(j===i) continue;
+      const w = hi ? bars[j].h : bars[j].l;
+      if(hi ? (w >= v) : (w <= v)){ ok=false; break; }
+    }
+    if(ok) return v;
+  }
+  return null;
+}
+// resample a 1H por hora ET (para el MTF; el 4H reusa resampleSession4H)
+function resampleHourET(bars){
+  if(!bars || !bars.length) return [];
+  const fmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit'});
+  const buckets = new Map(); const order=[];
+  for(const b of bars){
+    const p = fmt.formatToParts(new Date(b.t*1000));
+    const g = t => p.find(x=>x.type===t).value;
+    let hh = parseInt(g('hour'),10); if(hh===24) hh=0;
+    if(hh < 9 || hh >= 16) continue;                 // RTH por hora (9–16 ET)
+    const key = `${g('year')}-${g('month')}-${g('day')}|${hh}`;
+    let bk = buckets.get(key);
+    if(!bk){ bk={t:b.t,o:b.o,h:b.h,l:b.l,c:b.c}; buckets.set(key,bk); order.push(key); }
+    else { bk.h=Math.max(bk.h,b.h); bk.l=Math.min(bk.l,b.l); bk.c=b.c; }
+  }
+  return order.map(k=>buckets.get(k));
+}
+// mitad superior del rango de N barras (la regla MTF del Pine)
+function rangeHalf(bars, n){
+  if(!bars || bars.length < 2) return null;
+  const s = bars.slice(-Math.min(n,bars.length));
+  const hi = Math.max(...s.map(b=>b.h)), lo = Math.min(...s.map(b=>b.l)), close = s[s.length-1].c;
+  return { hi, lo, close, bull: close > lo + (hi-lo)*0.5 };
+}
+// Contexto completo del músculo — devuelve solo texto/dirección para mostrar
+function computeContext(activeCandles, intradaySrc, price){
+  const ema200  = emaLast(activeCandles.map(b=>b.c), 200);
+  const trendStr = ema200!=null ? price > ema200 : null;            // close > ema200
+
+  const fibHi = lastPivot(activeCandles, 20, true);
+  const fibLo = lastPivot(activeCandles, 20, false);
+  let zoneTxt='—', zoneDir=0;
+  if(fibHi!=null && fibLo!=null){
+    const inDiscount = price < (fibHi+fibLo)/2;                     // eq = (fib_hi+fib_lo)/2
+    zoneTxt = inDiscount ? '📉 DISCOUNT (compra)' : '📈 PREMIUM (venta)';
+    zoneDir = inDiscount ? 1 : -1;
+  }
+
+  let mtfBull = null;
+  const src = (intradaySrc && intradaySrc.length) ? intradaySrc : activeCandles;
+  const h1 = rangeHalf(resampleHourET(src), 20);
+  const h4 = rangeHalf(resampleSession4H(src, false), 20);
+  if(h1 && h4) mtfBull = h1.bull && h4.bull;                        // 1H Y 4H en mitad superior
+
+  return { ema200, trendStr, zoneTxt, zoneDir, mtfBull };
+}
+
+// ── CHoCH + BOS ────────────────────────────────────────────────
+function detectStructure(bars){
+  if(!bars || bars.length < 10) return { choch:null, bos:null, swings:[] };
+  const swings = [];
+  for(let i = 2; i < bars.length - 2; i++){
+    if(bars[i].h > bars[i-1].h && bars[i].h > bars[i-2].h && bars[i].h > bars[i+1].h && bars[i].h > bars[i+2].h)
+      swings.push({ i, type:'HH', price: bars[i].h });
+    if(bars[i].l < bars[i-1].l && bars[i].l < bars[i-2].l && bars[i].l < bars[i+1].l && bars[i].l < bars[i+2].l)
+      swings.push({ i, type:'LL', price: bars[i].l });
+  }
+  const lastBar = bars[bars.length - 1];
+  const recentHH = swings.filter(s => s.type === 'HH').slice(-3);
+  const recentLL = swings.filter(s => s.type === 'LL').slice(-3);
+  let choch = null, bos = null;
+  if(recentHH.length >= 2){
+    const [prev, last2] = recentHH.slice(-2);
+    if(last2.price < prev.price && lastBar.c < last2.price) choch = { dir:'BEAR', price:prev.price, label:'CHoCH ▼ BAJISTA' };
+    else if(last2.price > prev.price && lastBar.c > last2.price) bos = { dir:'BULL', price:last2.price, label:'BOS ▲ ALCISTA' };
+  }
+  if(recentLL.length >= 2){
+    const [prev, last2] = recentLL.slice(-2);
+    if(last2.price > prev.price && lastBar.c > last2.price && !choch) choch = { dir:'BULL', price:prev.price, label:'CHoCH ▲ ALCISTA' };
+    else if(last2.price < prev.price && lastBar.c < last2.price && !bos) bos = { dir:'BEAR', price:last2.price, label:'BOS ▼ BAJISTA' };
+  }
+  return { choch, bos, swings };
+}
+
+// ── WHALE DETECTION ────────────────────────────────────────────
+function detectWhale(bars, threshold){
+  if(!bars || bars.length < 20) return null;
+  const avgVol = bars.slice(-20).reduce((a, b) => a + (b.v || 0), 0) / 20;
+  const last = bars[bars.length - 1];
+  if(!avgVol || avgVol === 0) return null;
+  if((last.v || 0) > avgVol * threshold){
+    return { vol: last.v, avgVol, ratio: ((last.v / avgVol)).toFixed(1), dir: last.c >= last.o ? 'BUY' : 'SELL' };
+  }
+  return null;
+}
+
+// ── FLUJO REAL ─────────────────────────────────────────────────
+// Mide los EFECTOS observables que el GEX / Max Pain / walls producen,
+// usando datos 100% reales de aggregates (autorizados por el plan Starter).
+// NO inventa la cadena de opciones. NO vota dirección ni suma al score:
+// es CONTEXTO que modula la lectura (condición anti-ruido del proyecto).
+function computeFlow(bars, vprofile, price, timeframe){
+  if(!bars || bars.length < 20 || !price) return null;
+  // True Range / ATR real (volatilidad realizada)
+  const tr = [];
+  for(let i=1;i<bars.length;i++){
+    const pc=bars[i-1].c;
+    tr.push(Math.max(bars[i].h-bars[i].l, Math.abs(bars[i].h-pc), Math.abs(bars[i].l-pc)));
+  }
+  const atrN = (arr,n)=> arr.length ? arr.slice(-Math.min(n,arr.length)).reduce((a,v)=>a+v,0)/Math.min(n,arr.length) : 0;
+  const atr14 = atrN(tr,14), atrFast = atrN(tr,7), atrSlow = atrN(tr,21);
+  const realizedVolPct = (atr14/price)*100;
+  // Régimen: el rol del GEX → ¿el precio se fija (mean-reversion) o rompe (momentum)?
+  const expRatio = atrSlow>0 ? atrFast/atrSlow : 1;
+  let regime, regimeNote;
+  if(expRatio >= 1.15){ regime='EXPANSIÓN'; regimeNote='Momentum — el precio tiende a romper niveles. Favorece continuación; cuidado con reversión a la media.'; }
+  else if(expRatio <= 0.85){ regime='COMPRESIÓN'; regimeNote='Fijación — rango estrecho, el precio gravita al imán (POC/VWAP). Favorece reversión, no ruptura.'; }
+  else { regime='NEUTRAL'; regimeNote='Volatilidad estable — sin sesgo de régimen claro.'; }
+  // Imán de volumen: el rol del Max Pain → POC + concentración + reacción
+  let poc=null, vah=null, val=null, magnetStrength=null, pocReact='—', pocDist=null;
+  if(vprofile){
+    poc = getPOC(vprofile);
+    const va = getVA(vprofile); vah=va.vah; val=va.val;
+    const tot = vprofile.profile.reduce((a,b)=>a+b,0) || 1;
+    magnetStrength = (Math.max(...vprofile.profile)/tot)*100;
+    pocDist = ((price-poc)/poc)*100;
+    const recent = bars.slice(-6);
+    const crossed = recent.some(b=>b.l<=poc) && recent.some(b=>b.h>=poc);
+    if(crossed) pocReact = bars[bars.length-1].c>poc ? 'Atraviesa ▲' : 'Atraviesa ▼';
+    else pocReact = price>poc ? 'Sostiene arriba' : 'Sostiene abajo';
+  }
+  // VWAP anclado a la sesión visible
+  const vwWin = ({'5':78,'15':52,'60':60,'240':60,'D':60})[timeframe] || 60;
+  const vwo = getVWAP(sessionBars(bars, timeframe, vwWin));
+  const vwap = vwo ? vwo.vwap : null;
+  // RVOL real (huella de volumen — la única "ballena" posible sin endpoint Trades)
+  const avg20 = bars.slice(-21,-1).reduce((a,b)=>a+(b.v||0),0)/20;
+  const lastV = bars[bars.length-1].v||0;
+  const rvol = avg20>0 ? lastV/avg20 : 0;
+  return { atr14, realizedVolPct, expRatio, regime, regimeNote, poc, vah, val, magnetStrength, pocReact, pocDist, vwap, rvol };
+}
+
+// Pools de liquidez: el rol de las "walls" → clusters de equal highs/lows (stops acumulados).
+// 100% real, derivado de los swings de estructura.
+function findLiquidityPools(swings, price){
+  if(!swings || !swings.length || !price) return { res:null, sup:null };
+  const highs = swings.filter(s=>s.type==='HH').map(s=>s.price);
+  const lows  = swings.filter(s=>s.type==='LL').map(s=>s.price);
+  const above = highs.filter(h=>h>price).sort((a,b)=>a-b);   // resistencias más cercanas primero
+  const below = lows.filter(l=>l<price).sort((a,b)=>b-a);     // soportes más cercanos primero
+  const cluster = (arr)=>{
+    if(!arr.length) return null;
+    const base = arr[0];
+    const grp = arr.filter(v=>Math.abs(v-base)/base <= 0.004); // equal H/L = dentro de 0.4%
+    return { price: grp.reduce((a,v)=>a+v,0)/grp.length, count: grp.length };
+  };
+  return { res: cluster(above), sup: cluster(below) };
+}
+
+// ── TP/SL ESTRUCTURALES ────────────────────────────────────────
+// TP precisos anclados a niveles REALES (VWAP, POC, VAH/VAL, pools de liquidez,
+// máx/mín del día, proyección medida desde el impulso/BOS). El ATR es solo relleno
+// cuando faltan niveles. Pensado para salidas precisas en opciones.
+function computeStructuralTargets(p, sigType, flow, pools, quote, struct, atr){
+  if((sigType!=='BUY' && sigType!=='SELL') || !p || !atr) return null;
+  const isBuy = sigType==='BUY';
+  // ── TP a la fórmula de TV/Pine: proyección ATR pura (igual que el indicador Pine v6) ──
+  // TP1=3×ATR (R:R 1:2 con SL 1.5×ATR), TP2=4.5×ATR, TP3=7.5×ATR. a14 = ATR(14) REAL del TF
+  // (mismo ta.atr(14) del Pine), no el escalado. Antes los TP se anclaban a estructura cercana
+  // (Máx/Mín día, pools) y quedaban pegados (TP1 a +0.04%). Ahora calzan con los números de TV.
+  const a14 = (flow && flow.atr14 && flow.atr14 > 0) ? flow.atr14 : atr;
+  const sgn = isBuy ? 1 : -1;
+  const tps = [
+    { price: p + sgn * 3.0 * a14, label: 'Proy. ATR' },
+    { price: p + sgn * 4.5 * a14, label: 'Proy. ATR' },
+    { price: p + sgn * 7.5 * a14, label: 'Proy. ATR' }
+  ];
+  // SL: invalidación estructural del lado opuesto + buffer ATR; con distancia mínima sensata
+  const slCand=[];
+  const addSL=(price,label)=>{ if(price!=null&&isFinite(price)&&(isBuy?price<p:price>p)) slCand.push({price,label}); };
+  addSL(isBuy ? (pools&&pools.sup&&pools.sup.price) : (pools&&pools.res&&pools.res.price), 'Pool');
+  addSL(isBuy ? (flow&&flow.val) : (flow&&flow.vah), isBuy?'VAL':'VAH');
+  addSL(isBuy ? (quote&&quote.l) : (quote&&quote.h), isBuy?'Mín día':'Máx día');
+  slCand.sort((a,b)=> isBuy ? b.price-a.price : a.price-b.price);
+  let slPrice, slLabel;
+  const buffer=atr*0.4;
+  if(slCand.length){ slPrice = isBuy ? slCand[0].price-buffer : slCand[0].price+buffer; slLabel=slCand[0].label; }
+  else { slPrice = isBuy ? p-atr*1.2 : p+atr*1.2; slLabel='ATR'; }
+  const minSL=atr*0.6;
+  if(isBuy && (p-slPrice)<minSL) slPrice=p-minSL;
+  if(!isBuy && (slPrice-p)<minSL) slPrice=p+minSL;
+  return { tps, sl:{ price:slPrice, label:slLabel } };
+}
+
+// Fuente ÚNICA de TP/SL estructurales — la usan el panel, el chart y la alerta de Telegram.
+// Garantiza que los tres muestren exactamente los mismos niveles (no pueden divergir).
+function getTargets(price, sigType, timeframe, ticker){
+  if(!candles || !candles.length || !vp || !price) return null;
+  const st = detectStructure(candles);
+  const fl = computeFlow(candles, vp, price, timeframe);
+  const pl = findLiquidityPools(st.swings, price);
+  const atr = getATR(ticker||sym, price, timeframe);
+  return computeStructuralTargets(price, sigType, fl, pl, quote, st, atr);
+}
+
+// ── STOP HUNT ─────────────────────────────────────────────────
+function detectStopHunt(candle){
+  if(!candle) return null;
+  const body = Math.abs(candle.c - candle.o);
+  const range = candle.h - candle.l;
+  if(range === 0) return null;
+  const upperWick = candle.h - Math.max(candle.o, candle.c);
+  const lowerWick = Math.min(candle.o, candle.c) - candle.l;
+  const isBullSH = lowerWick >= body * 2.5 && lowerWick >= range * 0.45;
+  const isBearSH = upperWick >= body * 2.5 && upperWick >= range * 0.45;
+  if(isBullSH) return { type:'SH_BUY', label:'Stop Hunt BULL ▲' };
+  if(isBearSH) return { type:'SH_SELL', label:'Stop Hunt BEAR ▼' };
+  return null;
+}
+
+// ── ADX / DMI — WILDER · IDÉNTICO A ta.dmi(14,14) DEL PINE v6.1 Y AL BOT ──
+// "El alma de TV": ADX ≥20 = tendencia válida · ≥30 = fuerte · <20 = LATERAL
+// → el titular pasa a LATERAL y NO se envía señal a Telegram (= adx_ok del Pine).
+const ADX_LEN = 14, ADX_MIN = 20, ADX_FUERTE = 30;
+function calcADX(cs, len = ADX_LEN){
+  if(!cs || cs.length < len*2+2) return null; // pocos datos → fail-open (no bloquea)
+  const rma = (vals,p)=>{ const out=new Array(vals.length).fill(null); let sum=0;
+    for(let i=0;i<vals.length;i++){ if(i<p){ sum+=vals[i]; if(i===p-1) out[i]=sum/p; } else out[i]=(out[i-1]*(p-1)+vals[i])/p; } return out; };
+  const trA=[],pdA=[],ndA=[];
+  for(let i=1;i<cs.length;i++){
+    const h=cs[i].h,l=cs[i].l,pc=cs[i-1].c;
+    trA.push(Math.max(h-l,Math.abs(h-pc),Math.abs(l-pc)));
+    const up=h-cs[i-1].h, dn=cs[i-1].l-l;
+    pdA.push(up>dn&&up>0?up:0); ndA.push(dn>up&&dn>0?dn:0);
+  }
+  const trR=rma(trA,len),pR=rma(pdA,len),nR=rma(ndA,len);
+  const dxA=[]; let dip=0,dim=0;
+  for(let i=0;i<trA.length;i++){
+    if(trR[i]===null) continue;
+    dip = trR[i]===0?0:100*pR[i]/trR[i];
+    dim = trR[i]===0?0:100*nR[i]/trR[i];
+    const s=dip+dim;
+    dxA.push(s===0?0:100*Math.abs(dip-dim)/s);
+  }
+  if(dxA.length<len) return null;
+  const adxR=rma(dxA,len), adx=adxR[adxR.length-1];
+  if(adx===null||!isFinite(adx)) return null;
+  return { adx, diPlus:dip, diMinus:dim,
+    strong:adx>=ADX_MIN, lateral:adx<ADX_MIN, bull:dip>dim, bear:dim>dip,
+    quality: adx>=ADX_FUERTE?'🔥 FUERTE':adx>=ADX_MIN?'✅ VÁLIDA':'⚠️ LATERAL' };
+}
+
+// ── NEURAL SCORE ───────────────────────────────────────────────
+// ════════════════════════════════════════════════════════════════════
+//  GOBERNADOR DE CONVICCIÓN (institucional · sesión 37) — DISPLAY, no veto.
+//  Modelo 4 pilares (tipo APEX): BIAS→RÉGIMEN→UBICACIÓN→SEÑAL+FILTRO.
+//  NO toca la dirección ni el score; gobierna el GRADO de convicción que se
+//  muestra, y explica POR QUÉ lo capó. Cap = mínimo de 3 gates:
+//   1) RÉGIMEN  (ADX<20 = rango → sin máxima convicción)
+//   2) UBICACIÓN(BUY solo en discount / SELL solo en premium; coherencia MTF+EMA200)
+//   3) INTEGRIDAD (calidad de confluencia + data parcial → "DATOS PARCIALES")
+// ════════════════════════════════════════════════════════════════════
+const GOV_GRADES = ['ESPERAR','DÉBIL','VÁLIDA','FUERTE','SNIPER'];
+const GOV_G = { ESPERAR:0, 'DÉBIL':1, 'VÁLIDA':2, FUERTE:3, SNIPER:4 };
+const GOV_PILLAR = { 'SuperTrend':'Momentum','ADX':'Momentum','CVD':'Volumen','Presión':'Volumen',
+  'BOS':'Estructura','CHoCH':'Estructura','VWAP':'Ubicación','Value Area':'Ubicación' };
+function govBaseGrade(rawScore, rawMax){
+  const frac = Math.min(1, Math.abs(rawScore)/(rawMax||12.5));
+  if(frac>=0.72) return GOV_G.SNIPER;
+  if(frac>=0.52) return GOV_G.FUERTE;
+  if(frac>=0.32) return GOV_G['VÁLIDA'];
+  if(frac>=0.16) return GOV_G['DÉBIL'];
+  return GOV_G.ESPERAR;
+}
+function governConviction(sig, ctx, opts){
+  opts = opts||{};
+  const rawMax=opts.rawMax!=null?opts.rawMax:12.5, adxMin=opts.adxMin!=null?opts.adxMin:20,
+        adxStrong=opts.adxStrong!=null?opts.adxStrong:30, minPillars=opts.minPillars!=null?opts.minPillars:3,
+        minLiveFrac=opts.minLiveFrac!=null?opts.minLiveFrac:0.6;
+  const dir=sig.type, dirSign=dir==='BUY'?1:dir==='SELL'?-1:0, caps=[], capList=[];
+  let ceiling=govBaseGrade(sig.rawScore, rawMax);
+  const capAt=(l,m)=>{ ceiling=Math.min(ceiling,l); capList.push({l,m}); caps.push(m); };
+  if(dirSign===0) return { direction:'NEUTRAL', grade:'ESPERAR', gradeIdx:0, caps:[], reason:null, liveLayers:0,
+    totalLayers:(sig.layers||[]).length, pillars:[], nPillars:0, partial:false };
+  // GATE 0 · FRESCURA — serie vieja = no confiable, sin importar lo que griten las capas
+  if(opts.stale){ capAt(GOV_G['DÉBIL'], opts.staleMsg || 'DATA VIEJA — no confiable'); }
+  // GATE 1 · RÉGIMEN
+  const adx = sig.adx ? sig.adx.adx : null;
+  if(adx==null){ capAt(GOV_G['DÉBIL'], 'régimen sin ADX'); }
+  else if(adx<adxMin){ capAt(GOV_G['DÉBIL'], 'rango — ADX '+adx.toFixed(1)+' <'+adxMin); }
+  else if(adx<adxStrong){ capAt(GOV_G.FUERTE, 'régimen válido no fuerte (ADX '+adx.toFixed(1)+')'); }
+  if(sig.adx && sig.adx.strong){
+    const ok=(dirSign>0&&sig.adx.bull)||(dirSign<0&&sig.adx.bear);
+    if(!ok){ capAt(GOV_G['VÁLIDA'], 'DMI no confirma'); }
+  }
+  // GATE 2 · UBICACIÓN — coherencia HTF primero (la usa el gate de ubicación)
+  const mtfAg = ctx && ctx.mtfBull!=null && ((dirSign>0&&ctx.mtfBull===false)||(dirSign<0&&ctx.mtfBull===true));
+  const trAg  = ctx && ctx.trendStr!=null && ((dirSign>0&&ctx.trendStr===false)||(dirSign<0&&ctx.trendStr===true));
+  const htfAg = mtfAg || trAg;
+  if(ctx && ctx.zoneDir){
+    const good=(dirSign>0&&ctx.zoneDir>0)||(dirSign<0&&ctx.zoneDir<0);
+    // CALIBRACIÓN s38: ubicación adversa SOLA → VÁLIDA si el HTF confirma; DÉBIL solo si HTF en contra.
+    if(!good){ const w=dirSign>0?'comprando en PREMIUM (venta)':'vendiendo en DISCOUNT (compra)'; capAt(htfAg?GOV_G['DÉBIL']:GOV_G['VÁLIDA'], htfAg?w:w+' — HTF confirma → media'); }
+  }
+  if(ctx){
+    if(mtfAg && trAg){ capAt(GOV_G['DÉBIL'], 'contra el HTF (MTF 4H + EMA200)'); }
+    else if(mtfAg||trAg){ capAt(GOV_G['VÁLIDA'], mtfAg?'MTF 4H en contra':'lado equivocado de EMA200'); }
+  }
+  // GATE 3 · INTEGRIDAD
+  const layers=sig.layers||[], pillars=new Set(); let live=0;
+  for(const L of layers){ if(L&&L.dir!==0){ live++; if((dirSign>0&&L.dir>0)||(dirSign<0&&L.dir<0)){ const pi=GOV_PILLAR[L.name]; if(pi) pillars.add(pi); } } }
+  const nP=pillars.size, total=layers.length, partial=total>0&&live<Math.ceil(total*minLiveFrac);
+  if(partial){ capAt(GOV_G['DÉBIL'], 'DATOS PARCIALES ('+live+'/'+total+' capas)'); }
+  if(nP<minPillars){ capAt(nP<=1?GOV_G['DÉBIL']:GOV_G['VÁLIDA'], 'confluencia floja ('+nP+'/4 pilares)'); }
+  ceiling=Math.max(0,Math.min(GOV_G.SNIPER,ceiling));
+  const binding=capList.filter(c=>c.l===ceiling).map(c=>c.m);
+  const reason=binding.length?binding.join(' · '):(caps[0]||null);
+  return { direction:dir, grade:GOV_GRADES[ceiling], gradeIdx:ceiling, caps, reason, liveLayers:live, totalLayers:total, pillars:[...pillars], nPillars:nP, partial };
+}
+function govLabel(g){ return ({ SNIPER:'🎯 SNIPER',FUERTE:'🔥 FUERTE','VÁLIDA':'✅ VÁLIDA','DÉBIL':'⚠️ DÉBIL',ESPERAR:'⏸️ ESPERAR' })[g]||g; }
+
+function computeNeuralScore(p){
+  if(!p || !vp) return { type:'NEUTRAL', score:0, rawScore:0, conf:[], superTrendDir:0, layers:[] };
+  const conf = [];
+  const layers = [];
+  let score = 0;
+  const rawMax = 12.5; // ST3 + VWAP1.5 + CVD1.5 + BOS3 + CHoCH0.5 + Presión1 + ValueArea1 + ADX1
+  const addL = (name, val, dir) => layers.push({ name, val, dir }); // dir: 1 bull, -1 bear, 0 neutral
+
+  // CAPA ADX — EL ALMA DE TV (= capa 13 del Pine v6.1, mismo peso que el bot)
+  const adxObj = calcADX(candles);
+  if(adxObj && adxObj.strong){
+    if(adxObj.bull){ score += 1; conf.push('📡 ADX '+adxObj.adx.toFixed(1)+' + DMI alcista ✓'); addL('ADX', 1, 1); }
+    else if(adxObj.bear){ score -= 1; conf.push('📡 ADX '+adxObj.adx.toFixed(1)+' + DMI bajista ✗'); addL('ADX', 1, -1); }
+    else addL('ADX', 0, 0);
+  } else { addL('ADX', 0, 0); }
+
+  // CAPA 1 — SuperTrend JUEZ (3 pts máx)
+  const stLast = stResult && stResult.length > 0 ? stResult[stResult.length - 1] : null;
+  const stDir = stLast ? stLast.trend : 0;
+  if(stDir === 1)       { score += 3; conf.push('⚡ SuperTrend ALCISTA ✓'); addL('SuperTrend', 3, 1); }
+  else if(stDir === -1) { score -= 3; conf.push('⚡ SuperTrend BAJISTA ✗'); addL('SuperTrend', 3, -1); }
+  else                  { addL('SuperTrend', 0, 0); }
+
+  // CAPA 2 — VWAP REAL (1.5 pts) — precio sobre/bajo VWAP ponderado por volumen
+  const vwWin2 = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
+  const vwObj = getVWAP(sessionBars(candles, tf, vwWin2));
+  const vwapVal = vwObj ? vwObj.vwap : getPOC(vp);
+  if(p > vwapVal) { score += 1.5; conf.push('📐 Precio sobre VWAP ✓'); addL('VWAP', 1.5, 1); }
+  else            { score -= 1.5; conf.push('📐 Precio bajo VWAP ✗'); addL('VWAP', 1.5, -1); }
+
+  // CAPA 3 — CVD (1.5 pts)
+  if(cvd > 0) { score += 1.5; conf.push('📈 CVD positivo ✓'); addL('CVD', 1.5, 1); }
+  else        { score -= 1.5; conf.push('📈 CVD negativo ✗'); addL('CVD', 1.5, -1); }
+
+  // CAPA 4 — ESTRUCTURA (BOS lidera; CHoCH confirma sin duplicar)
+  // BOS = movimiento confirmado (señal principal para salidas en opciones) → peso completo.
+  // CHoCH solo = reversa temprana → peso medio. CHoCH junto al BOS = confirma, no duplica.
+  const bosDir   = struct.bos   ? (struct.bos.dir   === 'BULL' ? 1 : -1) : 0;
+  const chochDir = struct.choch ? (struct.choch.dir === 'BULL' ? 1 : -1) : 0;
+  if(bosDir !== 0){
+    score += 3 * bosDir; conf.push(bosDir>0?'🏗 BOS ALCISTA ✓':'🏗 BOS BAJISTA ✗'); addL('BOS', 3, bosDir);
+    if(chochDir !== 0){
+      score += 0.5 * chochDir; conf.push(chochDir>0?'⚡ CHoCH confirma alcista':'⚡ CHoCH confirma bajista'); addL('CHoCH', 0.5, chochDir);
+    } else { addL('CHoCH', 0, 0); }
+  } else if(chochDir !== 0){
+    score += 1.5 * chochDir; conf.push(chochDir>0?'⚡ CHoCH ALCISTA (reversa temprana)':'⚡ CHoCH BAJISTA (reversa temprana)'); addL('CHoCH', 1.5, chochDir);
+    addL('BOS', 0, 0);
+  } else { addL('BOS', 0, 0); addL('CHoCH', 0, 0); }
+
+  // CAPA 5 — Buy pressure (1 pt)
+  const tot = buyV + sellV + 1;
+  const bp = (buyV / tot) * 100;
+  if(bp > 60)      { score += 1; conf.push('💪 Buy pressure 60%+ ✓'); addL('Presión', 1, 1); }
+  else if(bp < 40) { score -= 1; conf.push('💪 Sell pressure 60%+ ✗'); addL('Presión', 1, -1); }
+  else             { addL('Presión', 0, 0); }
+
+  // CAPA 6 — Posición vs Value Area (1 pt) — VAH/VAL del volume profile real
+  const va = getVA(vp);
+  if(p > va.vah)      { score += 1; conf.push('📊 Precio sobre VAH ✓ — aceptación alcista'); addL('Value Area', 1, 1); }
+  else if(p < va.val) { score -= 1; conf.push('📊 Precio bajo VAL ✗ — rechazo bajista'); addL('Value Area', 1, -1); }
+  else                { addL('Value Area', 0, 0); }  // dentro del VA = neutral, sin sesgo
+
+  // Kill Zone bonus
+  const kz = getKillZone();
+  if(kz.active && Math.abs(score) > 1) { score *= kz.weight; conf.push('🕐 ' + kz.name + ' ×' + kz.weight); }
+
+  // Normalize 0-10
+  const normalized = Math.round(Math.max(0, Math.min(10, ((score + rawMax) / (rawMax * 2)) * 10)));
+  const type = score >= 3 ? 'BUY' : score <= -3 ? 'SELL' : 'NEUTRAL';
+  // RÉGIMEN ADX — CONFLUENCIA, NO JUEZ (revisado 12-jun): el ADX es lento;
+  // NO bloquea el titular ni el envío. Solo informamos el régimen como etiqueta
+  // para que el ojo sepa si la señal nació en tendencia o en rango. El juez
+  // sigue siendo SuperTrend + estructura. (regimeWeak = solo dato, no veto.)
+  const regimeWeak = !!(adxObj && adxObj.lateral && type !== 'NEUTRAL');
+  return { type, score: normalized, rawScore: score, conf, superTrendDir: stDir, layers, adx: adxObj, regimeWeak };
+}
+
+// ── GEX / MAX PAIN ────────────────────────────────────────────
+// Funciones de GEX/Max Pain ELIMINADAS: requieren cadena de opciones real
+// (add-on Polygon, FASE 4). No se calculan con aproximaciones de precio.
+
+// ── CONFLUENCE METER PREMIUM ──────────────────────────────────
+// Muestra cada capa institucional con su peso y dirección, visual.
+function renderConfMeter(sig){
+  const el = document.getElementById('conf-meter');
+  if(!el || !sig || !sig.layers || !sig.layers.length){ if(el) el.style.display='none'; return; }
+  el.style.display='flex';
+  const maxW = { 'SuperTrend':3, 'VWAP':1.5, 'CVD':1.5, 'BOS':3, 'CHoCH':1.5, 'Presión':1, 'Value Area':1, 'ADX':1 };
+  el.innerHTML = sig.layers.map(L => {
+    const cls = L.dir>0?'cf-bull':L.dir<0?'cf-bear':'cf-neut';
+    const arrow = L.dir>0?'▲':L.dir<0?'▼':'•';
+    const lit = L.val>0 ? 'lit' : '';
+    const pct = Math.min(100, (L.val / (maxW[L.name]||3)) * 100);
+    const valTxt = L.dir===0 ? '—' : (L.dir>0?'+':'−')+L.val;
+    return `<div class="cf-chip ${cls} ${lit}">
+      <span class="cf-name">${L.name}</span>
+      <span class="cf-val">${arrow} ${valTxt}</span>
+      <span class="cf-track"><span class="cf-bar" style="width:${pct}%"></span></span>
+    </div>`;
+  }).join('');
+}
+
+// ── LOCK → INIT (key server-side; setup legacy de Polygon retirado) ────────────
+function initAfterLock(){ POLY_KEY = 'server-side'; try{ localStorage.removeItem('poly_key'); }catch(e){} initApp(); } // la key vive en el servidor (Alpaca); el navegador ya no la necesita ni la guarda
+
+// ── INIT APP ─────────────────────────────────────────────────
+async function initApp(){
+  initAudio();
+  // Canvas se inicializa aquí, DESPUÉS del login
+  cv = document.getElementById('chart-canvas');
+  ctx = cv.getContext('2d');
+  ofc = document.getElementById('of-canvas');
+  ofctx = ofc.getContext('2d');
+  // Listeners del canvas aquí también
+  cv.addEventListener('mousemove', onCanvasMouseMove);
+  cv.addEventListener('mouseleave', () => { document.getElementById('tip').style.display='none'; });
+  window.addEventListener('resize', resizeCanvas);
+  resizeCanvas();
+  loadSavedSymbols();
+  await loadAll();
+  // WebSocket Finnhub DESACTIVADO — fuente única Polygon (aggregates).
+  startTicker();
+  setInterval(updateClock, 1000);
+  setInterval(updateMktStatus, 5000);
+  setInterval(async () => { await loadCandles(); await loadOptionsMetrics(); recomputeIndicators(); drawAll(); updatePanels(); }, 60000);
+  setInterval(loadQuote, 8000);  // refresca precio/día desde aggregates Polygon
+  setInterval(() => { if(candles.length > 0){ recomputeIndicators(); drawAll(); updatePanels(); } }, 5000);
+  updateClock(); updateMktStatus();
+  setTimeout(() => { resizeCanvas(); if(candles.length>0) drawAll(); }, 500);
+  setTimeout(() => { resizeCanvas(); if(candles.length>0) drawAll(); }, 1500);
+}
+
+// ── DATA ──────────────────────────────────────────────────────
+// ── OPCIONES REALES (GEX / Max Pain, BS) · misma ruta que el bot ──────────────
+async function loadOptionsMetrics(){
+  try {
+    const r = await fetch(`${OPT_METRICS_URL}?sym=${encodeURIComponent(sym)}`);
+    const j = await r.json();
+    optMetrics = (j && j.ok) ? j : null;   // ok=false (ticker sin cadena) → null limpio
+  } catch(e){ optMetrics = null; }         // falla de red → null, el mapa sigue andando igual
+}
+
+async function loadAll(){ await loadQuote(); drawAll(); await loadCandles(); await loadOptionsMetrics(); recomputeIndicators(); updatePanels(); drawAll(); }
+
+async function loadQuote(){
+  if(!POLY_KEY) return;
+  try{
+    // SIN snapshot (el plan Starter no lo autoriza → 401). Precio del día + día previo
+    // desde aggregates diarios, que el plan SÍ autoriza. Una sola fuente: Polygon.
+    const to   = new Date().toISOString().slice(0,10);
+    const from = new Date(Date.now() - 7*86400000).toISOString().slice(0,10); // 7d cubre findes/feriados
+    const r = await fetch(`${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/1/day/${from}/${to}`)}&adjusted=true&sort=asc&limit=10`);
+    const d = await r.json();
+    if(d.status==='ERROR' || d.error || !d.results || !d.results.length){ console.warn('loadQuote: sin datos diarios', d.error||d.message||''); return; }
+    const bars = d.results;
+    // ── FIX confiabilidad: referencia diaria robusta a la APERTURA ──────────────
+    //   NO asumir que la última diaria de Polygon es HOY. En los primeros minutos
+    //   de sesión la diaria de hoy aún no existe → antes tomábamos AYER como "hoy"
+    //   y ANTEAYER como prevClose → % del día falso (el +5.25% de PLTR a las 09:40).
+    //   El +12h neutraliza el ancla del timestamp (da igual medianoche ET o UTC).
+    const etDate = ms => new Intl.DateTimeFormat('en-CA',{timeZone:'America/New_York',
+      year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(ms));
+    const todayET   = etDate(Date.now());
+    const lastBar   = bars[bars.length-1];
+    const lastIsToday = etDate(lastBar.t + 12*3600*1000) === todayET;   // diaria con ancla normalizada
+    // dayBar = la sesión de HOY si Polygon ya la formó; si no, null (todavía no abrió la diaria)
+    const dayBar  = lastIsToday ? lastBar : null;
+    // prevBar = el cierre previo REAL: la sesión anterior a hoy (o la última diaria si hoy aún no existe)
+    const prevBar = lastIsToday ? (bars.length>=2 ? bars[bars.length-2] : lastBar) : lastBar;
+    const prevClose = prevBar.c;
+    // precio "vivo": la diaria consolidada de HOY (volumen completo, delayed) cuando ya existe;
+    //   si no, la última vela intradía fresca. NUNCA el cierre de una vela 4H vieja como "precio de ahora".
+    const intradayLast = candles.length ? candles[candles.length-1].c : null;
+    const live = (dayBar ? dayBar.c : null) || intradayLast || prevClose;
+    if(!live){ return; }
+    const dayO = dayBar ? dayBar.o : (intradayLast || live);   // sin diaria de hoy aún no hay rango real
+    const dayH = dayBar ? Math.max(dayBar.h, live) : live;
+    const dayL = dayBar ? Math.min(dayBar.l, live) : live;
+    quote = {
+      c: live,
+      o: dayO,
+      h: dayH,
+      l: dayL,
+      pc: prevClose,
+      v: dayBar ? (dayBar.v || 0) : 0,
+      dp: prevClose ? ((live - prevClose) / prevClose * 100) : 0  // % real del día (vs cierre previo real)
+    };
+    updateQuotePanel(); updateMktStatus();
+    // Overlay precio vivo sobre la última vela real — SOLO si la serie está fresca.
+    // Si está vieja, no la tocamos: nada de pintar el precio de hoy sobre una vela de junio.
+    if(candles.length && !DATA_STALE){
+      const last = candles[candles.length-1];
+      last.c = live;
+      last.h = Math.max(last.h, live);
+      last.l = Math.min(last.l, live);
+      recomputeIndicators();
+    }
+    drawAll();
+    // Dispara alertas a Telegram (BUY/SELL, Stop Hunt, BOS/CHoCH, ballenas) con el precio fresco.
+    // Cada tipo tiene su propio cooldown interno + COOLDOWN_MS por señal → sin spam aunque corra cada 8s.
+    if(candles.length) checkAlerts(live);
+  } catch(e){ console.warn('loadQuote error:', e); }
+}
+
+// ── VELAS REALES · ALPACA SIP (vía proxy /alpaca; sin nada sintético) ────────────
+// TF → config de aggregates Polygon. El 4H es nativo (mult 4 / hour).
+function tfToPolygon(t){
+  return ({
+    '5':  {mult:5,  span:'minute', days:10},
+    '15': {mult:15, span:'minute', days:25},
+    '60': {mult:1,  span:'hour',   days:90},
+    '240':{mult:4,  span:'hour',   days:300},
+    'D':  {mult:1,  span:'day',    days:500}
+  })[t] || {mult:1, span:'hour', days:90};
+}
+
+async function loadCandles(){
+  if(!POLY_KEY){ console.warn('loadCandles: sin Polygon API key'); return; }
+  // ROOT #6: el 4H ya NO usa 15m (ese feed quedó pendiente de pago y su cobertura corta
+  // meses atrás → el 4H leía un régimen viejo). El 1H está fresco → el 4H pide 1H y
+  // resamplea a sesión (09:30/13:30, como TV). El 1H sigue su camino nativo.
+  const is4H = (tf === '240');
+  const cfg = is4H ? {mult:1, span:'hour', days:120} : tfToPolygon(tf); // 4H: 120d de 1H → ~160 velas de sesión (el arco pide 110+)
+  const fmt = d => new Date(d).toISOString().slice(0,10);
+  const to = fmt(Date.now()), from = fmt(Date.now() - cfg.days*86400000);
+  const url = `${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/${cfg.mult}/${cfg.span}/${from}/${to}`)}&adjusted=true&sort=asc&limit=50000`;
+  try{
+    const r = await fetch(url);
+    const d = await r.json();
+    if(d.status==='ERROR' || d.error){ console.warn('Polygon error:', d.error||d.message); return; }
+    if(!d.results || !d.results.length){ console.warn('Polygon sin velas para', sym, tf); return; }
+    // t de Polygon viene en ms → convertir a segundos para el resto del motor
+    let raw = d.results.map(b => ({ t: Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
+    raw.sort((a,b)=>a.t-b.t);  // asegurar ascendente sin importar el orden del feed (la última = la más reciente)
+    // GUARDA DE FRESCURA: ¿la última vela es de hoy o el feed se quedó viejo (ej. AAPL pegado al 1-jun)?
+    // Umbral conservador (5 días) → tolera findes/feriados, caza staleness grueso. Vale para TODOS los tickers/TFs.
+    const STALE_MAX_DAYS = 5;
+    const lastSec = raw.length ? raw[raw.length-1].t : 0;
+    const ageDays = lastSec ? (Date.now()/1000 - lastSec)/86400 : 999;
+    DATA_STALE = ageDays > STALE_MAX_DAYS;
+    DATA_LAST_LABEL = lastSec ? new Date(lastSec*1000).toLocaleDateString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric'}) : '—';
+    if(DATA_STALE) console.warn('DATA VIEJA', sym, tf, '— última vela', DATA_LAST_LABEL, '('+ageDays.toFixed(0)+'d)');
+    // Overlay precio vivo sobre la última vela CRUDA — SOLO si la serie está fresca.
+    // Si está vieja NO la tocamos: así el precio vivo no estira una vela vieja y arma el monstruo que infla ADX/ST.
+    if(quote.c && raw.length && !DATA_STALE){
+      const last = raw[raw.length-1];
+      last.c = quote.c;
+      if(quote.h) last.h = Math.max(last.h, quote.h);
+      if(quote.l) last.l = Math.min(last.l, quote.l);
+    }
+    if(is4H){
+      vpBars  = raw;                             // 1H crudos = fuente de VWAP/POC de sesión (vía sessionBars)
+      candles = resampleSession4Hh(raw, false);  // 4H ancladas a sesión DESDE 1H → chart / ST / estructura = TV (y fresco)
+    } else {
+      candles = raw;
+      if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
+      vpBars  = candles;                        // resto de TFs: VWAP/POC sobre las mismas velas (igual que antes)
+    }
+    // VOLUME PROFILE sobre VENTANA OPERATIVA (no toda la historia) — clave anti-POC-viejo.
+    // Por TF: ventana proporcional a lo que el trader realmente opera.
+    const vpWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
+    vp = buildVP(sessionBars(candles, tf, vpWin), 60);
+    const cp = quote.c || candles[candles.length-1].c;
+    zones = buildZones(cp);
+    // CVD aproximado por dirección de vela (FASE 3 = trades reales por agresor)
+    const cvdBars = candles.slice(-30);
+    cvd = cvdBars.reduce((a,b) => a+(b.c>=b.o?b.v:-b.v), 0);
+    // Buy/Sell vol REAL-ish: posición del cierre en el rango de cada vela (close-location value)
+    // ponderada por volumen. Antes buyV/sellV quedaban en 0 → barra clavada en 5/95 en TODOS los
+    // tickers. Ahora el split varía de verdad y acompaña al CVD neto.
+    buyV = 0; sellV = 0;
+    for(const b of cvdBars){
+      const rng = b.h - b.l;
+      const buyFrac = rng > 0 ? (b.c - b.l) / rng : 0.5;
+      buyV  += (b.v||0) * buyFrac;
+      sellV += (b.v||0) * (1 - buyFrac);
+    }
+    recomputeIndicators();
+    updateVP(); updateCandleList(); drawAll();
+  } catch(e){ console.warn('loadCandles Polygon error:', e); }
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+//  ARC VWAP SUPERTREND [BOSWaves] — motor por-vela (clon validado del bot CAPA 14)
+//  Original Pine v6 © BOSWaves · MPL 2.0 (https://mozilla.org/MPL/2.0/) · port JS.
+//  computeArcSeries == computeArc (arc_boswaves.js) en estado final — cross-validado.
+//  t en SEGUNDOS (mapa) o MS: toMs() normaliza para anclar bien los VWAPs.
+// ════════════════════════════════════════════════════════════════════════════
+// ════════════════════════════════════════════════════════════════════
+//  /diag DEL ADX (sesión 37) — mide, no adivina (como /polygon-diag).
+//  Misterio: WMT 4H mapa 31.4 vs bot 13.6 vs TV 14.7. Misma fórmula Wilder,
+//  misma fuente Massive → la diferencia está en la SERIE. Esto la expone.
+//  USO: F12 → Console → escribir  adxDiag()  → Enter. (o Ctrl+Shift+D)
+//  Sale un alert con el resumen + detalle completo en la consola. Screenshot → me lo mandás.
+// ════════════════════════════════════════════════════════════════════
+function adxDiag(){
+  try{
+    const cs = (typeof candles!=='undefined' && candles) ? candles : [];
+    if(!cs.length){ alert('adxDiag: no hay velas cargadas todavía'); return; }
+    const tfL = ({'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'})[tf]||tf;
+    const adxOf = arr => { const o=calcADX(arr); return o? o.adx : null; };
+    const f = n => n==null ? '—' : n.toFixed(1);
+
+    // 1) ADX por ventana → ¿el largo de la serie mueve el número? (warmup/ventana)
+    const full = adxOf(cs);
+    const a120 = cs.length>=42 ? adxOf(cs.slice(-120)) : null;
+    const a90  = cs.length>=42 ? adxOf(cs.slice(-90))  : null;
+    const a60  = cs.length>=32 ? adxOf(cs.slice(-60))  : null;
+
+    // 2) ¿La última vela (overlay de precio vivo) infla? ADX sin la última.
+    const aNoLast = cs.length>3 ? adxOf(cs.slice(0,-1)) : null;
+
+    // 3) Velas malformadas: rangos atípicos (holidays/half-days/sesión incompleta)
+    const ranges = cs.map(b=>b.h-b.l).filter(r=>isFinite(r)&&r>=0).sort((x,y)=>x-y);
+    const med = ranges.length? ranges[Math.floor(ranges.length/2)] : 0;
+    const outliers = cs.filter(b=>med>0 && (b.h-b.l) > med*4);
+    const etTs = t => new Date(t*1000).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+
+    // 4) Fuente cruda (en 4H, vpBars = 15m crudos que alimentan el resample)
+    const rawN = (typeof vpBars!=='undefined' && vpBars) ? vpBars.length : 0;
+    const lastN = cs.slice(-3).map(b=>`${etTs(b.t)} O${b.o} H${b.h} L${b.l} C${b.c}`);
+
+    const lines = [
+      `── /diag ADX · ${sym} ${tfL} ──`,
+      `velas en serie (→calcADX): ${cs.length}` + (tf==='240'?`  ·  1H crudos: ${rawN}`:''),
+      `ADX completo:        ${f(full)}   ← el que muestra el mapa`,
+      `ADX últimas 120:     ${f(a120)}`,
+      `ADX últimas 90:      ${f(a90)}`,
+      `ADX últimas 60:      ${f(a60)}`,
+      `ADX sin última vela: ${f(aNoLast)}   (Δ ${full!=null&&aNoLast!=null?(full-aNoLast>=0?'+':'')+(full-aNoLast).toFixed(1):'—'})`,
+      `rango mediano: ${med.toFixed(2)}  ·  velas atípicas (>4× mediana): ${outliers.length}`,
+      outliers.length? '  '+outliers.slice(-4).map(b=>`${etTs(b.t)} rango ${(b.h-b.l).toFixed(2)}`).join('\n  ') : '  (sin atípicas)',
+      `últimas 3 velas:`,
+      '  '+lastN.join('\n  ')
+    ];
+    const report = lines.join('\n');
+    console.log('%c'+report, 'font-family:monospace;font-size:12px');
+
+    // Lectura automática (qué sospechar según los números)
+    let verdict = '';
+    if(full!=null && aNoLast!=null && Math.abs(full-aNoLast) > 4) verdict = '⚠ La ÚLTIMA vela infla el ADX (overlay de precio vivo / sesión incompleta).';
+    else if(outliers.length > 0) verdict = '⚠ Hay '+outliers.length+' vela(s) atípica(s) — rango anómalo infla DM/TR.';
+    else if(full!=null && a60!=null && Math.abs(full-a60) > 6) verdict = '⚠ El número cambia mucho con la ventana — sensible al largo de la serie.';
+    else verdict = '✅ ADX estable entre ventanas y sin atípicas — la serie luce sana.';
+
+    alert(report + '\n\n' + verdict + '\n\n(detalle completo en la consola F12)');
+    return report;
+  }catch(e){ alert('adxDiag error: '+e.message); console.error(e); }
+}
+window.adxDiag = adxDiag;
+document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==='D'||e.key==='d')){ e.preventDefault(); adxDiag(); } });
+
+const ARC_DEFAULTS = { accelRate:0.12, startMult:2.0, smooth:3, vwapAccelBoost:1.5,
+  filterPeriod:'Session', initBars:100, maxLevels:10, anchorTz:'America/New_York' }; // BOLSA = ET
+const _arcToMs = t => (t < 1e12 ? t * 1000 : t);
+const _arcFmtCache = new Map();
+function _arcTzFmt(tz){ if(!_arcFmtCache.has(tz)){ _arcFmtCache.set(tz, new Intl.DateTimeFormat('en-US',{ timeZone:tz, year:'numeric', month:'2-digit', day:'2-digit' })); } return _arcFmtCache.get(tz); }
+function _arcTzParts(tMs, tz){ if(tz==='UTC'){ const d=new Date(tMs); return {y:d.getUTCFullYear(), m:d.getUTCMonth()+1, d:d.getUTCDate()}; } const p=_arcTzFmt(tz).formatToParts(new Date(tMs)); const g=t=>p.find(x=>x.type===t).value; return {y:+g('year'), m:+g('month'), d:+g('day')}; }
+function _arcDayKey(tMs,tz){ const e=_arcTzParts(tMs,tz); return `${e.y}-${e.m}-${e.d}`; }
+function _arcMonthKey(tMs,tz){ const e=_arcTzParts(tMs,tz); return `${e.y}-${e.m}`; }
+function _arcWeekKey(tMs,tz){ const e=_arcTzParts(tMs,tz); const d=new Date(Date.UTC(e.y,e.m-1,e.d)); const dn=(d.getUTCDay()+6)%7; d.setUTCDate(d.getUTCDate()-dn+3); const ft=new Date(Date.UTC(d.getUTCFullYear(),0,4)); const wk=1+Math.round(((d-ft)/86400000-3+((ft.getUTCDay()+6)%7))/7); return `${d.getUTCFullYear()}-W${wk}`; }
+
+function computeArcSeries(candles, opts){
+  const o = Object.assign({}, ARC_DEFAULTS, opts||{});
+  const n = candles ? candles.length : 0;
+  const minBars = o.initBars + 10;
+  const series=new Array(n).fill(null), trendSeries=new Array(n).fill(null), flippedAt=new Array(n).fill(false);
+  if(n < minBars){ return { initialized:false, bars:n, reason:`necesita ${minBars}+ velas (hay ${n})`, series, trendSeries, plot:new Array(n).fill(null), flips:[], levels:[], trend:'BULL', lastFlip:null }; }
+
+  const tr=new Array(n).fill(null);
+  for(let i=0;i<n;i++){ const c=candles[i]; tr[i]= i===0 ? (c.h-c.l) : Math.max(c.h-c.l, Math.abs(c.h-candles[i-1].c), Math.abs(c.l-candles[i-1].c)); }
+
+  let trend=true, arc=NaN, velocity=0, initDone=false;
+  let atr14=null, trSum100=0, atrSlow=null;
+  let cumPvS=0, cumVolS=0, vwapSession=NaN, dayK=null;
+  let cumPvW=0, cumVolW=0, vwapWeek=NaN,   weekK=null;
+  let cumPvM=0, cumVolM=0, vwapMonth=NaN,  monthK=null;
+  const flips=[], levels=[];
+
+  const vwapAgrees=(bullish, close)=>{ const s=bullish?close>=vwapSession:close<=vwapSession; const w=bullish?close>=vwapWeek:close<=vwapWeek; const m=bullish?close>=vwapMonth:close<=vwapMonth; switch(o.filterPeriod){ case 'Session':return s; case 'Week':return w; case 'Month':return m; case 'Any':return s||w||m; case 'All':return s&&w&&m; default:return true; } };
+
+  for(let i=0;i<n;i++){
+    const c=candles[i], hl2=(c.h+c.l)/2, vol=c.v||0, isLast=i===n-1, tMs=_arcToMs(c.t);
+    const dk=_arcDayKey(tMs,o.anchorTz), wk=_arcWeekKey(tMs,o.anchorTz), mk=_arcMonthKey(tMs,o.anchorTz);
+    if(dk!==dayK){ cumPvS=0; cumVolS=0; dayK=dk; }
+    if(wk!==weekK){ cumPvW=0; cumVolW=0; weekK=wk; }
+    if(mk!==monthK){ cumPvM=0; cumVolM=0; monthK=mk; }
+    cumPvS+=hl2*vol; cumVolS+=vol; vwapSession=cumVolS>0?cumPvS/cumVolS:hl2;
+    cumPvW+=hl2*vol; cumVolW+=vol; vwapWeek=cumVolW>0?cumPvW/cumVolW:hl2;
+    cumPvM+=hl2*vol; cumVolM+=vol; vwapMonth=cumVolM>0?cumPvM/cumVolM:hl2;
+
+    atr14=(i<14)?(i===13?tr.slice(0,14).reduce((a,b)=>a+b,0)/14:atr14):(atr14*13+tr[i])/14;
+    trSum100+=tr[i]; if(i>=100) trSum100-=tr[i-100];
+    atrSlow = i>=99 ? trSum100/100 : null;
+    const safeSlow = atrSlow!==null&&atrSlow>0?atrSlow:1;
+    const safeAtr  = atr14!==null&&atr14>0?atr14:1;
+
+    if(!initDone && atrSlow!==null && i>o.initBars){ arc=c.l-safeSlow*o.startMult; trend=true; initDone=true; series[i]=arc; trendSeries[i]=trend; flippedAt[i]=false; continue; }
+    if(!initDone) continue;
+
+    const prevTrend=trend;
+    if(c.c<arc) trend=false;
+    if(c.c>arc) trend=true;
+    const rawFlipped = trend!==prevTrend;
+    const flipConfirmed = rawFlipped && vwapAgrees(trend,c.c);
+
+    if(rawFlipped){
+      if(trend){ arc=c.l-safeSlow*o.startMult; } else { arc=c.h+safeSlow*o.startMult; }
+      velocity=0;
+      const lvlPrice = trend?c.l:c.h;
+      flips.push({ index:i, t:c.t, price:lvlPrice, bull:trend, confirmed:flipConfirmed, live:isLast });
+      levels.push({ price:lvlPrice, bull:trend, t:c.t, index:i });
+      while(levels.length>o.maxLevels) levels.shift();
+    }
+
+    for(let k=levels.length-1;k>=0;k--){ const L=levels[k]; if(L.index===i) continue; const broken=L.bull?c.c<L.price:c.c>L.price; if(broken&&!isLast) levels.splice(k,1); }
+
+    const vwapDistNorm = Math.min(Math.abs(c.c-vwapSession)/(safeAtr*4), 1.0);
+    const effectiveAccel = o.accelRate*(1.0+(o.vwapAccelBoost-1.0)*vwapDistNorm);
+    if(i%o.smooth===0){ velocity+=effectiveAccel; const stepSize=safeSlow*0.15; arc+=(trend?1:-1)*stepSize*velocity; }
+
+    series[i]=arc; trendSeries[i]=trend; flippedAt[i]=rawFlipped;
+  }
+
+  const plot=new Array(n).fill(null);
+  for(let i=0;i<n;i++){ if(series[i]===null||flippedAt[i]) continue; let sum=0,cnt=0; for(let k=i;k>i-o.smooth&&k>=0;k--){ if(series[k]===null) break; sum+=series[k]; cnt++; } if(cnt===o.smooth) plot[i]=sum/cnt; }
+
+  const lastFlip = flips.length?flips[flips.length-1]:null;
+  return { initialized:initDone, bars:n, trend:trend?'BULL':'BEAR', arc, velocity, atr14, atrSlow,
+    vwapSession, vwapWeek, vwapMonth, series, trendSeries, plot, flips, lastFlip,
+    flipAgeBars:lastFlip?(n-1-lastFlip.index):null, levels:levels.slice(), price:candles[n-1].c };
+}
+
+// Recalculate all indicators after candle update
+function recomputeIndicators(){
+  if(!candles.length) return;
+  stResult = computeSuperTrend(candles, 10, 3.0);
+  struct = detectStructure(candles);
+  whaleDetected = detectWhale(candles, 3.0);
+  arcResult = computeArcSeries(candles); // Arc VWAP Supertrend [BOSWaves] · ancla ET
+}
+
+// ── WEBSOCKET ─────────────────────────────────────────────────
+function startWS(){
+  // WebSocket Finnhub ELIMINADO — fuente única Polygon (aggregates, refresco cada 8s).
+  // El tiempo real por WS de Polygon requiere add-on; no se usa Finnhub.
+  return;
+}
+
+// ── ALERTS ────────────────────────────────────────────────────
+let lastZoneAlert=0, lastMPAlert=0, lastDPAlert=0, lastWhaleAlert=0, lastStructAlert=0, gexWasPos=null;
+
+function checkAlerts(p){
+  // Stop Hunt
+  if(candles.length > 0){
+    const sh = detectStopHunt(candles[candles.length-1]);
+    if(sh && Date.now()-lastZoneAlert>30000){
+      playTone(660,0.1,'triangle'); showAlertPopup((sh.type==='SH_BUY'?'🟢':'🔴')+' '+sh.label);
+      // VIEW-ONLY: evento sin niveles → solo popup en el mapa, NO a Telegram
+      lastZoneAlert=Date.now();
+    }
+  }
+  // Zone touch
+  const nearZone = zones.find(z => Math.abs(z.price-p)/p < 0.0015 && z.strength > 0.70);
+  if(nearZone && alertCfg.zone && Date.now()-lastZoneAlert>30000){ playTone(660,0.1,'triangle'); showAlertPopup('💧 ZONA LIQUIDEZ: $'+p.toFixed(2)); /* VIEW-ONLY: no a Telegram */ lastZoneAlert=Date.now(); }
+  // Max Pain alert: DESACTIVADO — Max Pain real requiere cadena de opciones (FASE 4). No alertamos sobre dato inventado.
+  // Signal
+  const sig = computeNeuralScore(p);
+  if(sig.type==='BUY' && lastSignal!=='BUY' && alertCfg.buy){ playTone(880,0.4,'sine'); showAlertPopup('▲ BUY INSTITUCIONAL — Score '+sig.score+'/10'); if(sig.score>=7) sendTelegram('BUY',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='BUY'; }
+  else if(sig.type==='SELL' && lastSignal!=='SELL' && alertCfg.buy){ playTone(220,0.4,'sine'); showAlertPopup('▼ SELL INSTITUCIONAL — Score '+sig.score+'/10'); if(sig.score>=7) sendTelegram('SELL',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='SELL'; }
+  else if(sig.type==='NEUTRAL'){ lastSignal=''; }
+  // GEX flip alert: DESACTIVADO — GEX real requiere opciones (FASE 4).
+  // Whale
+  const wh = detectWhale(candles, 3.0);
+  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(440,0.3,'square',0.2); showAlertPopup('🐋 BALLENA '+wh.dir+' ×'+wh.ratio+' vol promedio'); /* VIEW-ONLY: no a Telegram */ lastWhaleAlert=Date.now(); }
+  // CHoCH/BOS
+  if(struct.choch && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.3,'triangle'); showAlertPopup('🏗 '+struct.choch.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
+  else if(struct.bos && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.2,'triangle'); showAlertPopup('🏗 '+struct.bos.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
+  // Dark Pool: DESACTIVADO — antes usaba un valor aleatorio (fake). FASE 4: prints reales con Polygon trades.
+}
+
+function showAlertPopup(msg){ const el=document.getElementById('alert-popup'); el.textContent=msg; el.style.display='block'; setTimeout(()=>{ el.style.display='none'; },4000); }
+function toggleAlertModal(){ const m=document.getElementById('alert-modal'); m.classList.toggle('show'); if(m.classList.contains('show')) initAudio(); }
+function toggleAL(el){ el.classList.toggle('on'); const id=el.id.replace('al-',''); alertCfg[id]=el.classList.contains('on'); }
+
+// ── PANELS ────────────────────────────────────────────────────
+function updatePanels(){ updateQuotePanel(); updateDerived(); updateVP(); updateZonesList(); updateCandleList(); updateOptionsPanel(); }
+
+// Panel GEX / Max Pain — se puebla con optMetrics (real). Si no hay dato → todo en "—".
+function updateOptionsPanel(){
+  const o = optMetrics;
+  const S = id => document.getElementById(id);
+  const money = v => (v==null||!isFinite(v)) ? '—' : '$'+(+v).toFixed(2);
+  if(!o || !o.ok || !o.gex){
+    ['opt-reg','opt-cw','opt-pw','opt-flip','opt-mp'].forEach(k=>{ const e=S(k); if(e) e.textContent='—'; });
+    const n=S('opt-note'); if(n) n.textContent='Sin datos de opciones (ticker sin cadena o ruta caída).';
+    return;
+  }
+  const long = o.gex.regimeCode === 'LONG_GAMMA';
+  const reg=S('opt-reg'); if(reg){ reg.textContent = long ? '🟢 LONG (pin)' : '🔴 SHORT (volátil)'; reg.className = 'vl '+(long?'g':'r'); }
+  if(S('opt-cw'))   S('opt-cw').textContent   = money(o.gex.callWall);
+  if(S('opt-pw'))   S('opt-pw').textContent   = money(o.gex.putWall);
+  if(S('opt-flip')) S('opt-flip').textContent = o.gex.gammaFlip ? money(o.gex.gammaFlip) : '—';
+  if(S('opt-mp'))   S('opt-mp').textContent   = money(o.maxPain);
+  if(S('opt-note')) S('opt-note').textContent = `exp ${o.expiration} · GEX ${o.gex.total_MM} MM · ${o.dias_a_exp}d`;
+}
+
+function updateQuotePanel(){
+  const d=quote; if(!d||!d.c) return;
+  const fmt=v=>v!=null?'$'+v.toFixed(2):'—';
+  const set=(id,v,cls)=>{ const e=document.getElementById(id);if(e){e.textContent=v;if(cls)e.className='vl '+cls;} };
+  set('rq-p',fmt(d.c),'g'); set('rq-o',fmt(d.o),'a'); set('rq-h',fmt(d.h),'g'); set('rq-l',fmt(d.l),'r'); set('rq-pc',fmt(d.pc),'');
+  const chg=(d.pc!=null && d.pc!==0)?(d.c-d.pc):0;
+  const chgPct=(d.dp!=null)?d.dp:0;
+  const up=chg>=0;
+  set('rq-d',(up?'+':'')+chg.toFixed(2),up?'g':'r');
+  set('rq-dp',(up?'+':'')+chgPct.toFixed(2)+'%',up?'g':'r');
+  document.getElementById('price-big').textContent=fmt(d.c);
+  document.getElementById('price-big').style.color=up?'var(--green)':'var(--red)';
+  const cd=document.getElementById('chg-disp'); cd.textContent=(up?'+':'')+chgPct.toFixed(2)+'%'; cd.className=up?'up':'dn';
+  set('k-h',d.h?.toFixed(2)||'—',''); set('k-l',d.l?.toFixed(2)||'—','');
+  set('k-vol',d.v?(d.v/1e6).toFixed(1)+'M':'—','');
+}
+
+function updateDerived(){
+  const p=quote.c; if(!p) return;
+  const set=(id,v,cls)=>{ const e=document.getElementById(id);if(e){e.textContent=v;if(cls)e.className='vl '+cls;} };
+
+  // ── SIGNAL PANEL GRANDE ──
+  const sig = computeNeuralScore(p);
+  const kz = getKillZone();
+  const tfLabels = {'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'};
+  const sigEl = document.getElementById('sig-main');
+  const sesgoEl = document.getElementById('sig-sesgo');
+  const qualEl = document.getElementById('sig-quality');
+  const scoreValEl = document.getElementById('score-val');
+  const scoreFillEl = document.getElementById('score-fill');
+  // Main signal — el ADX NO sustituye el titular; solo lo anota como contexto
+  if(sig.type==='BUY'){ sigEl.textContent='▲ BUY — COMPRA'; sigEl.className='buy'; }
+  else if(sig.type==='SELL'){ sigEl.textContent='▼ SELL — VENTA'; sigEl.className='sell'; }
+  else { sigEl.textContent='◈ NEUTRAL / ESPERAR'; sigEl.className='neutral'; }
+  const regNote = sig.regimeWeak ? ' · ⚠ rango (ADX '+sig.adx.adx.toFixed(1)+')' : (sig.adx&&sig.adx.strong?' · ADX '+sig.adx.adx.toFixed(1)+' '+sig.adx.quality:'');
+  sesgoEl.textContent = 'SESGO '+(tfLabels[tf]||tf)+' — Score '+sig.score+'/10'+regNote;
+  qualEl.textContent = sig.conf.slice(0,3).join(' · ');
+  scoreValEl.textContent = sig.score+'/10';
+  scoreFillEl.style.width = (sig.score*10)+'%';
+  renderConfMeter(sig);
+  const sc = sig.score;
+  scoreFillEl.style.background = sc>=8?'var(--green)':sc>=5?'var(--yellow)':sc>=3?'var(--orange)':'var(--red)';
+  // Kill Zone badge
+  const kzBadge = document.getElementById('kill-zone-badge');
+  if(kz.active){ kzBadge.textContent=kz.name; kzBadge.className='kill-badge active'; }
+  else { kzBadge.textContent='— KILL ZONE'; kzBadge.className='kill-badge off'; }
+  document.getElementById('kz-name').textContent = kz.active ? kz.name : '—';
+  // Struct badge
+  const sBadge = document.getElementById('struct-badge');
+  if(struct.choch){ sBadge.textContent=struct.choch.label; sBadge.className='struct-badge '+(struct.choch.dir==='BULL'?'bull':'bear'); sBadge.style.display=''; }
+  else if(struct.bos){ sBadge.textContent=struct.bos.label; sBadge.className='struct-badge '+(struct.bos.dir==='BULL'?'bull':'bear'); sBadge.style.display=''; }
+  else { sBadge.style.display='none'; }
+  // Whale badge
+  const wBadge = document.getElementById('whale-badge');
+  const wh = detectWhale(candles, 3.0);
+  if(wh){ wBadge.textContent='🐋 BALLENA '+wh.dir+' ×'+wh.ratio; wBadge.style.display=''; }
+  else { wBadge.style.display='none'; }
+  // Flujo real + pools de liquidez (se calculan UNA vez; los usan los TP y el panel)
+  const flow = computeFlow(candles, vp, p, tf);
+  const pools = findLiquidityPools(struct.swings, p);
+  // SL/TP ESTRUCTURALES (niveles reales; ATR solo de relleno)
+  const atr = getATR(sym, p, tf);
+  const tgt = computeStructuralTargets(p, sig.type, flow, pools, quote, struct, atr);
+  const setTP=(id,txt)=>{ const e=document.getElementById(id); if(e) e.textContent=txt; };
+  if(tgt){
+    setTP('sig-stop','SL $'+tgt.sl.price.toFixed(2)+' · '+tgt.sl.label);
+    tgt.tps.forEach((t,i)=> setTP('sig-t'+(i+1),'TP'+(i+1)+' $'+t.price.toFixed(2)+' · '+t.label));
+    for(let i=tgt.tps.length;i<3;i++) setTP('sig-t'+(i+1),'TP'+(i+1)+' —');
+  } else {
+    setTP('sig-stop','SL —'); setTP('sig-t1','TP1 —'); setTP('sig-t2','TP2 —'); setTP('sig-t3','TP3 —');
+  }
+  // k-gex / k-mp se setean en el bloque de Flujo Real (régimen + imán POC, datos reales)
+  // SuperTrend panel
+  const stLast = stResult.length>0 ? stResult[stResult.length-1] : null;
+  if(stLast){
+    const stDir = stLast.trend===1;
+    set('st-dir', stDir?'▲ ALCISTA':'▼ BAJISTA', stDir?'g':'r');
+    set('st-line','$'+stLast.line.toFixed(2),'a');
+    const stDist=((p-stLast.line)/p*100); set('st-dist',(stDist>=0?'+':'')+stDist.toFixed(2)+'%',stDist>=0?'g':'r');
+    const atrReal=(stLast.atr!=null&&isFinite(stLast.atr))?stLast.atr:(quote.h&&quote.l?(quote.h-quote.l)*0.5:p*0.008); set('st-atr','$'+atrReal.toFixed(2),'a');
+    document.getElementById('st-note').textContent=stDir?'Tendencia alcista. Buscar entradas en retrocesos al SuperTrend.':'Tendencia bajista. Cuidado con compras contra la tendencia.';
+  }
+  // ── CONTEXTO MÚSCULO (Pine v6.1): EMA200 · Zona ICT · MTF 4H — solo display ──
+  const ctx = computeContext(candles, vpBars, p);
+  if(ctx.trendStr===null) set('ctx-ema','—','');
+  else set('ctx-ema', ctx.trendStr?'▲ Alcista >EMA200':'▼ Bajista <EMA200', ctx.trendStr?'g':'r');
+  set('ctx-ict', ctx.zoneTxt, ctx.zoneDir===1?'g':(ctx.zoneDir===-1?'r':''));
+  if(ctx.mtfBull===null) set('ctx-mtf','—','');
+  else set('ctx-mtf', ctx.mtfBull?'▲ Alcista':'▼ Bajista', ctx.mtfBull?'g':'r');
+  // ── GOBERNADOR DE CONVICCIÓN (institucional · display, no veto) ──
+  // Muestra el veredicto gobernado AL LADO del score actual, sin alterar
+  // el título ni el número. Etapa de comparación: ver "lo que grita vs lo honesto".
+  try {
+    const gov = governConviction(sig, { trendStr:ctx.trendStr, zoneDir:ctx.zoneDir, mtfBull:ctx.mtfBull },
+                                 { stale: DATA_STALE, staleMsg: 'DATA VIEJA (último '+DATA_LAST_LABEL+') — no confiable' });
+    if(sig.type !== 'NEUTRAL'){
+      const why = gov.reason ? ' · capó: '+gov.reason : ' · confluencia limpia';
+      sesgoEl.textContent += '  🛡 ' + govLabel(gov.grade) + why;
+      // recolorea el medidor según la convicción GOBERNADA (no el bruto)
+      const govColor = gov.gradeIdx>=4?'var(--green)':gov.gradeIdx>=3?'var(--green)':gov.gradeIdx>=2?'var(--yellow)':gov.gradeIdx>=1?'var(--orange)':'var(--red)';
+      if(scoreFillEl) scoreFillEl.style.background = govColor;
+    }
+  } catch(e){ /* el gobernador nunca tumba el render */ }
+  // Structure panel
+  if(struct.choch){ set('s-choch',struct.choch.label,struct.choch.dir==='BULL'?'g':'r'); } else { set('s-choch','No detectado',''); }
+  if(struct.bos){ set('s-bos',struct.bos.label,struct.bos.dir==='BULL'?'g':'r'); } else { set('s-bos','No detectado',''); }
+  const hhs=struct.swings&&struct.swings.filter(s=>s.type==='HH');
+  const lls=struct.swings&&struct.swings.filter(s=>s.type==='LL');
+  if(hhs&&hhs.length>0) set('s-swh','$'+hhs[hhs.length-1].price.toFixed(2),'g');
+  if(lls&&lls.length>0) set('s-swl','$'+lls[lls.length-1].price.toFixed(2),'r');
+  const hasStructure=struct.choch||struct.bos;
+  document.getElementById('s-note').textContent=hasStructure?(struct.choch?'Cambio de tendencia detectado — alta prioridad':'Ruptura de estructura — confirmar con CVD'):'Estructura lateral — esperar confirmación';
+  // CVD
+  const tot=buyV+sellV+1,bp2=Math.min(95,Math.max(5,buyV/tot*100)),sp2=100-bp2;
+  const cvdM=(cvd/1e6).toFixed(2)+'M'; set('cvd-v',(cvd>=0?'+':'')+cvdM,cvd>=0?'g':'r');
+  document.getElementById('dbuy').style.width=bp2+'%'; document.getElementById('dsell').style.width=sp2+'%';
+  document.getElementById('bp-v').textContent=bp2.toFixed(0)+'% Buy'; document.getElementById('sp-v').textContent=sp2.toFixed(0)+'% Sell';
+  set('bvol-v',(buyV/1e6).toFixed(1)+'M','g'); set('svol-v',(sellV/1e6).toFixed(1)+'M','r');
+  const imb=((bp2-50)/50*100).toFixed(0); set('imb-v',(imb>=0?'+':'')+imb+'%',imb>=0?'g':'r');
+  // Whale panel
+  const whPanel = detectWhale(candles, 3.0);
+  if(whPanel){
+    set('wh-alert','⚠ DETECTADA','y'); set('wh-ratio','×'+whPanel.ratio,'y');
+    set('wh-dir',whPanel.dir==='BUY'?'▲ COMPRADORA':'▼ VENDEDORA',whPanel.dir==='BUY'?'g':'r');
+    set('wh-vol',(whPanel.vol/1e6).toFixed(1)+'M','p');
+  } else {
+    set('wh-alert','No detectada',''); set('wh-ratio','—',''); set('wh-dir','—',''); set('wh-vol','—','');
+  }
+  // ── PANEL DE FLUJO REAL (reemplaza el N/D FASE 4) ──
+  // Todo derivado de aggregates reales. NO suma al score (contexto que modula).
+  // GEX/Max Pain/cadena de opciones reales se montan encima al activar el add-on $199.
+  // (flow y pools ya calculados arriba, junto con los TP estructurales)
+  if(flow){
+    // Régimen de volatilidad (rol del GEX)
+    const regBull = flow.regime==='EXPANSIÓN', regNeu = flow.regime==='NEUTRAL';
+    set('fl-reg', flow.regime, regBull?'g':(regNeu?'':'y'));
+    const rb=document.getElementById('fl-reg-bar');
+    if(rb){ rb.style.width=Math.min(100,Math.max(8,flow.expRatio*55)).toFixed(0)+'%'; rb.style.background=regBull?'var(--gex-pos)':(regNeu?'var(--muted)':'var(--yellow)'); }
+    set('fl-vol', flow.realizedVolPct.toFixed(2)+'%','a');
+    set('fl-atr', '$'+flow.atr14.toFixed(2),'a');
+    set('fl-exp', flow.expRatio.toFixed(2)+'×', flow.expRatio>=1.15?'g':(flow.expRatio<=0.85?'y':''));
+    set('fl-react', flow.pocReact, flow.pocReact.includes('▲')?'g':(flow.pocReact.includes('▼')?'r':''));
+    const fn=document.getElementById('fl-reg-note'); if(fn) fn.textContent=flow.regimeNote;
+    set('k-gex', flow.regime, regBull?'':'');
+    // Imán de volumen (rol del Max Pain)
+    if(flow.poc!=null){
+      set('fl-poc','$'+flow.poc.toFixed(2),'y');
+      set('fl-pocd',(flow.pocDist>=0?'+':'')+flow.pocDist.toFixed(2)+'%', flow.pocDist>=0?'g':'r');
+      set('fl-magnet', flow.magnetStrength.toFixed(0)+'%','y');
+      set('k-mp','$'+flow.poc.toFixed(2),'');
+      // Visual: posición del precio respecto a VAL↔VAH (imán = POC)
+      const mpnd=document.getElementById('mpnd'), mplb=document.getElementById('mplb');
+      if(flow.val!=null && flow.vah!=null && flow.vah>flow.val){
+        const rng=flow.vah-flow.val;
+        const pricePct=Math.min(100,Math.max(0,((p-flow.val)/rng)*100));
+        const pocPct=Math.min(100,Math.max(0,((flow.poc-flow.val)/rng)*100));
+        if(mpnd){ mpnd.style.left=pricePct.toFixed(0)+'%'; }
+        if(mplb){ mplb.style.left=pocPct.toFixed(0)+'%'; mplb.textContent='POC'; }
+      }
+    }
+    if(flow.vwap!=null) set('fl-vwap','$'+flow.vwap.toFixed(2),'p');
+    // Pools de liquidez (rol de las walls) — pools ya calculado arriba
+    if(pools.res){ set('fl-res','$'+pools.res.price.toFixed(2)+(pools.res.count>1?' ('+pools.res.count+'×)':''),'g'); }
+    else set('fl-res','—','');
+    if(pools.sup){ set('fl-sup','$'+pools.sup.price.toFixed(2)+(pools.sup.count>1?' ('+pools.sup.count+'×)':''),'r'); }
+    else set('fl-sup','—','');
+    if(pools.res && pools.sup){
+      const dRes=Math.abs(pools.res.price-p), dSup=Math.abs(p-pools.sup.price);
+      set('fl-target', dRes<dSup?'▲ Resistencia':'▼ Soporte', dRes<dSup?'g':'r');
+    } else if(pools.res){ set('fl-target','▲ Resistencia','g'); }
+    else if(pools.sup){ set('fl-target','▼ Soporte','r'); }
+    else set('fl-target','—','');
+    // Flujo & Ballenas: RVOL real (huella de volumen)
+    set('fl-rvol', flow.rvol.toFixed(2)+'×', flow.rvol>=3?'y':(flow.rvol>=1.5?'g':''));
+    const whF = detectWhale(candles, 3.0);
+    if(whF){ set('fl-foot', whF.dir==='BUY'?'▲ COMPRADORA':'▼ VENDEDORA', whF.dir==='BUY'?'g':'r'); }
+    else set('fl-foot','Normal','');
+    // fl-prints / fl-dpool / fl-cvdagg quedan en "🔒 Developer $79" (se activan con endpoint Trades)
+  }
+  // VWAP REAL (precio típico ponderado por volumen sobre la ventana de sesión)
+  const vwWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
+  const vw = getVWAP(sessionBars(candles, tf, vwWin));
+  if(vw){
+    set('vwap-v','$'+vw.vwap.toFixed(2),'p');
+    set('vwap-up','$'+vw.up.toFixed(2),''); set('vwap-dn','$'+vw.dn.toFixed(2),'');
+    const vd=((p-vw.vwap)/vw.vwap*100); set('vwap-dist',(vd>=0?'+':'')+vd.toFixed(2)+'%',vd>=0?'g':'r');
+  }
+}
+
+function updateVP(){
+  if(!vp) return;
+  const poc=getPOC(vp), va=getVA(vp);
+  const set=(id,v)=>{ const e=document.getElementById(id);if(e)e.textContent=v; };
+  set('poc-v','$'+poc.toFixed(2)); set('vah-v','$'+va.vah.toFixed(2)); set('val-v','$'+va.val.toFixed(2));
+  const srt=[...vp.profile.map((v,i)=>({v,i}))].sort((a,b)=>b.v-a.v);
+  if(srt[1]) set('hvn-v','$'+(vp.min+srt[1].i*vp.binSize).toFixed(2));
+  if(srt[srt.length-2]) set('lvn-v','$'+(vp.min+srt[srt.length-2].i*vp.binSize).toFixed(2));
+  const mv=Math.max(...vp.profile), cv2=vp.profile[Math.floor(vp.profile.length/2)]||0;
+  document.getElementById('vf').style.width=Math.min(100,(cv2/mv)*100)+'%';
+}
+
+function updateCandleList(){
+  if(!candles.length) return;
+  const last=candles.slice(-5).reverse();
+  document.getElementById('candle-list').innerHTML=last.map(c=>{
+    const bull=c.c>=c.o, pct=((c.c-c.o)/c.o*100).toFixed(2);
+    const dt=new Date(c.t*1000).toLocaleDateString('es',{timeZone:'America/New_York',month:'short',day:'numeric'});
+    return `<div class="mr"><span class="lb">${dt}</span><span class="vl ${bull?'g':'r'}">${c.c.toFixed(2)} (${bull?'+':''}${pct}%)</span></div>`;
+  }).join('');
+}
+
+function updateZonesList(){
+  const el=document.getElementById('zones-list');
+  const p=quote.c||candles[candles.length-1]?.c||0;
+  if(!zones.length){ el.innerHTML='<span style="color:var(--muted);font-size:9px">Sin datos</span>'; return; }
+  const top=zones.filter(z=>z.strength>0.60).sort((a,b)=>b.strength-a.strength).slice(0,8);
+  el.innerHTML=top.map(z=>{
+    const col=z.strength>0.80?'#ffe000':z.strength>0.65?'#00ff9d':'#00e5ff';
+    const arr=z.side==='above'?'▲':'▼';
+    const dist=p?Math.abs((z.price-p)/p*100).toFixed(2):'—';
+    return `<div class="zi"><div class="zd" style="background:${col}"></div><div><div class="zp" style="color:${col}">${arr} $${z.price.toFixed(2)}</div><div class="zt">[${z.tf}] ${z.type} · ${dist}% away</div></div></div>`;
+  }).join('');
+}
+
+// ── ZONES ─────────────────────────────────────────────────────
+function buildZones(mid){
+  if(!candles.length) return [];
+  const z=[], tfs=['15m','1h','4h','1D'], types=['OB','FVG','POI','EQH','EQL'];
+  const bars=candles.slice(-100), mv=Math.max(...bars.map(b=>b.v||1));
+  for(let i=2; i<bars.length-2; i++){
+    const b=bars[i], age=(bars.length-i)/bars.length;
+    const tfIdx=age<0.25?3:age<0.5?2:age<0.75?1:0;
+    const typeIdx=b.v/mv>0.6?0:b.v/mv>0.4?1:b.v/mv>0.2?2:(i%3)+2;
+    const st=Math.min(1,0.45+(1-age)*0.4+(b.v/mv)*0.15);
+    if(b.h>=bars[i-1].h&&b.h>=bars[i-2].h&&b.h>=bars[i+1].h&&b.h>=bars[i+2].h&&st>0.55)
+      z.push({price:b.h,strength:st,tf:tfs[tfIdx],type:types[typeIdx],side:b.h>mid?'above':'below',width:4+st*30});
+    if(b.l<=bars[i-1].l&&b.l<=bars[i-2].l&&b.l<=bars[i+1].l&&b.l<=bars[i+2].l&&st>0.55)
+      z.push({price:b.l,strength:st,tf:tfs[tfIdx],type:types[typeIdx],side:b.l<mid?'below':'above',width:4+st*30});
+  }
+  // Psychological levels
+  const step=mid<50?1:mid<200?5:mid<500?10:25, base=Math.round(mid/step)*step;
+  for(let i=-8; i<=8; i++){
+    if(!i) continue;
+    const zPrice=base+i*step;
+    if(Math.abs(i)<=2) z.push({price:zPrice,strength:0.72,tf:'1D',type:'POI',side:zPrice>mid?'above':'below',width:15});
+  }
+  // Filter: max 16 zones, only strength > 0.55
+  return z.filter(z2=>z2.strength>0.55).sort((a,b)=>b.strength-a.strength).slice(0,16).sort((a,b)=>b.price-a.price);
+}
+
+// ── VOL PROFILE ───────────────────────────────────────────────
+// VWAP REAL: precio típico (H+L+C)/3 ponderado por volumen sobre la ventana de sesión
+// VWAP/POC ANCLADOS A LA SESIÓN (reset diario, como TradingView). El mapa guarda
+// el timestamp en SEGUNDOS. En intradía usa las velas de hoy (fecha ET); en Diario
+// mantiene la ventana rodante (en diario "sesión" = 1 vela, no aplica reset).
+// ── ROOT #5 FIX: 4H ANCLADO A LA SESIÓN (como TradingView) ──────────────
+// Polygon da barras de 4h de RELOJ (ancla fija + extendido) → el SuperTrend 4H salía
+// OPUESTO al Pine. TV ancla el 4H a la apertura de sesión: validado en AMZN, las velas
+// 4H de TV abren 09:30 y 13:30 ET (RTH 9:30–16:00). Resampleamos las velas de 15m (caen
+// en :30) a 4H de sesión: dos por día → [09:30–13:30) y [13:30–16:00). Sin pre/post-market.
+// El mapa trabaja en SEGUNDOS (tMs=false).
+function resampleSession4H(bars, tMs){
+  if(!bars || !bars.length) return [];
+  const toMs = t => tMs ? t : t*1000;
+  const fmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const buckets = new Map(); const order = [];
+  for(const b of bars){
+    const p = fmt.formatToParts(new Date(toMs(b.t)));
+    const g = t => p.find(x=>x.type===t).value;
+    let hh = parseInt(g('hour'),10); if(hh===24) hh=0;
+    const mins = hh*60 + parseInt(g('minute'),10);     // minutos ET desde 00:00
+    if(mins < 570 || mins >= 960) continue;            // fuera de RTH (570=9:30, 960=16:00)
+    const slot = mins < 810 ? 'A' : 'B';               // 810 = 13:30
+    const key = `${g('year')}-${g('month')}-${g('day')}|${slot}`;
+    let bk = buckets.get(key);
+    if(!bk){ bk = { t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }; buckets.set(key,bk); order.push(key); }
+    else { bk.h=Math.max(bk.h,b.h); bk.l=Math.min(bk.l,b.l); bk.c=b.c; bk.v+=(b.v||0); }
+  }
+  return order.map(k=>buckets.get(k));
+}
+
+// 4H DESDE 1H (ROOT #6): el feed de 15m quedó pendiente de pago y su cobertura corta meses
+// atrás → el 4H leía un régimen viejo. El horario (1H) está fresco; el 4H se arma resampleando
+// 1H a sesión. Anclaje por HORA ET (robusto a si el feed estampa :00 o :30):
+//   mañana = horas 09–12 (≈09:30–13:30) · tarde = horas 13–15 (≈13:30–16:00). Sin pre/post.
+function resampleSession4Hh(bars, tMs){
+  if(!bars || !bars.length) return [];
+  const toMs = t => tMs ? t : t*1000;
+  const fmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit'});
+  const buckets = new Map(); const order = [];
+  for(const b of bars){
+    const p = fmt.formatToParts(new Date(toMs(b.t)));
+    const g = t => p.find(x=>x.type===t).value;
+    let hh = parseInt(g('hour'),10); if(hh===24) hh=0;
+    if(hh < 9 || hh > 15) continue;                    // fuera de RTH horario (09–15 ET)
+    const slot = hh < 13 ? 'A' : 'B';                  // mañana 09–12 · tarde 13–15
+    const key = `${g('year')}-${g('month')}-${g('day')}|${slot}`;
+    let bk = buckets.get(key);
+    if(!bk){ bk = { t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }; buckets.set(key,bk); order.push(key); }
+    else { bk.h=Math.max(bk.h,b.h); bk.l=Math.min(bk.l,b.l); bk.c=b.c; bk.v+=(b.v||0); }
+  }
+  return order.map(k=>buckets.get(k));
+}
+
+function sessionBars(bars, tf, fallbackN){
+  // ROOT #5: en 4H las velas (candles) ahora son de SESIÓN (2 por día) → un VWAP/POC sobre
+  // 2 velas sería degenerado. Igual que el bot, el VWAP/POC del 4H se anclan a la sesión
+  // usando las velas de 15m (vpBars). Redirigimos acá: una sola puerta para todo el VWAP/POC.
+  if(tf === '240'){ bars = vpBars; tf = '15'; }
+  if(tf === 'D' || !bars || !bars.length) return bars ? bars.slice(-fallbackN) : [];
+  const etDate = t => new Date(t*1000).toLocaleDateString('en-US',{timeZone:'America/New_York'});
+  const lastDate = etDate(bars[bars.length-1].t);
+  const sess = bars.filter(b => etDate(b.t) === lastDate);
+  // Intradía (5m/15m/1H): sesión llena = ancla diaria real (como TV); respaldo corto si recién abre.
+  if(sess.length >= 4) return sess;
+  const tfFallback = ({'5':78,'15':52,'60':14})[tf] || fallbackN;
+  return bars.slice(-tfFallback);
+}
+function getVWAP(bars){
+  if(!bars || !bars.length) return null;
+  let pv=0, vol=0;
+  for(const b of bars){ const tp=(b.h+b.l+b.c)/3; pv += tp*(b.v||0); vol += (b.v||0); }
+  if(vol<=0) return null;
+  const vwap = pv/vol;
+  let varSum=0; for(const b of bars){ const tp=(b.h+b.l+b.c)/3; varSum += (b.v||0)*Math.pow(tp-vwap,2); }
+  const sd = Math.sqrt(varSum/vol);
+  return { vwap, up: vwap+sd, dn: vwap-sd };
+}
+function buildVP(bars,n){
+  if(!bars.length) return null;
+  const mn=Math.min(...bars.map(b=>b.l)), mx=Math.max(...bars.map(b=>b.h));
+  const bs=(mx-mn)/n, p=new Array(n).fill(0);
+  for(const b of bars){ const i=Math.max(0,Math.min(n-1,Math.floor((b.c-mn)/bs))); p[i]+=b.v||0; }
+  return {profile:p,min:mn,max:mx,binSize:bs};
+}
+function getPOC(v){ const i=v.profile.indexOf(Math.max(...v.profile)); return v.min+i*v.binSize+v.binSize/2; }
+function getVA(v){
+  const tot=v.profile.reduce((a,b)=>a+b,0),tgt=tot*.70;
+  const mi=v.profile.indexOf(Math.max(...v.profile));
+  let lo=mi,hi=mi,acc=v.profile[mi];
+  while(acc<tgt){ const al=lo>0?v.profile[lo-1]:0,ah=hi<v.profile.length-1?v.profile[hi+1]:0; if(al>=ah&&lo>0){lo--;acc+=al;}else if(hi<v.profile.length-1){hi++;acc+=ah;}else break; }
+  return{vah:v.min+hi*v.binSize+v.binSize,val:v.min+lo*v.binSize};
+}
+
+// ── CANVAS / CHART ─────────────────────────────────────────────
+let cv, ctx, ofc, ofctx;
+let pMin,pMax,pRng;
+
+function resizeCanvas(){
+  if(!cv) return;
+  const r=cv.parentElement.getBoundingClientRect();
+  cv.width=r.width; cv.height=r.height;
+  if(ofc) ofc.height=ofc.parentElement.getBoundingClientRect().height;
+  drawAll();
+}
+
+function computeRange(bars){ pMin=Math.min(...bars.map(b=>b.l))*.998; pMax=Math.max(...bars.map(b=>b.h))*1.002; pRng=pMax-pMin; }
+function pY(p){ return!pRng?0:cv.height-((p-pMin)/pRng)*cv.height*.85-cv.height*.05; }
+
+function drawAll(){
+  if(!cv||!ctx||!cv.width) return;
+  if(!candles.length){
+    if(quote.c){ const W=cv.width,H=cv.height; ctx.clearRect(0,0,W,H); ctx.fillStyle='rgba(0,229,255,0.6)'; ctx.font='bold 13px Space Mono,monospace'; ctx.textAlign='center'; ctx.fillText('⟳ Cargando... $'+quote.c.toFixed(2),W/2,H/2); ctx.textAlign='left'; }
+    return;
+  }
+  const bars=candles.slice(-80); computeRange(bars);
+  const W=cv.width,H=cv.height,bw=W/(bars.length+2);
+  ctx.clearRect(0,0,W,H);
+
+  // Grid
+  ctx.strokeStyle='rgba(22,32,53,.45)'; ctx.lineWidth=.5;
+  for(let i=0;i<8;i++){ const p2=pMin+pRng*i/7,y=pY(p2); ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W,y);ctx.stroke(); ctx.fillStyle='#2a3a5a';ctx.font='9px Space Mono,monospace';ctx.fillText('$'+p2.toFixed(2),W-61,y-2); }
+
+  // Liquidity zones — clean, not overwhelming
+  const visZones=zones.filter(z=>{const y=pY(z.price);return y>-10&&y<H+10;}).slice(0,14);
+  visZones.forEach(z=>{
+    const y=pY(z.price),s=z.strength;
+    const col=s>.80?'rgba(255,224,0,':s>.65?'rgba(0,255,157,':'rgba(0,229,255,';
+    const a=s*.65;
+    // Thin line
+    ctx.fillStyle=col+(a*.12)+')'; ctx.fillRect(0,y-1,W-63,3);
+    ctx.fillStyle=col+a+')'; ctx.fillRect(W-63-z.width,y-1,z.width,2);
+    // Label for strong zones
+    if(s>0.75){ ctx.fillStyle=col+'0.65)'; ctx.font='8px Space Mono,monospace'; ctx.fillText('$'+z.price.toFixed(2),4,y-3); }
+  });
+
+  // GEX walls / Max Pain / Gamma Flip — OPCIONES REALES (BS, /alpaca-options-metrics).
+  // Solo se dibujan si hay dato real y si el nivel cae dentro del rango visible. Nunca inventa.
+  if(optMetrics && optMetrics.ok && optMetrics.gex){
+    const walls = [
+      {p:optMetrics.gex.callWall,  c:'#00ff9d', t:'CALL WALL'},  // resistencia gamma
+      {p:optMetrics.gex.putWall,   c:'#ff2d6b', t:'PUT WALL'},   // soporte gamma
+      {p:optMetrics.maxPain,       c:'#ffe000', t:'MAX PAIN'},   // imán de precio
+      {p:optMetrics.gex.gammaFlip, c:'#b44dff', t:'γ FLIP'},     // divisoria de régimen
+    ];
+    for(const w of walls){
+      if(w.p==null || !isFinite(w.p)) continue;
+      const y=pY(w.p); if(y<0||y>H) continue;
+      ctx.save();
+      ctx.strokeStyle=w.c; ctx.globalAlpha=.55; ctx.setLineDash([5,4]); ctx.lineWidth=1;
+      ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W-63,y); ctx.stroke();
+      ctx.setLineDash([]); ctx.globalAlpha=1; ctx.fillStyle=w.c; ctx.font='9px Space Mono,monospace';
+      ctx.fillText(`${w.t} $${(+w.p).toFixed(2)}`, 4, y-2);
+      ctx.restore();
+    }
+  }
+
+  // Volume Profile
+  if(vp){
+    const vm=Math.max(...vp.profile),vpw=44;
+    vp.profile.forEach((v,i)=>{
+      const p2=vp.min+i*vp.binSize,y=pY(p2); if(y<0||y>H) return;
+      const bl=(v/vm)*vpw,fr=i/vp.profile.length;
+      ctx.fillStyle=`rgba(${Math.floor(fr*200+55)},${Math.floor(100+fr*60)},80,.3)`;
+      ctx.fillRect(W-63-vpw+(vpw-bl),y-2,bl,4);
+    });
+  }
+
+  // Order Blocks — subtle
+  zones.filter(z=>(z.type==='OB'||z.type==='FVG')&&z.strength>.70).slice(0,4).forEach(z=>{
+    const y=pY(z.price),h=Math.max(4,z.strength*8);
+    ctx.fillStyle=z.side==='above'?'rgba(255,45,107,.04)':'rgba(0,255,157,.04)';
+    ctx.fillRect(0,y-h,W*.25,h*2);
+    ctx.strokeStyle=z.side==='above'?'rgba(255,45,107,.15)':'rgba(0,255,157,.15)';
+    ctx.lineWidth=.5; ctx.setLineDash([2,2]); ctx.strokeRect(0,y-h,W*.25,h*2); ctx.setLineDash([]);
+  });
+
+  // Candlesticks
+  ctx.globalAlpha=.92;
+  bars.forEach((b,i)=>{
+    const x=(i+1)*bw,yO=pY(b.o),yC=pY(b.c),yH=pY(b.h),yL=pY(b.l);
+    const bull=b.c>=b.o,col=bull?'#00ff9d':'#ff2d6b';
+    ctx.strokeStyle=col; ctx.lineWidth=1;
+    ctx.beginPath();ctx.moveTo(x,yH);ctx.lineTo(x,yL);ctx.stroke();
+    ctx.fillStyle=bull?col:'transparent';
+    if(!bull){ ctx.strokeStyle=col; ctx.lineWidth=.8; ctx.strokeRect(x-bw*.34,Math.min(yO,yC),bw*.68,Math.max(1,Math.abs(yC-yO))); }
+    else { ctx.fillRect(x-bw*.34,Math.min(yO,yC),bw*.68,Math.max(1,Math.abs(yC-yO))); }
+  });
+  ctx.globalAlpha=1;
+
+  // SuperTrend line — VISIBLE, 3px
+  if(stResult.length>0){
+    let prevX=null,prevY=null,prevTrend=null;
+    stResult.forEach((st,ii)=>{
+      const barIdx=st.i-(candles.length-bars.length);
+      if(barIdx<0||barIdx>=bars.length) return;
+      const x=(barIdx+1)*bw,y=pY(st.line);
+      if(prevX!==null&&prevTrend===st.trend){
+        ctx.strokeStyle=st.trend===1?'rgba(0,229,255,.95)':'rgba(255,45,107,.9)';
+        ctx.lineWidth=2.5; ctx.setLineDash([]);
+        ctx.beginPath();ctx.moveTo(prevX,prevY);ctx.lineTo(x,y);ctx.stroke();
+      }
+      prevX=x; prevY=y; prevTrend=st.trend;
+    });
+    ctx.setLineDash([]);
+  }
+
+  // ── ARC VWAP SUPERTREND [BOSWaves] — curva acelerada + niveles de flip ──────
+  // 🟠 alza (soporte, va bajo el precio) · 🔵 baja (resistencia, va sobre el precio)
+  if(arcResult && arcResult.plot && arcResult.plot.length){
+    const ARC_UP='#ff9500', ARC_DN='#3d7dff';
+    const off = candles.length - bars.length;   // global→barra (igual que el SuperTrend)
+    if(arcResult.initialized){
+      // 1) curva del arco (linebr en los flips, como el plot.style_linebr del Pine)
+      ctx.lineWidth=2; ctx.setLineDash([]); ctx.lineJoin='round';
+      let aPX=null, aPY=null;
+      for(let gi=0; gi<arcResult.plot.length; gi++){
+        const v=arcResult.plot[gi], bi=gi-off;
+        if(bi<0||bi>=bars.length){ aPX=null; continue; }
+        if(v===null){ aPX=null; aPY=null; continue; }
+        const x=(bi+1)*bw, y=pY(v), bull=arcResult.trendSeries[gi];
+        if(aPX!==null){
+          ctx.strokeStyle = bull?ARC_UP:ARC_DN;
+          ctx.beginPath(); ctx.moveTo(aPX,aPY); ctx.lineTo(x,y); ctx.stroke();
+        }
+        aPX=x; aPY=y;
+      }
+      // 2) niveles vivos (S/R punteados, viven hasta que un cierre los rompe)
+      ctx.setLineDash([4,3]); ctx.lineWidth=1;
+      arcResult.levels.forEach(L=>{
+        const y=pY(L.price); if(y<0||y>H) return;
+        ctx.strokeStyle = L.bull?'rgba(255,149,0,.5)':'rgba(61,125,255,.5)';
+        ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W-63,y); ctx.stroke();
+        ctx.fillStyle = L.bull?ARC_UP:ARC_DN; ctx.font='8px Space Mono,monospace';
+        ctx.fillText('🌀 $'+L.price.toFixed(2), 4, y-2);
+      });
+      ctx.setLineDash([]);
+      // 3) marcas de flip (triángulo en cada giro visible)
+      arcResult.flips.forEach(f=>{
+        const bi=f.index-off; if(bi<0||bi>=bars.length) return;
+        const x=(bi+1)*bw, y=pY(f.price);
+        ctx.fillStyle = f.bull?ARC_UP:ARC_DN;
+        ctx.beginPath();
+        if(f.bull){ ctx.moveTo(x,y+9); ctx.lineTo(x-4,y+15); ctx.lineTo(x+4,y+15); }
+        else      { ctx.moveTo(x,y-9); ctx.lineTo(x-4,y-15); ctx.lineTo(x+4,y-15); }
+        ctx.closePath(); ctx.fill();
+      });
+    } else {
+      // sin velas suficientes (típico en 4H si el lookback es corto)
+      ctx.fillStyle='rgba(255,149,0,.7)'; ctx.font='9px Space Mono,monospace'; ctx.textAlign='left';
+      ctx.fillText('🌀 arco: necesita 110+ velas ('+(arcResult.bars||0)+')', 6, H-8);
+    }
+  }
+
+  // VWAP line (purple) — VWAP REAL ponderado por volumen
+  {
+    const vwWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
+    const vw = getVWAP(sessionBars(candles, tf, vwWin));
+    if(vw){
+      ctx.strokeStyle='rgba(180,77,255,.8)'; ctx.lineWidth=1.5; ctx.setLineDash([]);
+      ctx.beginPath();
+      bars.forEach((b,i)=>{ const x=(i+1)*bw,y=pY(vw.vwap); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+      ctx.stroke();
+      [vw.up,vw.dn].forEach(band=>{
+        ctx.strokeStyle='rgba(180,77,255,.15)'; ctx.lineWidth=1; ctx.setLineDash([3,3]);
+        ctx.beginPath();
+        bars.forEach((b,i)=>{ const x=(i+1)*bw,y=pY(band); i===0?ctx.moveTo(x,y):ctx.lineTo(x,y); });
+        ctx.stroke();
+      });
+      ctx.setLineDash([]);
+    }
+  }
+
+  // CHoCH / BOS lines on chart
+  if(struct.choch){
+    const y=pY(struct.choch.price);
+    ctx.strokeStyle=struct.choch.dir==='BULL'?'rgba(0,255,157,.7)':'rgba(255,45,107,.7)'; ctx.lineWidth=1.5; ctx.setLineDash([4,3]);
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W-63,y);ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=struct.choch.dir==='BULL'?'rgba(0,255,157,.8)':'rgba(255,45,107,.8)'; ctx.font='bold 9px Space Mono,monospace';
+    ctx.fillText(struct.choch.label,4,y-3);
+  }
+  if(struct.bos){
+    const y=pY(struct.bos.price);
+    ctx.strokeStyle=struct.bos.dir==='BULL'?'rgba(0,255,157,.5)':'rgba(255,45,107,.5)'; ctx.lineWidth=1.2; ctx.setLineDash([]);
+    ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(W-63,y);ctx.stroke();
+    ctx.fillStyle=struct.bos.dir==='BULL'?'rgba(0,255,157,.7)':'rgba(255,45,107,.7)'; ctx.font='bold 9px Space Mono,monospace';
+    ctx.fillText(struct.bos.label,4,y-3);
+  }
+
+  // Swing highs/lows markers
+  if(struct.swings&&struct.swings.length>0){
+    struct.swings.slice(-6).forEach(sw=>{
+      const barIdx=sw.i-(candles.length-bars.length);
+      if(barIdx<0||barIdx>=bars.length) return;
+      const x=(barIdx+1)*bw,y=pY(sw.price);
+      ctx.fillStyle=sw.type==='HH'?'rgba(255,45,107,.7)':'rgba(0,255,157,.7)';
+      ctx.font='7px Space Mono,monospace'; ctx.fillText(sw.type,x-6,sw.type==='HH'?y-5:y+12);
+    });
+  }
+
+  // Signal markers on chart
+  if(quote.c&&candles.length>2){
+    const sig=computeNeuralScore(quote.c);
+    if(sig.type!=='NEUTRAL'){
+      const lastX=(bars.length)*bw,lastY=pY(quote.c);
+      ctx.beginPath();
+      if(sig.type==='BUY'){ ctx.moveTo(lastX-10,lastY+12);ctx.lineTo(lastX+10,lastY+12);ctx.lineTo(lastX,lastY-2); ctx.fillStyle='rgba(0,255,157,.85)'; }
+      else { ctx.moveTo(lastX-10,lastY-12);ctx.lineTo(lastX+10,lastY-12);ctx.lineTo(lastX,lastY+2); ctx.fillStyle='rgba(255,45,107,.85)'; }
+      ctx.closePath();ctx.fill();
+      ctx.font='bold 9px Space Mono,monospace';
+      ctx.fillStyle=sig.type==='BUY'?'#00ff9d':'#ff2d6b';
+      ctx.fillText(sig.type+'('+sig.score+')',lastX-14,sig.type==='BUY'?lastY+26:lastY-16);
+    }
+  }
+
+  // Max Pain line: ELIMINADA — Max Pain real requiere cadena de opciones (FASE 4).
+  if(quote.c){
+
+    // Current price tag
+    const cp=quote.c,cpy=pY(cp),bull2=(quote.d||0)>=0;
+    ctx.strokeStyle=bull2?'rgba(0,255,157,.7)':'rgba(255,45,107,.7)'; ctx.lineWidth=1; ctx.setLineDash([2,2]);
+    ctx.beginPath();ctx.moveTo(0,cpy);ctx.lineTo(W-63,cpy);ctx.stroke(); ctx.setLineDash([]);
+    ctx.fillStyle=bull2?'#00ff9d':'#ff2d6b'; ctx.fillRect(W-63,cpy-8,61,16);
+    ctx.fillStyle='#03050d'; ctx.font='bold 9px Space Mono,monospace'; ctx.fillText('$'+cp.toFixed(2),W-61,cpy+3);
+
+    // SL/TP lines
+    const sig2=computeNeuralScore(cp);
+    if(sig2&&sig2.type!=='NEUTRAL'&&quote.h&&quote.l){
+      const tg2=getTargets(cp, sig2.type, tf, sym);
+      if(tg2){
+        const lines=[[tg2.sl.price,'rgba(255,45,107,.8)',[4,3],'SL']];
+        if(tg2.tps[0]) lines.push([tg2.tps[0].price,'rgba(0,255,157,.8)',[6,3],'TP1']);
+        if(tg2.tps[1]) lines.push([tg2.tps[1].price,'rgba(255,224,0,.75)',[6,3],'TP2']);
+        if(tg2.tps[2]) lines.push([tg2.tps[2].price,'rgba(255,140,0,.7)',[6,3],'TP3']);
+        lines.forEach(([price2,color2,dash2,lbl2])=>{
+          const y2=pY(price2); if(y2<2||y2>H-2) return;
+          ctx.strokeStyle=color2; ctx.lineWidth=1.2; ctx.setLineDash(dash2);
+          ctx.beginPath();ctx.moveTo(0,y2);ctx.lineTo(W-65,y2);ctx.stroke(); ctx.setLineDash([]);
+          ctx.fillStyle=color2; ctx.font='bold 9px Space Mono,monospace'; ctx.fillText(lbl2+' $'+price2.toFixed(2),4,y2-3);
+        });
+      }
+    }
+  }
+
+  // Volume histogram
+  const vm2=Math.max(...bars.map(b=>b.v||0));
+  if(vm2>0) bars.forEach((b,i)=>{
+    const x=(i+1)*bw,vh=((b.v||0)/vm2)*H*.07;
+    // Highlight whale candles
+    const avgVol=bars.slice(Math.max(0,i-10),i).reduce((a,c)=>a+(c.v||0),0)/10;
+    const isWhale=(b.v||0)>avgVol*3&&avgVol>0;
+    ctx.fillStyle=isWhale?(b.c>=b.o?'rgba(0,255,157,.7)':'rgba(255,45,107,.7)'):(b.c>=b.o?'rgba(0,255,157,.25)':'rgba(255,45,107,.25)');
+    ctx.fillRect(x-bw*.34,H-vh,bw*.68,vh);
+    if(isWhale){ ctx.strokeStyle='rgba(180,77,255,.6)'; ctx.lineWidth=1; ctx.strokeRect(x-bw*.34,H-vh,bw*.68,vh); }
+  });
+
+  drawOF(bars);
+}
+
+function drawOF(bars){
+  if(!ofc||!ofctx) return;
+  const W=62,H=ofc.height; ofctx.clearRect(0,0,W,H);
+  if(!bars?.length) return;
+  const steps=12;
+  const recent=bars.slice(-steps);
+  for(let i=0;i<steps;i++){
+    const y=H-(i/steps)*H*.8-H*.08;
+    const bar=recent[i]||recent[recent.length-1];
+    // BID/ASK derivado de dirección real de la vela y su volumen relativo
+    const mv=Math.max(...recent.map(c=>c.v||1));
+    const vr=(bar?.v||0)/mv;
+    const bull=bar && bar.c>=bar.o;
+    const b=bull?vr:vr*0.35, s=bull?vr*0.35:vr;
+    ofctx.fillStyle=`rgba(0,255,157,${.15+b*.3})`;ofctx.fillRect(2,y-3,b*26,6);
+    ofctx.fillStyle=`rgba(255,45,107,${.15+s*.3})`;ofctx.fillRect(36,y-3,s*22,6);
+  }
+  ofctx.fillStyle='rgba(0,229,255,.4)';ofctx.font='8px Space Mono,monospace';
+  ofctx.fillText('BID',2,10);ofctx.fillText('ASK',38,10);
+}
+
+// ── TOOLTIP ───────────────────────────────────────────────────
+function onCanvasMouseMove(e){
+  if(!cv||!candles.length) return;
+  const r=cv.getBoundingClientRect(), mx=e.clientX-r.left, my=e.clientY-r.top;
+  const bars=candles.slice(-80), bw=cv.width/(bars.length+2);
+  const barIdx=Math.round(mx/bw)-1;
+  const tip=document.getElementById('tip');
+
+  // Check zones first
+  let nearZone=null, md=Infinity;
+  zones.forEach(z=>{ const zy=pY(z.price),d=Math.abs(my-zy); if(d<14&&d<md){md=d;nearZone=z;} });
+
+  if(nearZone){
+    tip.style.display='block'; tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY-40)+'px';
+    document.getElementById('tip-t').textContent=nearZone.type+' ZONE';
+    document.getElementById('tip-o').textContent='$'+nearZone.price.toFixed(2);
+    document.getElementById('tip-h').textContent=(nearZone.strength*100).toFixed(0)+'%';
+    document.getElementById('tip-l').textContent=nearZone.side==='above'?'▲ Resistencia':'▼ Soporte';
+    document.getElementById('tip-c').textContent=nearZone.tf;
+    const distPct=quote.c?Math.abs((nearZone.price-quote.c)/quote.c*100).toFixed(2)+'%':'—';
+    document.getElementById('tip-v').textContent=distPct+' al precio';
+    document.getElementById('tip-z').textContent=nearZone.strength>0.80?'🟡 Fuerte':nearZone.strength>0.65?'🟢 Media':'🔵 Débil';
+  } else if(barIdx>=0&&barIdx<bars.length){
+    const b=bars[barIdx];
+    tip.style.display='block'; tip.style.left=(e.clientX+14)+'px'; tip.style.top=(e.clientY-40)+'px';
+    const dt=new Date(b.t*1000).toLocaleString('es',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    document.getElementById('tip-t').textContent=dt;
+    document.getElementById('tip-o').textContent='$'+b.o.toFixed(2);
+    document.getElementById('tip-h').textContent='$'+b.h.toFixed(2);
+    document.getElementById('tip-l').textContent='$'+b.l.toFixed(2);
+    document.getElementById('tip-c').textContent='$'+b.c.toFixed(2);
+    document.getElementById('tip-v').textContent=(b.v/1e6).toFixed(2)+'M';
+    const avgVol=bars.slice(Math.max(0,barIdx-10),barIdx).reduce((a,c)=>a+(c.v||0),0)/10;
+    document.getElementById('tip-z').textContent=(b.v>avgVol*3&&avgVol>0)?'🐋 BALLENA ×'+((b.v/avgVol).toFixed(1)):b.c>=b.o?'▲ Alcista':'▼ Bajista';
+  } else {
+    tip.style.display='none';
+  }
+}
+
+// ── CONTROLS ──────────────────────────────────────────────────
+const DEFAULT_SYMS=['SPY','QQQ','TSLA','NVDA','AAPL','AMZN','META','MSFT'];
+function saveSymbols(){ const btns=document.querySelectorAll('#sym-bar .sym-btn'); localStorage.setItem('lm_syms',JSON.stringify([...btns].map(b=>b.getAttribute('data-sym')).filter(Boolean))); }
+function createSymBtn(s,isDefault=false){
+  if(document.querySelector(`[data-sym="${s}"]`)) return;
+  const bar=document.getElementById('sym-bar'), wrap=document.createElement('span');
+  wrap.style.cssText='display:inline-flex;align-items:center;gap:1px;margin-right:2px;';
+  const btn=document.createElement('button'); btn.className='sym-btn'; btn.textContent=s; btn.setAttribute('data-sym',s); btn.onclick=function(){ selectSym(s,this); }; wrap.appendChild(btn);
+  if(!isDefault){ const rm=document.createElement('button'); rm.textContent='×'; rm.title='Eliminar'; rm.style.cssText='background:rgba(255,45,107,.15);border:1px solid rgba(255,45,107,.3);color:#ff2d6b;border-radius:2px;cursor:pointer;font-size:10px;padding:1px 4px;line-height:1;'; rm.onclick=function(e){ e.stopPropagation(); wrap.remove(); saveSymbols(); if(sym===s) selectSym('SPY',document.querySelector('[data-sym="SPY"]')); }; wrap.appendChild(rm); }
+  bar.appendChild(wrap);
+}
+function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.value.trim().toUpperCase(); if(!s||s.length<1||s.length>6) return; inp.value=''; if(document.querySelector(`[data-sym="${s}"]`)) return; createSymBtn(s,false); saveSymbols(); const btn=document.querySelector(`[data-sym="${s}"]`); if(btn) selectSym(s,btn); }
+function loadSavedSymbols(){ try{ const saved=localStorage.getItem('lm_syms'); if(saved){ JSON.parse(saved).forEach(s=>{ if(!DEFAULT_SYMS.includes(s)) createSymBtn(s,false); }); } }catch(e){} }
+
+async function selectSym(s,btn){
+  if(!POLY_KEY) return;
+  sym=s; candles=[];zones=[];quote={};cvd=0;buyV=0;sellV=0;stResult=[];struct={choch:null,bos:null,swings:[]};whaleDetected=null;arcResult={initialized:false,series:[],trendSeries:[],plot:[],flips:[],levels:[],trend:'BULL'};
+  document.querySelectorAll('.sym-btn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  if(ws&&ws.readyState===1){ ws.send(JSON.stringify({type:'unsubscribe',symbol:sym})); setTimeout(()=>ws.send(JSON.stringify({type:'subscribe',symbol:s})),200); }
+  drawAll(); await loadAll();
+}
+
+async function selectTF(t,btn){
+  if(!POLY_KEY) return;
+  tf=t; candles=[]; stResult=[]; struct={choch:null,bos:null,swings:[]}; arcResult={initialized:false,series:[],trendSeries:[],plot:[],flips:[],levels:[],trend:'BULL'};
+  document.querySelectorAll('.tf-btn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  await loadCandles(); recomputeIndicators(); drawAll(); updatePanels();
+}
+
+// ── TICKER ────────────────────────────────────────────────────
+function startTicker(){
+  setInterval(async()=>{
+    const s=TICKERS[tickIdx%TICKERS.length]; tickIdx++;
+    if(!POLY_KEY) return;
+    try{
+      // SIN snapshot (401 en plan Starter). Últimos 2 días hábiles desde aggregates (autorizado).
+      const to   = new Date().toISOString().slice(0,10);
+      const from = new Date(Date.now() - 7*86400000).toISOString().slice(0,10);
+      const r=await fetch(`${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${s}/range/1/day/${from}/${to}`)}&adjusted=true&sort=desc&limit=2`);
+      const j=await r.json();
+      if(j.results && j.results.length){
+        const live=j.results[0].c;
+        const prev=j.results.length>1 ? j.results[1].c : j.results[0].o;
+        const dp=prev ? ((live-prev)/prev*100) : 0;
+        if(live){ tickerCache[s]={c:live,dp}; renderTicker(); }
+      }
+    } catch(e){}
+  },2500);
+}
+function renderTicker(){ const html=Object.entries(tickerCache).map(([s,d])=>{ const up=(d.dp||0)>=0; return `<span class="ti ${up?'up':'dn'}">${s} $${d.c?.toFixed(2)} (${up?'+':''}${d.dp?.toFixed(2)}%)</span>`; }).join(''); document.getElementById('ticker-wrap').innerHTML=html||'<span style="color:var(--muted)">Cargando...</span>'; }
+
+// ── CLOCK / STATUS ─────────────────────────────────────────────
+function getMktStatus(){ const ny=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'})),d=ny.getDay(),m=ny.getHours()*60+ny.getMinutes(); if(d===0||d===6) return'closed'; if(m>=570&&m<960) return'open'; if((m>=240&&m<570)||(m>=960&&m<1200)) return'pre'; return'closed'; }
+function updateMktStatus(){ const s=getMktStatus(),el=document.getElementById('mkst'); el.className=s; el.textContent=s==='open'?'● OPEN NY':s==='pre'?'◐ PRE/AH':'○ CLOSED'; }
+function updateClock(){ const ny=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'})); document.getElementById('clock-el').textContent=`${String(ny.getHours()).padStart(2,'0')}:${String(ny.getMinutes()).padStart(2,'0')}:${String(ny.getSeconds()).padStart(2,'0')} ET`; }
+
+function toggleLegend(){ document.getElementById('legend-modal').classList.toggle('show'); }
+
+// ── LOCK KEY LISTENER ──
+document.getElementById('lock-input').addEventListener('keydown',e=>{ if(e.key==='Enter') checkPass(); });
+</script>
+
+<!-- LEGEND MODAL -->
+<div id="legend-modal">
+  <div class="lm-box">
+    <h1>📖 LIQUIDMAP PRO v7 — GUÍA NEURONAL INSTITUCIONAL</h1>
+    <div class="sub">6 Capas · SuperTrend JUEZ · CHoCH/BOS · Ballenas · Score 10pts</div>
+    <div class="lm-grid">
+      <div class="lm-section">
+        <h3>⚡ SuperTrend JUEZ (3 pts)</h3>
+        <div class="lm-item"><div class="lm-icon">🟦</div><div class="lm-text"><strong>Línea Cyan (ALCISTA)</strong><span>Precio sobre la línea → tendencia alcista confirmada. Es el filtro principal — sin SuperTrend alcista no hay BUY válido.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🔴</div><div class="lm-text"><strong>Línea Roja (BAJISTA)</strong><span>Precio bajo la línea → tendencia bajista. Evitar compras. Buscar puts o reducir exposición larga.</span></div></div>
+      </div>
+      <div class="lm-section">
+        <h3>🏗 CHoCH / BOS (2 pts)</h3>
+        <div class="lm-item"><div class="lm-icon">🔄</div><div class="lm-text"><strong>CHoCH (Cambio de carácter)</strong><span>La estructura rompió en dirección opuesta. Señal más fuerte — indica cambio de tendencia real. Entrada de alta convicción.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">⚡</div><div class="lm-text"><strong>BOS (Break of Structure)</strong><span>Ruptura de un swing previo. Confirma continuación de tendencia. Más agresivo que el CHoCH.</span></div></div>
+      </div>
+      <div class="lm-section">
+        <h3>🐋 Ballenas / Volumen</h3>
+        <div class="lm-item"><div class="lm-icon">🐳</div><div class="lm-text"><strong>Ballena detectada (×3+ vol)</strong><span>Volumen >3× el promedio de 20 velas. Acumulación o distribución institucional real. Las barras moradas en el histograma son velas ballena.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🟣</div><div class="lm-text"><strong>Dark Pool prints</strong><span>Círculos morados en el gráfico. Transacciones institucionales fuera del mercado abierto (~40% del volumen real). Si el print es alcista con precio bajando = acumulación secreta.</span></div></div>
+      </div>
+      <div class="lm-section">
+        <h3>🎯 Score Neuronal 0–10</h3>
+        <div class="lm-item"><div class="lm-icon">🟢</div><div class="lm-text"><strong>Score 8–10 (Verde)</strong><span>Máxima confluencia institucional. Las 6 capas alineadas. Señal de alta convicción. Para contratos de opciones y overnight.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🟡</div><div class="lm-text"><strong>Score 5–7 (Amarillo)</strong><span>Confluencia media. Señal válida. Gestionar riesgo normal. TP1 como objetivo mínimo.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🔴</div><div class="lm-text"><strong>Score 0–4 (Rojo)</strong><span>Sin confluencia suficiente. NO operar. Esperar alineación. La paciencia es la mayor ventaja.</span></div></div>
+      </div>
+      <div class="lm-section">
+        <h3>🕐 Kill Zones (peso ×1.2–1.5)</h3>
+        <div class="lm-item"><div class="lm-icon">🇬🇧</div><div class="lm-text"><strong>London Open 8:00–9:30 UTC</strong><span>Institucionales europeos posicionan. Buena liquidez. Peso ×1.3.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🔄</div><div class="lm-text"><strong>NY-London Overlap 13:00–14:30 UTC</strong><span>Máxima liquidez global. Doble participación. Peso ×1.4. Las mejores señales suceden aquí.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🇺🇸</div><div class="lm-text"><strong>NY Open 14:30–16:00 UTC</strong><span>Power hour de apertura NY. Institucionales de EE.UU. posicionan. Peso ×1.5. La ventana más importante.</span></div></div>
+      </div>
+      <div class="lm-section">
+        <h3>⚡ GEX / Max Pain</h3>
+        <div class="lm-item"><div class="lm-icon">+</div><div class="lm-text"><strong>GEX Positivo</strong><span>Market makers long gamma. Precio lento, pineado. Vender premium (iron condor, covered call).</span></div></div>
+        <div class="lm-item"><div class="lm-icon">−</div><div class="lm-text"><strong>GEX Negativo</strong><span>Market makers short gamma. Volatilidad amplificada. Comprar opciones direccionales.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🎯</div><div class="lm-text"><strong>Max Pain</strong><span>El precio gravita aquí antes del vencimiento (viernes). Si estás cerca = alta probabilidad de pin. Línea naranja en el gráfico.</span></div></div>
+      </div>
+      <div class="lm-section">
+        <h3>💧 Zonas de Liquidez</h3>
+        <div class="lm-item"><div class="lm-icon">🟡</div><div class="lm-text"><strong>Zona Amarilla (strong >0.80)</strong><span>Alta concentración de órdenes. Institucionales operan aquí. Probable reacción fuerte.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🟢</div><div class="lm-text"><strong>Zona Verde (media 0.65–0.80)</strong><span>Interés institucional moderado. Soporte/resistencia dinámico.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">📐</div><div class="lm-text"><strong>VWAP / POC (línea morada)</strong><span>Precio promedio institucional. Sobre el POC = alcista. Bajo = bajista. Referencia #1.</span></div></div>
+      </div>
+      <div class="lm-section">
+        <h3>📋 Reglas Institucionales</h3>
+        <div class="lm-item"><div class="lm-icon">1️⃣</div><div class="lm-text"><strong>Solo Score ≥ 6</strong><span>En Kill Zone activa, score ≥ 5 es suficiente. Sin Kill Zone, exigir 7+.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">2️⃣</div><div class="lm-text"><strong>SuperTrend primero</strong><span>Si la línea cyan no está visible como soporte, no entrar BUY. Es el JUEZ.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">3️⃣</div><div class="lm-text"><strong>CHoCH rompe cooldown</strong><span>Si hay CHoCH, la señal se dispara aunque haya señal reciente. Es un cambio estructural real.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">4️⃣</div><div class="lm-text"><strong>Opciones: GEX + Max Pain</strong><span>GEX negativo + BUY Score 7+ = comprar CALL. Verificar distancia al Max Pain. Expiración viernes.</span></div></div>
+      </div>
+    </div>
+    <div class="lm-warn">⚠️ Esta herramienta es educativa. No constituye consejo financiero. El trading de opciones conlleva riesgo elevado. Siempre usar Stop Loss. Una vela puede borrar el contrato.</div>
+    <button class="lm-close" onclick="toggleLegend()">CERRAR GUÍA</button>
+  </div>
+</div>
+</body>
+</html>
