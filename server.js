@@ -291,24 +291,6 @@ app.get('/proxy', async (req, res) => {
   }
 });
 
-// ── PROXY POLYGON (key del lado servidor — la API key NUNCA viaja al navegador) ──
-// El mapa de bolsa pide /polygon?path=/v2/aggs/...&adjusted=...  (SIN apiKey).
-// Acá adjuntamos la key desde process.env.POLYGON_KEY y llamamos a Polygon.
-// Resultado: la key queda oculta (no en URL ni en HTML) y se acaban los errores
-// de consola CORS/502 (la llamada pasa a ser server-to-server).
-// Restringido a /v2/aggs/ (solo lectura de agregados) para acotar el uso del proxy.
-const POLYGON_KEY = process.env.POLYGON_KEY || '';
-// Polygon.io se renombró a Massive.com (30-oct-2025). El endpoint viejo api.polygon.io
-// se está apagando en 2026 (da "Premature close"). Base nueva: api.massive.com (misma API/key).
-// Override con POLYGON_BASE si alguna vez cambia de nuevo.
-const POLYGON_BASE = process.env.POLYGON_BASE || 'https://api.massive.com';
-// Massive manda respuestas comprimidas que node-fetch no digiere → "Premature close".
-// Fix probado: pedir SIN compresión (Accept-Encoding: identity) + User-Agent de navegador.
-const POLYGON_HEADERS = {
-  'Accept': 'application/json',
-  'Accept-Encoding': 'identity',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-};
 // ── PROXY ALPACA (SIP real-time — reemplaza el delay 15min de Polygon/Massive) ──
 // El mapa de bolsa pide /alpaca?path=/v2/aggs/ticker/{SYM}/range/{MULT}/{SPAN}/{FROM}/{TO}
 // (MISMO formato que /polygon). Acá traducimos a la API de Alpaca y devolvemos las barras
@@ -382,38 +364,6 @@ app.get('/alpaca', async (req, res) => {
   }
 });
 
-app.get('/polygon', async (req, res) => {
-  try {
-    if (!POLYGON_KEY) return res.status(500).json({ error: 'POLYGON_KEY no configurada en el servidor (Render → Environment)' });
-    const apiPath = req.query.path;
-    if (!apiPath || !apiPath.startsWith('/v2/aggs/')) return res.status(400).json({ error: 'path inválido (solo /v2/aggs/)' });
-    const params = Object.entries(req.query)
-      .filter(([k]) => k !== 'path')
-      .map(([k, v]) => `${encodeURIComponent(k)}=${encodeURIComponent(v)}`)
-      .join('&');
-    const url = `${POLYGON_BASE}${apiPath}?${params ? params + '&' : ''}apiKey=${POLYGON_KEY}`;
-    // 2 intentos: bajo carga (instancia free + NY abierto) la conexión a Polygon puede
-    // cortarse ("Premature close"). Un reintento corto suele resolver el corte transitorio.
-    let r, text;
-    for (let attempt = 1; attempt <= 2; attempt++) {
-      try {
-        r    = await fetch(url, { headers: POLYGON_HEADERS, timeout: 10000 });
-        text = await r.text();
-        break;
-      } catch (e) {
-        if (attempt === 2) throw e;                       // tras 2 intentos, propaga al catch (→ 500, como antes)
-        await new Promise(res => setTimeout(res, 400));    // backoff corto antes del reintento
-      }
-    }
-    let data;
-    try { data = JSON.parse(text); }
-    catch (e) { return res.status(502).json({ error: 'polygon_invalid_json', upstream_status: r.status, sample: text.slice(0, 160) }); }
-    return res.status(r.ok ? 200 : r.status).json(data);
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
 // ── DIAGNÓSTICO DE RED ────────────────────────────
 app.get('/diag', async (req, res) => {
   const targets = [
@@ -447,46 +397,6 @@ app.get('/diag', async (req, res) => {
     region_render: process.env.RENDER_REGION || 'desconocida (ver dashboard)',
     results
   });
-});
-
-// ── DIAGNÓSTICO POLYGON ───────────────────────────
-// Abrí /polygon-diag y leé el JSON: nos dice EXACTAMENTE qué responde Polygon al server.
-//   ok:true  + status:200            → la key y la conexión andan (el problema sería otro)
-//   ok:false + status:401/403        → la KEY no sirve (vencida / plan equivocado)
-//   ok:false + status:429            → LÍMITE de Polygon (plan / cuota)
-//   ok:false + error:'Premature...'  → la conexión se corta (egress de Render o Polygon dropea)
-app.get('/polygon-diag', async (req, res) => {
-  if (!POLYGON_KEY) return res.json({ ok: false, error: 'POLYGON_KEY no configurada en el servidor' });
-  const path = `/v2/aggs/ticker/SPY/range/1/day/2026-06-08/2026-06-13?adjusted=true&sort=asc&limit=10&apiKey=${POLYGON_KEY}`;
-  const UA = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36';
-  const nativeFetch = (typeof globalThis.fetch === 'function') ? globalThis.fetch : null;
-
-  // Cada estrategia: distinto host / headers / cliente → vemos cuál logra traer data
-  const strategies = [
-    { name: 'massive + Accept (actual)',        host: 'https://api.massive.com', client: 'node-fetch', headers: { 'Accept': 'application/json' } },
-    { name: 'massive + User-Agent navegador',   host: 'https://api.massive.com', client: 'node-fetch', headers: { 'Accept': 'application/json', 'User-Agent': UA } },
-    { name: 'massive + UA + sin compresión',    host: 'https://api.massive.com', client: 'node-fetch', headers: { 'Accept': 'application/json', 'User-Agent': UA, 'Accept-Encoding': 'identity' } },
-    { name: 'polygon + UA',                     host: 'https://api.polygon.io', client: 'node-fetch', headers: { 'Accept': 'application/json', 'User-Agent': UA } },
-    { name: 'massive + fetch nativo + UA',      host: 'https://api.massive.com', client: 'native', headers: { 'Accept': 'application/json', 'User-Agent': UA } },
-  ];
-
-  const results = [];
-  for (const s of strategies) {
-    const started = Date.now();
-    try {
-      const doFetch = (s.client === 'native' && nativeFetch) ? nativeFetch : fetch;
-      if (s.client === 'native' && !nativeFetch) { results.push({ name: s.name, skip: 'fetch nativo no disponible (Node viejo)' }); continue; }
-      const r    = await doFetch(s.host + path, { headers: s.headers, timeout: 10000 });
-      const text = await r.text();
-      let body; try { body = JSON.parse(text); } catch { body = null; }
-      results.push({ name: s.name, ok: r.ok, status: r.status, ms: Date.now() - started,
-        resultsCount: body && body.resultsCount, sample: text.slice(0, 120) });
-    } catch (e) {
-      results.push({ name: s.name, ok: false, error: e.message, ms: Date.now() - started });
-    }
-  }
-  const winner = results.find(x => x.ok);
-  res.json({ veredicto: winner ? `✅ FUNCIONA: ${winner.name}` : '❌ ninguna estrategia trajo data', node: process.version, results });
 });
 
 // ── DIAGNÓSTICO ALPACA ────────────────────────────
