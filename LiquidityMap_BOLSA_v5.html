@@ -1342,10 +1342,12 @@ async function loadCandles(){
       if(tf !== 'D' && candles.length > 300) candles = candles.slice(-300);
       vpBars  = candles;                        // resto de TFs: VWAP/POC sobre las mismas velas (igual que antes)
     }
-    // VOLUME PROFILE sobre VENTANA OPERATIVA (no toda la historia) — clave anti-POC-viejo.
-    // Por TF: ventana proporcional a lo que el trader realmente opera.
-    const vpWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
-    vp = buildVP(sessionBars(candles, tf, vpWin), 60);
+    // VOLUME PROFILE del POC sobre VENTANA ESTRUCTURAL (rango visible tipo TV), NO solo hoy.
+    // FIX POC-real (2026-07-09): el POC estaba atado al ancla de sesión del VWAP (sessionBars =
+    // solo hoy) → quedaba congelado ~$314.7 en TODOS los TFs. TV ancla el VWAP a sesión (correcto)
+    // pero su POC (VPVR) es RANGO VISIBLE → se ensancha con el TF. Le damos al POC su ventana propia.
+    // El VWAP NO se toca (sigue corriendo por sessionBars, anclado a sesión).
+    vp = buildVP(pocWindowBars(candles, tf), 60);
     const cp = quote.c || candles[candles.length-1].c;
     zones = buildZones(cp);
     // CVD aproximado por dirección de vela (FASE 3 = trades reales por agresor)
@@ -1895,6 +1897,20 @@ function resampleSession4Hh(bars, tMs){
     else { bk.h=Math.max(bk.h,b.h); bk.l=Math.min(bk.l,b.l); bk.c=b.c; bk.v+=(b.v||0); }
   }
   return order.map(k=>buckets.get(k));
+}
+
+// ── VENTANA DEL POC (VPVR) — RANGO ESTRUCTURAL, desacoplada del ancla de sesión ──────
+// El VWAP se ancla a la sesión (vía sessionBars) porque TV también lo ancla → correcto.
+// El POC de TV (VPVR) NO se ancla: es rango visible, se ensancha con el TF. Acá el POC
+// recibe su propia ventana rodante por TF, calibrada al rango visible típico de TV
+// (medido vs fotos AAPL 2026-07-09 → 15m≈4d ~$312.5 · 1H≈2-3sem ~$293.5 · 4H≈5-6sem ~$295.9).
+// Robusta: si hay menos velas que la ventana, usa todas. Sin filtro "solo hoy". Cero sintético.
+// NOTA: en 4H, 'candles' ya son velas de SESIÓN (2/día vía resampleSession4Hh) → last 60 ≈ 30 días.
+function pocWindowBars(candles, tf){
+  if(!candles || !candles.length) return candles || [];
+  const WIN = { '5':156, '15':104, '60':84, '240':60, 'D':60 };  // barras RTH ≈ 5m~2d · 15m~4d · 1H~12d · 4H(sesión)~30d
+  const n = WIN[tf] || 60;
+  return candles.length > n ? candles.slice(-n) : candles;
 }
 
 function sessionBars(bars, tf, fallbackN){
