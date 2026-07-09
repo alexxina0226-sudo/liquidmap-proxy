@@ -45,17 +45,6 @@ catch (e) { console.log('⚠️ options_live.js no encontrado — GEX/Max Pain r
 // ── CONFIG ──────────────────────────────────────────────────
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
-const POLYGON_KEY          = process.env.POLYGON_KEY || ''; // velas + quote REALES (env var en Render)
-// Polygon.io → Massive.com (30-oct-2025). api.polygon.io se apaga en 2026 ("Premature close").
-// Base nueva api.massive.com (misma API/key). Override con POLYGON_BASE si cambia.
-const POLYGON_BASE         = process.env.POLYGON_BASE || 'https://api.massive.com';
-// Massive comprime las respuestas y node-fetch las corta ("Premature close").
-// Fix probado: Accept-Encoding identity (sin compresión) + User-Agent navegador.
-const POLYGON_HEADERS      = {
-  'Accept': 'application/json',
-  'Accept-Encoding': 'identity',
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
-};
 
 // ── ALPACA SIP (reemplaza Polygon/Massive — real-time, sin delay 15min) ───────
 // Keys server-side (Render Environment). feed=sip requiere Algo Trader Plus.
