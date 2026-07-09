@@ -4,6 +4,15 @@ const path    = require('path');
 const optLive    = require('./options_live');    // capa I/O reusable (server + bot): GEX (BS) + Max Pain reales
 const app     = express();
 
+// ── LATIDO DE MONITORES (health_state) — defensivo: si falta el archivo, NO tumba el server ──
+let health;
+try {
+  health = require('./health_state');
+} catch (e) {
+  console.error('⚠️  health_state.js no cargado — /status degradado:', e.message);
+  health = { beat(){}, signal(){}, error(){}, snapshot(){ return { error: 'health_state.js no está en el repo todavía', components: {} }; } };
+}
+
 // ── CORS ─────────────────────────────────────────
 app.use((req, res, next) => {
   res.header('Access-Control-Allow-Origin',  '*');
@@ -23,6 +32,9 @@ app.get('/bolsa', (req, res) => {
 });
 app.get('/crypto', (req, res) => {
   res.sendFile(path.join(__dirname, 'LiquidityMap_CRYPTO_v6_2.html'));
+});
+app.get('/salud', (req, res) => {
+  res.sendFile(path.join(__dirname, 'salud.html'));
 });
 
 // ── FAVICON (SVG embebido — mata el 404 en AMBOS mapas, cero archivo externo) ──
@@ -505,6 +517,26 @@ app.get('/alpaca-options-metrics', async (req, res) => {
 // ── HEALTH CHECK ─────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString(), service: 'LiquidMap PRO v2' });
+});
+
+// ── STATUS (tablero de salud: latido de monitores + ping al radar) ──
+// El navegador pega solo acá (mismo origen). El ping al radar lo hace el server
+// (evita CORS). RADAR_URL override por env si la URL real difiere.
+const RADAR_URL = (process.env.RADAR_URL || 'https://liquidmap-proxy-1.onrender.com').replace(/\/+$/, '');
+app.get('/status', async (req, res) => {
+  const snap = health.snapshot();
+  let radar;
+  const t0 = Date.now();
+  try {
+    const r = await fetch(RADAR_URL + '/health', {
+      headers: { 'Accept': 'application/json', 'User-Agent': 'LiquidMapStatus' },
+      timeout: 8000,
+    });
+    radar = { ok: r.ok, status: r.status, ms: Date.now() - t0, url: RADAR_URL, checkedAt: new Date().toISOString() };
+  } catch (e) {
+    radar = { ok: false, error: e.message, ms: Date.now() - t0, url: RADAR_URL, checkedAt: new Date().toISOString() };
+  }
+  res.json(Object.assign({}, snap, { radar }));
 });
 
 // ══════════════════════════════════════════════════════════════════

@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiquidMap PRO · Salud del Sistema</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;600&display=swap');
+:root{
+  --bg:#03050d;--panel:#080d1a;--panel2:#0c1220;--border:#162035;
+  --accent:#00e5ff;--green:#00ff9d;--red:#ff2d6b;--yellow:#ffe000;
+  --text:#c7d2e0;--muted:#5f708c;--white:#eef4ff;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;font-size:12px;min-height:100vh;padding:16px;}
+#top{display:flex;align-items:center;gap:12px;flex-wrap:wrap;padding-bottom:14px;border-bottom:1px solid var(--border);margin-bottom:16px;}
+.logo{font-family:'Bebas Neue',sans-serif;font-size:22px;color:var(--accent);letter-spacing:3px;}
+.logo span{color:var(--yellow);font-size:12px;}
+.top-right{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap;}
+.meta{font-family:'Space Mono',monospace;font-size:10px;color:var(--muted);}
+.meta b{color:var(--text);}
+.btn{padding:5px 12px;border:1px solid var(--border);background:var(--panel2);color:var(--text);border-radius:4px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:12px;letter-spacing:1px;transition:all .15s;}
+.btn:hover{border-color:var(--accent);color:var(--accent);}
+.btn.paused{border-color:var(--yellow);color:var(--yellow);}
+h2{font-family:'Bebas Neue',sans-serif;font-size:15px;letter-spacing:2px;color:var(--muted);margin:18px 0 8px;font-weight:400;}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:10px;}
+.card{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:12px 14px;position:relative;overflow:hidden;}
+.card::before{content:'';position:absolute;left:0;top:0;bottom:0;width:3px;background:var(--muted);}
+.card.ok::before{background:var(--green);}
+.card.warn::before{background:var(--yellow);}
+.card.bad::before{background:var(--red);}
+.card.wait::before{background:var(--muted);}
+.card-head{display:flex;align-items:center;gap:8px;margin-bottom:8px;}
+.dot{width:9px;height:9px;border-radius:50%;background:var(--muted);flex-shrink:0;}
+.dot.ok{background:var(--green);box-shadow:0 0 8px var(--green);}
+.dot.warn{background:var(--yellow);box-shadow:0 0 8px var(--yellow);}
+.dot.bad{background:var(--red);box-shadow:0 0 8px var(--red);}
+.dot.wait{background:var(--muted);}
+.card-title{font-family:'Space Mono',monospace;font-size:12px;font-weight:700;color:var(--white);}
+.card-sub{font-family:'Space Mono',monospace;font-size:9px;color:var(--muted);margin-left:auto;}
+.badge{font-family:'Bebas Neue',sans-serif;letter-spacing:1px;font-size:11px;padding:1px 7px;border-radius:3px;}
+.badge.ok{background:rgba(0,255,157,.12);color:var(--green);}
+.badge.warn{background:rgba(255,224,0,.12);color:var(--yellow);}
+.badge.bad{background:rgba(255,45,107,.14);color:var(--red);}
+.badge.wait{background:rgba(95,112,140,.14);color:var(--muted);}
+.rows{display:flex;flex-direction:column;gap:3px;margin-top:6px;}
+.row{display:flex;justify-content:space-between;font-family:'Space Mono',monospace;font-size:10px;}
+.row .k{color:var(--muted);}
+.row .v{color:var(--text);text-align:right;}
+.row .v.g{color:var(--green);} .row .v.y{color:var(--yellow);} .row .v.r{color:var(--red);}
+.foot{margin-top:22px;padding-top:12px;border-top:1px solid var(--border);font-family:'Space Mono',monospace;font-size:9px;color:var(--muted);line-height:1.7;}
+.legend{display:flex;gap:16px;flex-wrap:wrap;margin-bottom:6px;}
+.legend span{display:flex;align-items:center;gap:5px;}
+.spin{display:inline-block;width:10px;height:10px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:sp .7s linear infinite;}
+@keyframes sp{to{transform:rotate(360deg);}}
+</style>
+</head>
+<body>
+
+<div id="top">
+  <div class="logo">LIQUIDMAP <span>PRO · SALUD DEL SISTEMA</span></div>
+  <div class="top-right">
+    <span class="meta" id="clock">—</span>
+    <span class="meta">refresco en <b id="countdown">—</b>s</span>
+    <button class="btn" id="btn-refresh">⟳ AHORA</button>
+    <button class="btn" id="btn-pause">⏸ PAUSAR</button>
+  </div>
+</div>
+
+<h2>PROXIES (RENDER)</h2>
+<div class="grid" id="grid-proxies"></div>
+
+<h2>FEED DE DATOS</h2>
+<div class="grid" id="grid-feed"></div>
+
+<h2>MONITORES · ÚLTIMA SEÑAL</h2>
+<div class="grid" id="grid-monitors"></div>
+
+<div class="foot">
+  <div class="legend">
+    <span><i class="dot ok"></i> OK / fresco</span>
+    <span><i class="dot warn"></i> tibio / en pausa (fuera de sesión)</span>
+    <span><i class="dot bad"></i> caído / sin latir</span>
+    <span><i class="dot wait"></i> sin instrumentar / sin dato</span>
+  </div>
+  Todo lo verde es un chequeo REAL contra un endpoint vivo. Nada sintético — lo que no se puede medir todavía, dice "—".<br>
+  Los monitores y el radar se encienden cuando el server tenga la ruta <b>/status</b> y los bots el latido (paso siguiente).
+</div>
+
+<script>
+// ── CONFIG ─────────────────────────────────────────────────────────
+// Servido desde el mismo proxy (ej. /salud) → base '' (mismo origen) anda solo.
+// Si lo abrís suelto (file://), poné acá la URL del proxy de producción.
+const API_BASE = '';
+const REFRESH_SEC = 15;
+const TIMEOUT_MS  = 10000;
+
+// ── Helpers ────────────────────────────────────────────────────────
+async function ping(path){
+  const ctrl = new AbortController();
+  const to = setTimeout(()=>ctrl.abort(), TIMEOUT_MS);
+  const t0 = performance.now();
+  try{
+    const r = await fetch(API_BASE + path, { signal: ctrl.signal, cache:'no-store' });
+    const ms = Math.round(performance.now() - t0);
+    let body = null; try{ body = await r.json(); }catch{}
+    return { ok:r.ok, status:r.status, ms, body };
+  }catch(e){
+    return { ok:false, status:0, ms:Math.round(performance.now()-t0), error:e.name==='AbortError'?'timeout':e.message };
+  }finally{ clearTimeout(to); }
+}
+function ageTxt(sec){
+  if(sec==null) return '—';
+  if(sec<60) return 'hace '+sec+'s';
+  if(sec<3600) return 'hace '+Math.floor(sec/60)+'min';
+  if(sec<86400) return 'hace '+Math.floor(sec/3600)+'h';
+  return 'hace '+Math.floor(sec/86400)+'d';
+}
+function isoToLocal(iso){ if(!iso) return '—'; try{ return new Date(iso).toLocaleString('es-AR',{hour12:false}); }catch{ return iso; } }
+function sinceSec(iso){ if(!iso) return null; return Math.round((Date.now()-new Date(iso).getTime())/1000); }
+
+// severity → clases
+const S = { ok:{c:'ok',b:'OK'}, warn:{c:'warn',b:'ATENCIÓN'}, bad:{c:'bad',b:'CAÍDO'}, wait:{c:'wait',b:'—'} };
+function card(sev, title, sub, rows){
+  const s = S[sev]||S.wait;
+  const rowsHtml = rows.map(r=>`<div class="row"><span class="k">${r.k}</span><span class="v ${r.cls||''}">${r.v}</span></div>`).join('');
+  return `<div class="card ${s.c}">
+    <div class="card-head">
+      <i class="dot ${s.c}"></i>
+      <span class="card-title">${title}</span>
+      <span class="card-sub">${sub||''}</span>
+    </div>
+    <div><span class="badge ${s.c}">${s.b}</span></div>
+    <div class="rows">${rowsHtml}</div>
+  </div>`;
+}
+
+// ── Render de cada sección ─────────────────────────────────────────
+async function renderProxies(statusRes){
+  const el = document.getElementById('grid-proxies');
+  // Producción: /health real
+  const h = await ping('/health');
+  let prodSev, prodRows;
+  if(h.ok && h.body){
+    prodSev='ok';
+    prodRows=[
+      {k:'latencia', v:h.ms+' ms', cls:h.ms<800?'g':(h.ms<2500?'y':'r')},
+      {k:'servicio', v:h.body.service||'ok'},
+      {k:'hora srv', v:isoToLocal(h.body.time)},
+    ];
+  }else{
+    prodSev='bad';
+    prodRows=[{k:'error', v:(h.error||('HTTP '+h.status)), cls:'r'},{k:'latencia', v:h.ms+' ms'}];
+  }
+  let html = card(prodSev,'liquidmap-proxy','producción · /health',prodRows);
+
+  // Radar: viene de /status.radar (chequeo server-side, sin CORS). Hasta cablear /status → wait.
+  const radar = statusRes && statusRes.body && statusRes.body.radar;
+  if(radar){
+    const sev = radar.ok ? 'ok' : 'bad';
+    html += card(sev,'liquidmap-proxy-1','radar · /health',[
+      {k:'estado', v:radar.ok?'arriba':'caído', cls:radar.ok?'g':'r'},
+      {k:'latencia', v:(radar.ms!=null?radar.ms+' ms':'—')},
+      {k:'chequeado', v:isoToLocal(radar.checkedAt)},
+    ]);
+  }else{
+    html += card('wait','liquidmap-proxy-1','radar',[
+      {k:'estado', v:'esperando /status'},
+      {k:'nota', v:'se enciende al cablear'},
+    ]);
+  }
+  el.innerHTML = html;
+}
+
+async function renderFeed(){
+  const el = document.getElementById('grid-feed');
+  let html = '';
+
+  // Alpaca SIP (bolsa) — /alpaca-diag
+  const a = await ping('/alpaca-diag');
+  if(a.ok && a.body && a.body.ok){
+    const lastT = a.body.last && (a.body.last.t || a.body.last.Timestamp);
+    const age = sinceSec(lastT);
+    html += card('ok','Alpaca SIP','bolsa · /alpaca-diag',[
+      {k:'barras SPY', v:String(a.body.bars??'—'), cls:'g'},
+      {k:'última vela', v:lastT?isoToLocal(lastT):'—'},
+      {k:'latencia', v:(a.body.ms??a.ms)+' ms'},
+      {k:'key', v:a.body.key||'—'},
+    ]);
+  }else{
+    const msg = (a.body && (a.body.error||a.body.veredicto)) || a.error || ('HTTP '+a.status);
+    html += card(a.status?'bad':'bad','Alpaca SIP','bolsa · /alpaca-diag',[
+      {k:'estado', v:'sin datos', cls:'r'},
+      {k:'detalle', v:String(msg).slice(0,40), cls:'r'},
+    ]);
+  }
+
+  // Red crypto (exchanges) — /diag, foco en Bybit (el que usás)
+  const d = await ping('/diag');
+  if(d.ok && d.body && Array.isArray(d.body.results)){
+    const res = d.body.results;
+    const bybit = res.find(r=>r.name==='bybit') || res.find(r=>r.name==='bybit_linear');
+    const upCount = res.filter(r=>r.ok).length;
+    const sev = bybit && bybit.ok ? 'ok' : (upCount>0?'warn':'bad');
+    html += card(sev,'Red crypto','/diag · '+res.length+' exchanges',[
+      {k:'Bybit', v:bybit?(bybit.ok?'OK '+bybit.ms+'ms':'caído'):'—', cls:bybit&&bybit.ok?'g':'r'},
+      {k:'alcanzables', v:upCount+'/'+res.length, cls:upCount>=res.length/2?'g':'y'},
+      {k:'región', v:d.body.region_render||'—'},
+    ]);
+  }else{
+    html += card('bad','Red crypto','/diag',[{k:'estado', v:(d.error||('HTTP '+d.status)), cls:'r'}]);
+  }
+
+  el.innerHTML = html;
+}
+
+function renderMonitors(statusRes){
+  const el = document.getElementById('grid-monitors');
+  const comps = statusRes && statusRes.body && statusRes.body.components;
+  const meta = {
+    bolsa:  {title:'Monitor BOLSA',  sub:'@liquidmapbolsa_bot'},
+    crypto: {title:'Monitor CRYPTO', sub:'@liquidmappro_bot'},
+  };
+  // Mapa estado interno → severidad visual
+  const sevOf = st => st==='ok'?'ok' : (st==='stale'||st==='paused')?'warn' : (st==='dead')?'bad' : 'wait';
+  const lblOf = st => ({ok:'latiendo',stale:'tibio',paused:'en pausa (fuera de sesión)',dead:'SIN LATIR',unknown:'sin señal aún'}[st]||'—');
+
+  if(!comps){
+    let html='';
+    for(const key of Object.keys(meta)){
+      html += card('wait',meta[key].title,meta[key].sub,[
+        {k:'estado', v:'esperando /status'},
+        {k:'nota', v:'falta cablear latido'},
+      ]);
+    }
+    el.innerHTML = html;
+    return;
+  }
+  let html='';
+  for(const key of Object.keys(meta)){
+    const c = comps[key];
+    if(!c){ html += card('wait',meta[key].title,meta[key].sub,[{k:'estado',v:'—'}]); continue; }
+    const sev = sevOf(c.status);
+    html += card(sev, meta[key].title, meta[key].sub, [
+      {k:'estado', v:lblOf(c.status), cls:sev==='ok'?'g':(sev==='bad'?'r':'y')},
+      {k:'último latido', v:ageTxt(c.beatAgeSec)},
+      {k:'última señal', v:c.lastSignal?ageTxt(c.signalAgeSec):'—'},
+      {k:'señal', v:c.lastSignalInfo||'—'},
+      {k:'señales (sesión)', v:String(c.signalCount??0)},
+    ]);
+  }
+  el.innerHTML = html;
+}
+
+// ── Ciclo ──────────────────────────────────────────────────────────
+let paused=false, timer=null, countdown=REFRESH_SEC;
+async function refreshAll(){
+  document.getElementById('clock').textContent = new Date().toLocaleTimeString('es-AR',{hour12:false});
+  const statusRes = await ping('/status');            // una sola llamada; alimenta radar + monitores
+  await Promise.all([ renderProxies(statusRes), renderFeed() ]);
+  renderMonitors(statusRes);
+  countdown = REFRESH_SEC;
+}
+function tick(){
+  if(paused) return;
+  countdown--;
+  document.getElementById('countdown').textContent = countdown;
+  if(countdown<=0) refreshAll();
+}
+document.getElementById('btn-refresh').onclick = ()=>refreshAll();
+document.getElementById('btn-pause').onclick = (e)=>{
+  paused=!paused;
+  e.target.textContent = paused?'▶ REANUDAR':'⏸ PAUSAR';
+  e.target.classList.toggle('paused', paused);
+};
+refreshAll();
+timer = setInterval(tick, 1000);
+</script>
+</body>
+</html>
