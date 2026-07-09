@@ -1902,13 +1902,17 @@ function resampleSession4Hh(bars, tMs){
 // ── VENTANA DEL POC (VPVR) — RANGO ESTRUCTURAL, desacoplada del ancla de sesión ──────
 // El VWAP se ancla a la sesión (vía sessionBars) porque TV también lo ancla → correcto.
 // El POC de TV (VPVR) NO se ancla: es rango visible, se ensancha con el TF. Acá el POC
-// recibe su propia ventana rodante por TF, calibrada al rango visible típico de TV
-// (medido vs fotos AAPL 2026-07-09 → 15m≈4d ~$312.5 · 1H≈2-3sem ~$293.5 · 4H≈5-6sem ~$295.9).
-// Robusta: si hay menos velas que la ventana, usa todas. Sin filtro "solo hoy". Cero sintético.
-// NOTA: en 4H, 'candles' ya son velas de SESIÓN (2/día vía resampleSession4Hh) → last 60 ≈ 30 días.
+// recibe su propia ventana rodante por TF, calibrada al rango visible típico de TV.
+// CALIBRACIÓN (validada en vivo AAPL 2026-07-09, 18:52 ET):
+//   15m: 104 velas → POC $312.80 vs TV 312.7 → Δ$0.10 CLAVADO ✅ (se mantiene).
+//   4H:  60 velas quedó $14 alto ($310.49 vs TV 295.9) → se ensancha a 100 para pesar la
+//        acumulación estructural de ~296 (POC 4H bimodal: volumen fuerte en ~296 y ~310).
+//   1H:  se ensancha en proporción (84→130 ≈ 3-4 semanas, TV 1H POC ~293.6).
+// NOTA: HTF puede no clavar al centavo (bimodal + feed Alpaca SIP ≠ feed de TV); apunta a la
+// zona estructural correcta y se MUEVE con el TF (ya no congelado). Sin filtro "solo hoy". Cero sintético.
 function pocWindowBars(candles, tf){
   if(!candles || !candles.length) return candles || [];
-  const WIN = { '5':156, '15':104, '60':84, '240':60, 'D':60 };  // barras RTH ≈ 5m~2d · 15m~4d · 1H~12d · 4H(sesión)~30d
+  const WIN = { '5':156, '15':104, '60':130, '240':100, 'D':60 };  // barras RTH ≈ 5m~2d · 15m~4d · 1H~3-4sem · 4H(sesión)~50d
   const n = WIN[tf] || 60;
   return candles.length > n ? candles.slice(-n) : candles;
 }
