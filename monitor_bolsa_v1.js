@@ -27,6 +27,11 @@
 'use strict';
 const fetch = require('node-fetch');
 
+// ── LATIDO DE SALUD (2b) — singleton compartido con server.js. No-op si falta el módulo (fail-open). ──
+let hbBeat = () => {}, hbSignal = () => {};
+try { const hs = require('./health_state.js'); hbBeat = hs.beat; hbSignal = hs.signal; }
+catch (e) { console.warn('⚠️  health_state no disponible (latido off):', e.message); }
+
 // ── ARCO BOSWAVES (CAPA 14) — módulo compartido bot/RADAR ──
 // Port JS del "Arc VWAP Supertrend [BOSWaves]" (MPL 2.0, open source).
 // Si el archivo no está en el repo, la capa se desactiva sola (sin crashear)
@@ -1047,6 +1052,7 @@ async function scanTicker(ticker, session) {
     }
 
     await sendTelegram(buildMessage(ticker, price, result, session, quote, candles4H));
+    hbSignal('bolsa', `${ticker} ${result.direction} ${result.score}/10`);   // señal real enviada
 
     s.lastSignalDir = result.direction;
     s.lastSignalTs  = Date.now();
@@ -1073,6 +1079,7 @@ async function runScan() {
   }
 
   console.log(`\n[BOLSA SCAN v6] ${now} · ${session.sessionName} ${session.powerHour ? `· ${session.powerHour.name}` : ''}`);
+  hbBeat('bolsa');                       // latido: scan real en sesión (fuera de RTH runScan ya retornó → pausa legítima)
 
   for (const ticker of STOCK_TICKERS) {
     await scanTicker(ticker, session);
@@ -1108,6 +1115,11 @@ if (!ALPACA_KEY_ID || !ALPACA_SECRET) {
 } else {
   console.log(`   Alpaca    : ✅ keys cargadas (${ALPACA_KEY_ID.slice(0,4)}…) · feed=sip`);
 }
+
+// Latido dedicado cada 60s (< stale 180s), gateado por sesión: late en RTH (incl. lunch = vivo pero silencioso),
+// NO late fuera de sesión → el tablero lo muestra "paused" (pausa legítima), nunca "dead" de noche.
+try { if (getNYSession().shouldScan) hbBeat('bolsa'); } catch (e) {}   // latido inmediato si ya está abierto
+setInterval(() => { try { if (getNYSession().shouldScan) hbBeat('bolsa'); } catch (e) {} }, 60 * 1000);
 
 runScan();
 setInterval(runScan, SCAN_INTERVAL);
