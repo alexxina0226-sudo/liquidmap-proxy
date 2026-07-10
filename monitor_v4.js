@@ -20,6 +20,11 @@
 const fetch = require('node-fetch');
 const { computeArc } = require('./arc_boswaves.js');   // CAPA 14 · motor del arco (ya en el repo, lo usa el bot bolsa)
 
+// ── LATIDO DE SALUD (2b) — singleton compartido con server.js. No-op si falta el módulo (fail-open). ──
+let hbBeat = () => {}, hbSignal = () => {};
+try { const hs = require('./health_state.js'); hbBeat = hs.beat; hbSignal = hs.signal; }
+catch (e) { console.warn('⚠️  health_state no disponible (latido off):', e.message); }
+
 // ── CONFIG ─────────────────────────────────────────────────
 const TELEGRAM_TOKEN = '8676337394:AAEVIwDY2xGwAmE7hMWcjjAMedjws_vjzSU';
 const CHAT_IDS       = ['1218461753', '1373309702'];
@@ -902,6 +907,7 @@ async function scanTicker(ticker) {
         const arcFlips = detectArcFlipAlerts(candlesArc4H, ticker, '4H', ARC_STATE, ARC_OPTS);
         for (const fl of arcFlips) {
           await sendTelegram(fl.msg);
+          hbSignal('crypto', `${ticker} ARCO ${fl.dir}`);   // señal real enviada (flip del arco)
           console.log(`[${ticker}] 🌀 ARCO FLIP ${fl.dir} @ $${fmt(fl.price, fl.price)} (CAPA 14, independiente del score)`);
         }
       }
@@ -1028,6 +1034,7 @@ async function scanTicker(ticker) {
 
     const msg = buildMessage(ticker, price, result, fr, oiHistory, lsRatio, session, killZone, dynATR);
     await sendTelegram(msg);
+    hbSignal('crypto', `${ticker} ${result.direction} ${result.score}/10`);   // señal real enviada (neuronal)
 
     // Actualizar estado neuronal
     s.lastSignalDir = result.direction;
@@ -1050,6 +1057,7 @@ async function runScan() {
   const now = new Date().toISOString();
   const kz  = getKillZone();
   console.log(`\n[SCAN] ${now} ${kz ? `· ⏰ ${kz.name}` : ''}`);
+  hbBeat('crypto');                       // latido: el ciclo de scan disparó
 
   for (const ticker of CRYPTO_TICKERS) {
     await scanTicker(ticker);
@@ -1069,6 +1077,9 @@ console.log(`   Kill Zones: London·NY·Overlap ponderadas`);
 console.log(`   Data     : proxy Render → Bybit (klines/FR/OI/L-S)`);
 console.log(`   Proxy    : ${PROXY} ${/127\.0\.0\.1|localhost/.test(PROXY) ? '(loopback local — no sale de la instancia)' : '(URL pública)'}`);
 console.log(`   Scan     : cada 5 min — dispara solo cuando hay calidad real`);
+
+hbBeat('crypto');                                // latido inmediato al arrancar (evita "unknown" hasta el 1er scan)
+setInterval(() => hbBeat('crypto'), 60 * 1000);  // latido de proceso cada 60s (< stale 180s) — crypto 24/7, nunca en pausa
 
 runScan();
 setInterval(runScan, SCAN_INTERVAL);
