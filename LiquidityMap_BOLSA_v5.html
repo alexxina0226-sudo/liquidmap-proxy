@@ -831,6 +831,35 @@ function detectStructure(bars){
   return { choch, bos, swings };
 }
 
+// ── PASO B · PÉRDIDA DE FUERZA (divergencia de momentum sobre swings) ──────────────
+// Aviso TEMPRANO de reversión, antes del CHoCH: el precio hace un extremo nuevo pero el
+// MOMENTUM no lo confirma → el movimiento se queda sin nafta (compradores/vendedores
+// agotados). Institucional. Data-honesto: swings reales + ROC de precio; NO usa CVD
+// por-barra (no existe en el mapa) ni nada sintético. Display-only por ahora (no toca el
+// score) — igual que el governor arrancó en modo comparación antes de gobernar.
+function detectMomentumDivergence(bars, swings){
+  if(!bars || bars.length < 12 || !swings || swings.length < 4) return null;
+  const MOM = 5;                                   // ventana de ROC (velocidad del precio)
+  const roc = i => (i - MOM < 0) ? 0 : (bars[i].c - bars[i-MOM].c) / (bars[i-MOM].c || 1);
+  const hh = swings.filter(s => s.type === 'HH').slice(-2);
+  const ll = swings.filter(s => s.type === 'LL').slice(-2);
+  // BAJISTA: dos máximos, precio MÁS ALTO pero momentum MÁS DÉBIL → compradores sin fuerza
+  if(hh.length === 2){
+    const [a, b] = hh;
+    if(b.price > a.price && roc(a.i) > 0 && roc(b.i) < roc(a.i)){
+      return { type:'BEAR_DIV', dir:'BEAR', label:'⚠ Fuerza compradora cayendo (divergencia bajista)' };
+    }
+  }
+  // ALCISTA: dos mínimos, precio MÁS BAJO pero momentum MENOS NEGATIVO → vendedores sin fuerza
+  if(ll.length === 2){
+    const [a, b] = ll;
+    if(b.price < a.price && roc(a.i) < 0 && roc(b.i) > roc(a.i)){
+      return { type:'BULL_DIV', dir:'BULL', label:'⚠ Fuerza vendedora cayendo (divergencia alcista)' };
+    }
+  }
+  return null;
+}
+
 // ── WHALE DETECTION ────────────────────────────────────────────
 function detectWhale(bars, threshold){
   if(!bars || bars.length < 20) return null;
@@ -1136,13 +1165,25 @@ function computeNeuralScore(p){
 
   // Normalize 0-10
   const normalized = Math.round(Math.max(0, Math.min(10, ((score + rawMax) / (rawMax * 2)) * 10)));
-  const type = score >= 3 ? 'BUY' : score <= -3 ? 'SELL' : 'NEUTRAL';
+  const type0 = score >= 3 ? 'BUY' : score <= -3 ? 'SELL' : 'NEUTRAL';
+  // ── PASO A · HONESTIDAD DEL TITULAR (auditoría 2026-07-09) ─────────────────────────
+  // Si el JUEZ (SuperTrend) y la ESTRUCTURA (BOS lidera → CHoCH) apuntan en sentidos
+  // OPUESTOS, no hay edge coherente → el titular se calla a NEUTRAL. NO es el ADX (sigue
+  // siendo etiqueta, respetamos el 12-jun); es conflicto de CONFLUENCIA — el mismo principio
+  // con que el mapa crypto colapsa por "confluencia insuficiente". Las señales DÉBIL con
+  // dirección coherente SÍ muestran su dirección: un edge débil sigue siendo un edge.
+  const structDir = bosDir !== 0 ? bosDir : chochDir;
+  const judgeVsStruct = (stDir !== 0 && structDir !== 0 && Math.sign(stDir) !== Math.sign(structDir));
+  const type = (judgeVsStruct && type0 !== 'NEUTRAL') ? 'NEUTRAL' : type0;
+  const conflictNote = (judgeVsStruct && type0 !== 'NEUTRAL')
+    ? ('juez↔estructura en conflicto: ST ' + (stDir>0?'▲':'▼') + ' vs ' + (bosDir!==0?'BOS':'CHoCH') + ' ' + (structDir>0?'▲':'▼'))
+    : null;
   // RÉGIMEN ADX — CONFLUENCIA, NO JUEZ (revisado 12-jun): el ADX es lento;
   // NO bloquea el titular ni el envío. Solo informamos el régimen como etiqueta
   // para que el ojo sepa si la señal nació en tendencia o en rango. El juez
   // sigue siendo SuperTrend + estructura. (regimeWeak = solo dato, no veto.)
   const regimeWeak = !!(adxObj && adxObj.lateral && type !== 'NEUTRAL');
-  return { type, score: normalized, rawScore: score, conf, superTrendDir: stDir, layers, adx: adxObj, regimeWeak };
+  return { type, score: normalized, rawScore: score, conf, superTrendDir: stDir, layers, adx: adxObj, regimeWeak, conflictNote };
 }
 
 // ── GEX / MAX PAIN ────────────────────────────────────────────
@@ -1628,8 +1669,9 @@ function updateDerived(){
   else if(sig.type==='SELL'){ sigEl.textContent='▼ SELL — VENTA'; sigEl.className='sell'; }
   else { sigEl.textContent='◈ NEUTRAL / ESPERAR'; sigEl.className='neutral'; }
   const regNote = sig.regimeWeak ? ' · ⚠ rango (ADX '+sig.adx.adx.toFixed(1)+')' : (sig.adx&&sig.adx.strong?' · ADX '+sig.adx.adx.toFixed(1)+' '+sig.adx.quality:'');
-  sesgoEl.textContent = 'SESGO '+(tfLabels[tf]||tf)+' — Score '+sig.score+'/10'+regNote;
-  qualEl.textContent = sig.conf.slice(0,3).join(' · ');
+  sesgoEl.textContent = 'SESGO '+(tfLabels[tf]||tf)+' — Score '+sig.score+'/10'+regNote+(sig.conflictNote?' · ⚖ '+sig.conflictNote:'');
+  const divg = detectMomentumDivergence(candles, struct.swings);
+  qualEl.textContent = (divg ? divg.label + '  ·  ' : '') + sig.conf.slice(0,3).join(' · ');
   scoreValEl.textContent = sig.score+'/10';
   scoreFillEl.style.width = (sig.score*10)+'%';
   renderConfMeter(sig);
