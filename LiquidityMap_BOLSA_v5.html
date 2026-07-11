@@ -996,6 +996,45 @@ function detectStopHunt(candle){
   return null;
 }
 
+// ── PASO C · BARRIDO DE LIQUIDEZ + RECLAIM (sweep/reclaim, pool-aware) ──────────────
+// La respuesta directa a "¿esta subida es honesta o es una trampa para darse la vuelta?".
+// Un STOP HUNT crudo (detectStopHunt) solo mira la MECHA de UNA vela — no sabe si hay
+// liquidez que cazar; se dispara en el medio de la nada. Un BARRIDO institucional es otra
+// cosa: el precio PERFORA un pool REAL (equal highs/lows = stops acumulados) y CIERRA de
+// vuelta adentro → la ruptura fue una TRAMPA, no un movimiento honesto. Eso es lo que da
+// vuelta un precio en premium. Data-honesto: vela real + pools reales (findLiquidityPools).
+// Señal de PROBABILIDAD, no certeza (sin L2). Display-only por ahora — NO toca el score,
+// igual que el governor y la divergencia arrancaron en modo comparación.
+function detectLiquiditySweep(candle, pools, atr){
+  if(!candle || !pools) return null;
+  const rng = candle.h - candle.l;
+  if(rng <= 0) return null;
+  const minPierce = (atr && atr > 0) ? atr * 0.10 : rng * 0.15; // profundidad mínima real del barrido
+  // BARRIDO BAJISTA (trampa sobre los MÁXIMOS): perfora el pool de resistencia y cierra debajo
+  if(pools.res && pools.res.price){
+    const rp = pools.res.price;
+    const pierced   = candle.h > rp + minPierce;          // corrió los stops de arriba
+    const reclaimed = candle.c < rp;                       // cerró de vuelta adentro (ruptura fallida)
+    const rejection = candle.c < (candle.l + rng * 0.5);   // cierra en la mitad baja = rechazo real
+    if(pierced && reclaimed && rejection){
+      return { type:'SWEEP_BEAR', dir:'BEAR', pool:rp, count:(pools.res.count||1),
+               label:'🎯 Barrido de máximos + reclaim — trampa alcista (probable reversión ▼)' };
+    }
+  }
+  // BARRIDO ALCISTA (trampa sobre los MÍNIMOS): perfora el pool de soporte y cierra arriba
+  if(pools.sup && pools.sup.price){
+    const sp = pools.sup.price;
+    const pierced   = candle.l < sp - minPierce;
+    const reclaimed = candle.c > sp;
+    const rejection = candle.c > (candle.l + rng * 0.5);   // cierra en la mitad alta = rechazo real
+    if(pierced && reclaimed && rejection){
+      return { type:'SWEEP_BULL', dir:'BULL', pool:sp, count:(pools.sup.count||1),
+               label:'🎯 Barrido de mínimos + reclaim — trampa bajista (probable reversión ▲)' };
+    }
+  }
+  return null;
+}
+
 // ── ADX / DMI — WILDER · IDÉNTICO A ta.dmi(14,14) DEL PINE v6.1 Y AL BOT ──
 // "El alma de TV": ADX ≥20 = tendencia válida · ≥30 = fuerte · <20 = LATERAL
 // → el titular pasa a LATERAL y NO se envía señal a Telegram (= adx_ok del Pine).
@@ -1671,7 +1710,10 @@ function updateDerived(){
   const regNote = sig.regimeWeak ? ' · ⚠ rango (ADX '+sig.adx.adx.toFixed(1)+')' : (sig.adx&&sig.adx.strong?' · ADX '+sig.adx.adx.toFixed(1)+' '+sig.adx.quality:'');
   sesgoEl.textContent = 'SESGO '+(tfLabels[tf]||tf)+' — Score '+sig.score+'/10'+regNote+(sig.conflictNote?' · ⚖ '+sig.conflictNote:'');
   const divg = detectMomentumDivergence(candles, struct.swings);
-  qualEl.textContent = (divg ? divg.label + '  ·  ' : '') + sig.conf.slice(0,3).join(' · ');
+  // PASO C — barrido de liquidez + reclaim (pool-aware): la "trampa para darse la vuelta".
+  const swPools = findLiquidityPools(struct.swings, p);
+  const sweep = detectLiquiditySweep(candles[candles.length-1], swPools, getATR(sym, p, tf));
+  qualEl.textContent = (sweep ? sweep.label + '  ·  ' : '') + (divg ? divg.label + '  ·  ' : '') + sig.conf.slice(0,3).join(' · ');
   scoreValEl.textContent = sig.score+'/10';
   scoreFillEl.style.width = (sig.score*10)+'%';
   renderConfMeter(sig);
