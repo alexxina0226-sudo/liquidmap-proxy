@@ -2501,6 +2501,12 @@ function updateDerived(){
   }
   set('sig-kz', kzLabel, kzLabel !== '—' ? 'y' : '');
   set('sig-conf', sig.conf.join(' · '), 'a');
+  // PASO C (crypto) — barrido de liquidez + reclaim: la "trampa para darse la vuelta".
+  // Se antepone a la línea de confluencias. Fail-open: nunca tumba el render.
+  try {
+    const _sw = detectLiquiditySweepCrypto(candles[candles.length-1], detectSwings(candles), p, calcRealATR(candles,14));
+    if(_sw){ const _ce = document.getElementById('sig-conf'); if(_ce) _ce.textContent = _sw.label + '  ·  ' + _ce.textContent; }
+  } catch(e){ /* el barrido nunca tumba el render */ }
   const q = evalQuality(sig.score);
   if(sig.collapsed){ set('sig-quality', '⏸ ESPERAR · '+sig.collapseReason, 'r'); }
   else { set('sig-quality', q.label, q.ok ? 'g' : 'r'); }
@@ -3013,6 +3019,51 @@ function detectSwings(bars){
       out.push({ price:b.l, kind:'low', idx:i });
   }
   return out;
+}
+
+// ── PASO C (crypto) · BARRIDO DE LIQUIDEZ + RECLAIM ────────────────────────────────
+// Port del Paso C del bolsa, ADAPTADO a la estructura crypto (swings {price,kind} +
+// calcRealATR). Mismo principio institucional: el precio PERFORA un pool REAL (equal
+// highs/lows = stops acumulados) y CIERRA de vuelta adentro → la ruptura fue TRAMPA,
+// no un movimiento honesto. En BTC el juego de liquidez es brutal — este es el aviso
+// de "trampa para darse la vuelta". Data-honesto: swings + vela reales. Señal de
+// PROBABILIDAD, no certeza (sin L2). Display-only — NO toca el score ni introduce
+// estado por-símbolo (todo local a la vela/candles actuales → cero fuga cruzada).
+function cryptoLiquidityPools(swings, price){
+  if(!swings || !swings.length || !price) return { res:null, sup:null };
+  const highs = swings.filter(s=>s.kind==='high').map(s=>s.price);
+  const lows  = swings.filter(s=>s.kind==='low').map(s=>s.price);
+  const above = highs.filter(h=>h>price).sort((a,b)=>a-b);   // resistencia más cercana primero
+  const below = lows.filter(l=>l<price).sort((a,b)=>b-a);     // soporte más cercano primero
+  const cluster = (arr)=>{
+    if(!arr.length) return null;
+    const base = arr[0];
+    const grp = arr.filter(v=>Math.abs(v-base)/base <= 0.004); // equal H/L dentro de 0.4%
+    return { price: grp.reduce((a,v)=>a+v,0)/grp.length, count: grp.length };
+  };
+  return { res: cluster(above), sup: cluster(below) };
+}
+function detectLiquiditySweepCrypto(candle, swings, price, atr){
+  if(!candle) return null;
+  const pools = cryptoLiquidityPools(swings, price);
+  const rng = candle.h - candle.l;
+  if(rng <= 0) return null;
+  const minPierce = (atr && atr > 0) ? atr * 0.10 : rng * 0.15;
+  // BARRIDO BAJISTA (trampa sobre los MÁXIMOS): perfora resistencia y cierra debajo
+  if(pools.res && pools.res.price){
+    const rp = pools.res.price;
+    if(candle.h > rp + minPierce && candle.c < rp && candle.c < (candle.l + rng * 0.5))
+      return { type:'SWEEP_BEAR', dir:'BEAR', pool:rp, count:pools.res.count,
+               label:'🎯 Barrido de máximos + reclaim — trampa alcista (probable reversión ▼)' };
+  }
+  // BARRIDO ALCISTA (trampa sobre los MÍNIMOS): perfora soporte y cierra arriba
+  if(pools.sup && pools.sup.price){
+    const sp = pools.sup.price;
+    if(candle.l < sp - minPierce && candle.c > sp && candle.c > (candle.l + rng * 0.5))
+      return { type:'SWEEP_BULL', dir:'BULL', pool:sp, count:pools.sup.count,
+               label:'🎯 Barrido de mínimos + reclaim — trampa bajista (probable reversión ▲)' };
+  }
+  return null;
 }
 
 function buildZones(mid){
