@@ -2173,6 +2173,13 @@ function governConviction(sig, ctx, opts){
   const nP=pillars.size, total=layers.length, partial=total>0&&live<Math.ceil(total*minLiveFrac);
   if(partial){ capAt(GOV_G['DÉBIL'], 'DATOS PARCIALES ('+live+'/'+total+' capas)'); }
   if(nP<minPillars){ capAt(nP<=1?GOV_G['DÉBIL']:GOV_G['VÁLIDA'], 'confluencia floja ('+nP+'/4 pilares)'); }
+  // GATE · R/R (FIX B · auditoría 2026-07-12) — una gestora NO califica FUERTE un trade
+  // donde arriesgás más de lo que ganás. R/R < 1 → cap DÉBIL; R/R < 1.5 → techo VÁLIDA.
+  // Solo aplica si el R/R viene provisto y es finito (backward-compatible con otros llamadores).
+  if(ctx && typeof ctx.rr === 'number' && isFinite(ctx.rr) && ctx.rr > 0){
+    if(ctx.rr < 1.0)      capAt(GOV_G['DÉBIL'],  'R/R '+ctx.rr.toFixed(1)+' < 1 (arriesga más de lo que gana)');
+    else if(ctx.rr < 1.5) capAt(GOV_G['VÁLIDA'], 'R/R '+ctx.rr.toFixed(1)+' ajustado (<1.5)');
+  }
   ceiling=Math.max(0,Math.min(GOV_G.SNIPER,ceiling));
   const binding=capList.filter(c=>c.l===ceiling).map(c=>c.m);
   const reason=binding.length?binding.join(' · '):(caps[0]||null);
@@ -2517,11 +2524,13 @@ function updateDerived(){
   set('ctx-ict', mctx.zoneTxt, mctx.zoneDir===1?'g':(mctx.zoneDir===-1?'r':''));
   if(mctx.mtfBull===null) set('ctx-mtf','—','');
   else set('ctx-mtf', mctx.mtfBull?'▲ Alcista':'▼ Bajista', mctx.mtfBull?'g':'r');
+  // Smart TP se calcula ACÁ arriba para alimentar el R/R al governor (FIX B)
+  const smartTP = calcSmartTP(p, sig.type, tf);
   // ── GOBERNADOR DE CONVICCIÓN (display, no veto · crypto: sin gate ADX) ──
-  // Muestra el veredicto honesto AL LADO del SNIPER. Caza el 502 (DATOS PARCIALES)
-  // y el BUY-en-premium. Etapa de comparación: "lo que grita vs lo honesto".
+  // Muestra el veredicto honesto AL LADO del SNIPER. Caza el 502 (DATOS PARCIALES),
+  // el BUY-en-premium y ahora el R/R pobre (FIX B). "Lo que grita vs lo honesto".
   try {
-    const gov = governConviction(sig, { trendStr:mctx.trendStr, zoneDir:mctx.zoneDir, mtfBull:mctx.mtfBull }, { requireRegime:false });
+    const gov = governConviction(sig, { trendStr:mctx.trendStr, zoneDir:mctx.zoneDir, mtfBull:mctx.mtfBull, rr: (smartTP && smartTP.rr != null) ? parseFloat(smartTP.rr) : null }, { requireRegime:false });
     if(sig.type !== 'NEUTRAL'){
       const why = gov.reason ? ' · capó: '+gov.reason : ' · confluencia limpia';
       const qEl = document.getElementById('sig-quality');
@@ -2531,8 +2540,7 @@ function updateDerived(){
   // Timestamp
   const nowStr = new Date().toLocaleTimeString('es',{hour:'2-digit',minute:'2-digit'});
   if(sig.type !== 'NEUTRAL') { const te = document.getElementById('sig-time'); if(te) te.textContent = 'Última señal: '+nowStr+' UTC'; }
-  // Niveles SL/TP con Smart TP institucional
-  const smartTP = calcSmartTP(p, sig.type, tf);
+  // Niveles SL/TP con Smart TP institucional (smartTP ya calculado arriba para el R/R gate)
   const dec = p < 1 ? 5 : p < 100 ? 3 : p < 10000 ? 1 : 0;
   if(sig.type === 'BUY'){
     set('sig-stop', '$'+smartTP.sl.toFixed(dec), 'r');
