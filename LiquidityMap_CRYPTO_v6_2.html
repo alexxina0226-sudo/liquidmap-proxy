@@ -3632,6 +3632,11 @@ async function selectSym(s, btn){
   // cvdReal = etiqueta "📡 real" del CVD; funding/OI/noRealData = defensivo hasta que carguen los loaders.
   oiHistory2 = []; spotFlowBias = 0; vp = null; cvdReal = false;
   fundingRate = 0; openInterest = 0; noRealData = false;
+  // FIX FUGA CRUZADA #2 (auditoría 2026-07-12): atrCache (clave tf, TTL 10s) y muscleCache
+  // (clave tf:limit, TTL 120s) NO estaban indexadas por símbolo ni se limpiaban → al cambiar
+  // de símbolo, el ATR (→TP/SL) y el contexto EMA200/MTF (→governor) mostraban el dato del
+  // símbolo anterior por hasta 10s / 2min. Misma familia que la fuga oiHistory2. Se resetean.
+  atrCache = {}; muscleCache = {};
   gexReal = null; maxPainReal = null; loadGEXDeribit();
   orderBookReal = null; loadOrderBook();
   document.querySelectorAll('.sym-btn').forEach(b => b.classList.remove('active'));
