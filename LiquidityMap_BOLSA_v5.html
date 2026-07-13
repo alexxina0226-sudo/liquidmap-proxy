@@ -1005,13 +1005,16 @@ function detectStopHunt(candle){
 // vuelta un precio en premium. Data-honesto: vela real + pools reales (findLiquidityPools).
 // Señal de PROBABILIDAD, no certeza (sin L2). Display-only por ahora — NO toca el score,
 // igual que el governor y la divergencia arrancaron en modo comparación.
+// ── FIX A1 (s51) · umbrales del barrido — tuneables en un renglón (calibrar en vivo) ──
+const SWEEP_MIN_POOL_COUNT = 2;    // gate #1: el pool debe ser 2+ equal H/L (stops REALES), no un swing suelto
+const SWEEP_PIERCE_ATR     = 0.25; // gate #2: pierce honesto (antes 0.10×ATR = trivial). Subir = más estricto
 function detectLiquiditySweep(candle, pools, atr){
   if(!candle || !pools) return null;
   const rng = candle.h - candle.l;
   if(rng <= 0) return null;
-  const minPierce = (atr && atr > 0) ? atr * 0.10 : rng * 0.15; // profundidad mínima real del barrido
+  const minPierce = (atr && atr > 0) ? atr * SWEEP_PIERCE_ATR : rng * 0.15; // FIX A1 gate #2: profundidad honesta
   // BARRIDO BAJISTA (trampa sobre los MÁXIMOS): perfora el pool de resistencia y cierra debajo
-  if(pools.res && pools.res.price){
+  if(pools.res && pools.res.price && (pools.res.count||1) >= SWEEP_MIN_POOL_COUNT){ // FIX A1 gate #1: pool REAL (2+ equal highs)
     const rp = pools.res.price;
     const pierced   = candle.h > rp + minPierce;          // corrió los stops de arriba
     const reclaimed = candle.c < rp;                       // cerró de vuelta adentro (ruptura fallida)
@@ -1022,7 +1025,7 @@ function detectLiquiditySweep(candle, pools, atr){
     }
   }
   // BARRIDO ALCISTA (trampa sobre los MÍNIMOS): perfora el pool de soporte y cierra arriba
-  if(pools.sup && pools.sup.price){
+  if(pools.sup && pools.sup.price && (pools.sup.count||1) >= SWEEP_MIN_POOL_COUNT){ // FIX A1 gate #1: pool REAL (2+ equal lows)
     const sp = pools.sup.price;
     const pierced   = candle.l < sp - minPierce;
     const reclaimed = candle.c > sp;
@@ -1713,7 +1716,15 @@ function updateDerived(){
   // PASO C — barrido de liquidez + reclaim (pool-aware): la "trampa para darse la vuelta".
   const swPools = findLiquidityPools(struct.swings, p);
   const sweep = detectLiquiditySweep(candles[candles.length-1], swPools, getATR(sym, p, tf));
-  qualEl.textContent = (sweep ? sweep.label + '  ·  ' : '') + (divg ? divg.label + '  ·  ' : '') + sig.conf.slice(0,3).join(' · ');
+  // FIX A1 gate #3 (anti-contradicción, modo ANOTAR — no silenciar): si el barrido pelea contra una señal
+  // FUERTE del mismo TF (score≥8 y ADX fuerte), se marca ⚠ pero NO se oculta (sin ignorar la alerta de reversión).
+  let sweepLabel = sweep ? sweep.label : '';
+  if(sweep){
+    const strongSig = sig.score >= 8 && sig.adx && sig.adx.strong;
+    const conflict = strongSig && ((sig.type==='BUY' && sweep.dir==='BEAR') || (sig.type==='SELL' && sweep.dir==='BULL'));
+    if(conflict) sweepLabel = '⚠ ' + sweepLabel + ' (choca c/ señal fuerte)';
+  }
+  qualEl.textContent = (sweepLabel ? sweepLabel + '  ·  ' : '') + (divg ? divg.label + '  ·  ' : '') + sig.conf.slice(0,3).join(' · ');
   scoreValEl.textContent = sig.score+'/10';
   scoreFillEl.style.width = (sig.score*10)+'%';
   renderConfMeter(sig);
