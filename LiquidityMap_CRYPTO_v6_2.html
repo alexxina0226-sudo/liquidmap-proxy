@@ -2512,7 +2512,15 @@ function updateDerived(){
   // Se antepone a la línea de confluencias. Fail-open: nunca tumba el render.
   try {
     const _sw = detectLiquiditySweepCrypto(candles[candles.length-1], detectSwings(candles), p, calcRealATR(candles,14));
-    if(_sw){ const _ce = document.getElementById('sig-conf'); if(_ce) _ce.textContent = _sw.label + '  ·  ' + _ce.textContent; }
+    if(_sw){
+      // FIX A1 gate #3 (anti-contradicción, modo ANOTAR — no silenciar): si el barrido pelea contra una
+      // señal FUERTE (score≥8) del mismo TF, se marca ⚠ pero NO se oculta (sin ignorar la reversión).
+      // Crypto no tiene gate ADX → el score es el proxy de fuerza direccional.
+      let _lbl = _sw.label;
+      const _conflict = sig.score >= 8 && ((sig.type==='BUY' && _sw.dir==='BEAR') || (sig.type==='SELL' && _sw.dir==='BULL'));
+      if(_conflict) _lbl = '⚠ ' + _lbl + ' (choca c/ señal fuerte)';
+      const _ce = document.getElementById('sig-conf'); if(_ce) _ce.textContent = _lbl + '  ·  ' + _ce.textContent;
+    }
   } catch(e){ /* el barrido nunca tumba el render */ }
   const q = evalQuality(sig.score);
   if(sig.collapsed){ set('sig-quality', '⏸ ESPERAR · '+sig.collapseReason, 'r'); }
@@ -3051,24 +3059,29 @@ function cryptoLiquidityPools(swings, price){
   };
   return { res: cluster(above), sup: cluster(below) };
 }
+// ── FIX A1 (portado del bolsa · sesión 51) ─────────────────────────────────
+// Mata el spam del barrido: gate #1 exige pool REAL (2+ equal H/L, no un swing suelto),
+// gate #2 exige pierce honesto (0.25×ATR; antes 0.10 = trivial). Constantes tuneables acá.
+const SWEEP_MIN_POOL_COUNT = 2;    // gate #1: 2+ equal H/L = stops reales, no swing suelto
+const SWEEP_PIERCE_ATR     = 0.25; // gate #2: pierce honesto (antes 0.10×ATR). Subir = más estricto
 function detectLiquiditySweepCrypto(candle, swings, price, atr){
   if(!candle) return null;
   const pools = cryptoLiquidityPools(swings, price);
   const rng = candle.h - candle.l;
   if(rng <= 0) return null;
-  const minPierce = (atr && atr > 0) ? atr * 0.10 : rng * 0.15;
+  const minPierce = (atr && atr > 0) ? atr * SWEEP_PIERCE_ATR : rng * 0.15; // FIX A1 gate #2: profundidad honesta
   // BARRIDO BAJISTA (trampa sobre los MÁXIMOS): perfora resistencia y cierra debajo
-  if(pools.res && pools.res.price){
+  if(pools.res && pools.res.price && (pools.res.count||1) >= SWEEP_MIN_POOL_COUNT){ // FIX A1 gate #1: pool REAL (2+ equal highs)
     const rp = pools.res.price;
     if(candle.h > rp + minPierce && candle.c < rp && candle.c < (candle.l + rng * 0.5))
-      return { type:'SWEEP_BEAR', dir:'BEAR', pool:rp, count:pools.res.count,
+      return { type:'SWEEP_BEAR', dir:'BEAR', pool:rp, count:(pools.res.count||1),
                label:'🎯 Barrido de máximos + reclaim — trampa alcista (probable reversión ▼)' };
   }
   // BARRIDO ALCISTA (trampa sobre los MÍNIMOS): perfora soporte y cierra arriba
-  if(pools.sup && pools.sup.price){
+  if(pools.sup && pools.sup.price && (pools.sup.count||1) >= SWEEP_MIN_POOL_COUNT){ // FIX A1 gate #1: pool REAL (2+ equal lows)
     const sp = pools.sup.price;
     if(candle.l < sp - minPierce && candle.c > sp && candle.c > (candle.l + rng * 0.5))
-      return { type:'SWEEP_BULL', dir:'BULL', pool:sp, count:pools.sup.count,
+      return { type:'SWEEP_BULL', dir:'BULL', pool:sp, count:(pools.sup.count||1),
                label:'🎯 Barrido de mínimos + reclaim — trampa bajista (probable reversión ▲)' };
   }
   return null;
