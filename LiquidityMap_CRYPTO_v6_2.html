@@ -75,6 +75,13 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .cf-bear{color:var(--red);} .cf-bear .cf-bar{background:var(--red);}
 .cf-neut{color:var(--muted);} .cf-neut .cf-bar{background:var(--muted);}
 .cf-chip.lit{box-shadow:0 0 0 1px currentColor inset,0 0 12px -4px currentColor;}
+/* FIX semáforo Paso 1 (s53): AUSENTE (feed sin dato) ≠ NEUTRAL (dato presente, lee plano) */
+.cf-absent{color:rgba(255,255,255,.25);border-style:dashed !important;opacity:.55;} .cf-absent .cf-bar{background:transparent;}
+.cf-neut .cf-bar{opacity:.5;}
+.sem-badge{display:inline-flex;align-items:center;gap:6px;font-size:9px;font-family:'Space Mono',monospace;letter-spacing:.5px;padding:3px 9px;border-radius:5px;background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.07);text-transform:uppercase;white-space:nowrap;}
+.sem-dot{width:9px;height:9px;border-radius:50%;background:currentColor;box-shadow:0 0 8px -1px currentColor;flex-shrink:0;}
+.sem-g{color:var(--green);} .sem-y{color:#e8c33a;} .sem-r{color:var(--red);}
+.sem-cnt{color:var(--muted);font-size:8px;letter-spacing:.3px;}
 .leg{display:flex;align-items:center;gap:4px;font-size:9px;color:var(--muted);}
 .ldot{width:10px;height:3px;border-radius:1px;flex-shrink:0;}
 #fear-greed{padding:2px 8px;border-radius:2px;font-family:'Space Mono',monospace;font-size:9px;font-weight:700;border:1px solid;}
@@ -1110,6 +1117,7 @@ let quote = {}, candles = [], zones = [], vp = null;
 let cvd = 0, buyV = 0, sellV = 0, cvdReal = false;
 let tickerCache = {}, lastAlertPrice = 0;
 let fundingRate = 0, openInterest = 0, fearGreed = 0;
+let fundingReal = false;   // FIX semáforo s53: true = funding REAL traído; false = NA (spot/feed caído). Solo display.
 let noRealData = false;   // honestidad: true cuando Binance no mandó velas reales (no se inventa nada)
 let audioCtx = null;
 // Ballenas — trades institucionales grandes
@@ -1403,6 +1411,7 @@ async function loadFundingRate(){
     return;
   }
   fundingRate = parseFloat(d.lastFundingRate) * 100;
+  fundingReal = true;   // FIX semáforo s53: dato real presente (aunque después lea plano)
   const nextFund = new Date(parseInt(d.nextFundingTime));
   const diffMs = nextFund - new Date();
   const diffH = Math.max(0, Math.floor(diffMs / 3600000));
@@ -1413,6 +1422,7 @@ async function loadFundingRate(){
 // Estado honesto cuando NO hay funding real (spot, o futuros caído). No inventa número.
 function fundingNA(txt){
   fundingRate = 0;
+  fundingReal = false;   // FIX semáforo s53: sin dato real → capa Funding = AUSENTE, no neutral
   ['fr-val','k-fr'].forEach(id=>{ const e=document.getElementById(id); if(e){ e.textContent=txt; e.className='vl'; } });
   const bar=document.getElementById('fr-bar'); if(bar) bar.style.width='0%';
 }
@@ -2340,16 +2350,23 @@ function computeSignal(price) {
     _strDir = _le.dir === 'bull' ? 1 : -1;
     _strVal = _le.type === 'BOS' ? 3 : 1.5;
   }
+  // ── FIX semáforo Paso 1 (s53): presencia por capa · distingue NEUTRAL (dato plano) de AUSENTE (feed sin dato) ──
+  // present=true → el feed trajo dato válido este ciclo, aunque dir=0 por leer sin sesgo.
+  // NO toca scoring (bullPts/bearPts/_live/_partial intactos): solo lo consume el semáforo/display.
+  const _dataOK   = !noRealData && Array.isArray(candles) && candles.length >= 5;
+  const _zonesOK  = Array.isArray(zones) && zones.length > 0;
+  const _structOK = Array.isArray(structureEvents);
+  const _vaOK     = _dataOK && va && isFinite(va.vah) && isFinite(va.val);
   const layers = [
-    { name: 'SuperTrend', val: +(+juezScore).toFixed(1), dir: juezDir === 'UP' ? 1 : juezDir === 'DOWN' ? -1 : 0 },
-    { name: 'Precio/POC', val: _pocDir ? 1.5 : 0, dir: _pocDir },
-    { name: 'CVD',        val: _cvdVal, dir: _cvdDir },
-    { name: 'Funding',    val: _frVal,  dir: _frDir },
-    { name: 'Liquidez',   val: _liqDir ? 1 : 0, dir: _liqDir },
-    { name: 'Value Area', val: 0.5, dir: _vaDir },
-    { name: 'Stop Hunt',  val: shDir ? 1.5 : 0, dir: shDir },
-    { name: 'Estructura', val: _strVal, dir: _strDir },
-    { name: 'Ballena',    val: whaleDir ? 1.5 : 0, dir: whaleDir, usd: whaleUSD }
+    { name: 'SuperTrend', val: +(+juezScore).toFixed(1), dir: juezDir === 'UP' ? 1 : juezDir === 'DOWN' ? -1 : 0, present: _dataOK },
+    { name: 'Precio/POC', val: _pocDir ? 1.5 : 0, dir: _pocDir, present: _dataOK && isFinite(poc) && poc > 0 },
+    { name: 'CVD',        val: _cvdVal, dir: _cvdDir, present: cvdReal },
+    { name: 'Funding',    val: _frVal,  dir: _frDir, present: fundingReal },
+    { name: 'Liquidez',   val: _liqDir ? 1 : 0, dir: _liqDir, present: _zonesOK },
+    { name: 'Value Area', val: 0.5, dir: _vaDir, present: _vaOK },
+    { name: 'Stop Hunt',  val: shDir ? 1.5 : 0, dir: shDir, present: _dataOK && candles.length > 3 },
+    { name: 'Estructura', val: _strVal, dir: _strDir, present: _structOK },
+    { name: 'Ballena',    val: whaleDir ? 1.5 : 0, dir: whaleDir, usd: whaleUSD, present: cvdReal }
   ];
 
   // ── GATE s39 · OPCIÓN C: data parcial Y contra el HTF completo → ESPERAR ──
@@ -2381,18 +2398,47 @@ function renderConfMeter(sig){
   el.style.display='flex';
   const maxW = { 'SuperTrend':2, 'Precio/POC':1.5, 'CVD':1.5, 'Funding':1.5, 'Liquidez':1, 'Value Area':0.5, 'Stop Hunt':1.5, 'Estructura':3, 'Ballena':1.5 };
   const chips = sig.layers.map(L => {
-    const cls = L.dir>0?'cf-bull':L.dir<0?'cf-bear':'cf-neut';
-    const arrow = L.dir>0?'▲':L.dir<0?'▼':'•';
-    const lit = L.val>0 ? 'lit' : '';
-    const pct = Math.min(100, (L.val / (maxW[L.name]||3)) * 100);
-    const valTxt = L.dir===0 ? '—' : (L.dir>0?'+':'−')+L.val;
-    return `<div class="cf-chip ${cls} ${lit}">
+    // FIX semáforo Paso 1 (s53): 3 estados — CONFIRMA (dir≠0) · NEUTRAL (dato plano) · AUSENTE (sin dato)
+    const present = L.present !== false;                 // default true = compat hacia atrás
+    const active  = L.dir !== 0;                          // hay sesgo direccional
+    const cls   = active ? (L.dir>0?'cf-bull':'cf-bear') : (present ? 'cf-neut' : 'cf-absent');
+    const arrow = active ? (L.dir>0?'▲':'▼') : (present ? '•' : '·');
+    const lit   = active ? 'lit' : '';
+    const pct   = active ? Math.min(100, (L.val / (maxW[L.name]||3)) * 100) : 0;
+    const valTxt = active ? (L.dir>0?'+':'−')+L.val : (present ? 'neutral' : 's/dato');
+    const tip = present ? (active ? 'confirma dirección' : 'dato presente · lee plano (sin sesgo)') : 'feed sin dato (ausente)';
+    return `<div class="cf-chip ${cls} ${lit}" title="${tip}">
       <span class="cf-name">${L.name}</span>
       <span class="cf-val">${arrow} ${valTxt}</span>
       <span class="cf-track"><span class="cf-bar" style="width:${pct}%"></span></span>
     </div>`;
   }).join('');
-  el.innerHTML = `<span class="cf-lead">Motor · capas</span>` + chips;
+  el.innerHTML = `<span class="cf-lead">Motor · capas</span>` + buildSemaforo(sig.layers, sig.type) + chips;
+}
+
+// ── SEMÁFORO DE CONVICCIÓN (Paso 1 · s53) — DISPLAY-ONLY, provisional ─────────────────
+// NO altera score, dirección, calidad ni el gate de colapso. Solo resume el estado de las
+// capas ahora que sabemos distinguir NEUTRAL (dato plano) de AUSENTE (feed caído):
+//   🟢 alta   = evidencia amplia y alineada, casi nada ausente
+//   🟡 media  = evidencia mixta o parcial-por-neutral
+//   🔴 baja   = mucha capa AUSENTE (ciego por falta de dato, no por mercado plano)
+// Umbrales provisionales — a calibrar con Gonzalo antes de darle peso de decisión.
+function buildSemaforo(layers, sigType){
+  if(!Array.isArray(layers) || !layers.length) return '';
+  const dirSign = sigType==='BUY' ? 1 : sigType==='SELL' ? -1 : 0;
+  let confirm=0, against=0, neutral=0, absent=0;
+  for(const L of layers){
+    if(!L) continue;
+    if(L.present === false){ absent++; continue; }
+    if(L.dir === 0){ neutral++; continue; }
+    if(dirSign===0 || (L.dir>0)===(dirSign>0)) confirm++; else against++;
+  }
+  let light='sem-y', txt='MEDIA';
+  if(absent >= 3){ light='sem-r'; txt='BAJA · ciego'; }
+  else if(confirm >= 5 && against <= 1 && absent <= 1){ light='sem-g'; txt='ALTA'; }
+  const cnt = `${confirm}✓ · ${neutral}◦ · ${absent}✗`;
+  return `<span class="sem-badge ${light}" title="Semáforo de convicción (display · provisional) — ${confirm} confirman, ${neutral} presentes-planas, ${absent} ausentes">`+
+         `<span class="sem-dot"></span>${txt}<span class="sem-cnt">${cnt}</span></span>`;
 }
 
 // ═══════════════════════════════════════════════════════════
@@ -3652,7 +3698,7 @@ async function selectSym(s, btn){
   // AVAX mostraba dato de BTC. oiHistory2/spotFlowBias = inferencia Spot/Perp; vp = POC inst.;
   // cvdReal = etiqueta "📡 real" del CVD; funding/OI/noRealData = defensivo hasta que carguen los loaders.
   oiHistory2 = []; spotFlowBias = 0; vp = null; cvdReal = false;
-  fundingRate = 0; openInterest = 0; noRealData = false;
+  fundingRate = 0; openInterest = 0; noRealData = false; fundingReal = false;
   // FIX FUGA CRUZADA #2 (auditoría 2026-07-12): atrCache (clave tf, TTL 10s) y muscleCache
   // (clave tf:limit, TTL 120s) NO estaban indexadas por símbolo ni se limpiaban → al cambiar
   // de símbolo, el ATR (→TP/SL) y el contexto EMA200/MTF (→governor) mostraban el dato del
