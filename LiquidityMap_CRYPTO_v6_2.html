@@ -2181,7 +2181,10 @@ function governConviction(sig, ctx, opts){
   const layers=sig.layers||[], pillars=new Set(); let live=0;
   for(const L of layers){ if(L&&L.dir!==0){ live++; if((dirSign>0&&L.dir>0)||(dirSign<0&&L.dir<0)){ const pi=GOV_PILLAR[L.name]; if(pi) pillars.add(pi); } } }
   const nP=pillars.size, total=layers.length, partial=total>0&&live<Math.ceil(total*minLiveFrac);
-  if(partial){ capAt(GOV_G['DÉBIL'], 'DATOS PARCIALES ('+live+'/'+total+' capas)'); }
+  // FIX s53b · PARCHE B (solo TEXTO — el cap y la condición NO cambian): dejar de llamar "DATOS
+  // PARCIALES" a capas que SÍ tienen dato y leen planas. Ahora distingue con dirección vs sin dato.
+  const _absent = layers.filter(L => L && L.present === false).length;
+  if(partial){ capAt(GOV_G['DÉBIL'], live+'/'+total+' capas con dirección · '+_absent+' sin dato'); }
   if(nP<minPillars){ capAt(nP<=1?GOV_G['DÉBIL']:GOV_G['VÁLIDA'], 'confluencia floja ('+nP+'/4 pilares)'); }
   // GATE · R/R (FIX B · auditoría 2026-07-12) — una gestora NO califica FUERTE un trade
   // donde arriesgás más de lo que ganás. R/R < 1 → cap DÉBIL; R/R < 1.5 → techo VÁLIDA.
@@ -2384,7 +2387,7 @@ function computeSignal(price) {
     const _partial = layers.length > 0 && _live < Math.ceil(layers.length * 0.6); // mismo umbral que el Governor (0.6)
     if (_partial && _mtfAg && _trAg) {
       return { type: 'NEUTRAL', score: finalScore, conf, stDir: juezDir, stLine: stJuez.stLine, stStrength: stJuez.strength, layers,
-               collapsed: true, collapseReason: 'data parcial ' + _live + '/' + layers.length + ' + contra HTF (4H+EMA200)' };
+               collapsed: true, collapseReason: _live + '/' + layers.length + ' capas con dirección + contra HTF (4H+EMA200)' };
     }
   }
   return { type, score: finalScore, conf, stDir: juezDir, stLine: stJuez.stLine, stStrength: stJuez.strength, layers };
@@ -2426,18 +2429,29 @@ function renderConfMeter(sig){
 function buildSemaforo(layers, sigType){
   if(!Array.isArray(layers) || !layers.length) return '';
   const dirSign = sigType==='BUY' ? 1 : sigType==='SELL' ? -1 : 0;
-  let confirm=0, against=0, neutral=0, absent=0;
+  let confirm=0, against=0, neutral=0, absent=0, bull=0, bear=0;
   for(const L of layers){
     if(!L) continue;
     if(L.present === false){ absent++; continue; }
     if(L.dir === 0){ neutral++; continue; }
-    if(dirSign===0 || (L.dir>0)===(dirSign>0)) confirm++; else against++;
+    if(L.dir>0) bull++; else bear++;
+    // FIX s53b: solo se "confirma" contra una dirección REAL. Con NEUTRAL no hay qué confirmar.
+    if(dirSign !== 0){ if((L.dir>0)===(dirSign>0)) confirm++; else against++; }
   }
+  // FIX s53b (bug cazado en vivo · ETH 5m): antes, con señal NEUTRAL (dirSign=0) TODAS las capas
+  // direccionales contaban como "confirman" — incluso peleándose entre sí — y el semáforo daba VERDE
+  // sobre el máximo conflicto posible. Invertido. Ahora, sin dirección, se mide cuánto se pelean:
+  // lado dominante vs lado que contradice. Con capas en pelea el semáforo NUNCA da verde.
+  if(dirSign === 0){ confirm = Math.max(bull,bear); against = Math.min(bull,bear); }
+
   let light='sem-y', txt='MEDIA';
-  if(absent >= 3){ light='sem-r'; txt='BAJA · ciego'; }
+  if(absent >= 3){ light='sem-r'; txt='BAJA · ciego'; }                                  // falta evidencia
+  else if(dirSign===0 && against >= 1){ light='sem-r'; txt='BAJA · capas en pelea'; }    // evidencia contradictoria
+  else if(dirSign===0){ light='sem-y'; txt='MEDIA · sin dirección'; }                    // el mapa dice esperar
   else if(confirm >= 5 && against <= 1 && absent <= 1){ light='sem-g'; txt='ALTA'; }
-  const cnt = `${confirm}✓ · ${neutral}◦ · ${absent}✗`;
-  return `<span class="sem-badge ${light}" title="Semáforo de convicción (display · provisional) — ${confirm} confirman, ${neutral} presentes-planas, ${absent} ausentes">`+
+  const cnt = `${confirm}✓ · ${against}✗ · ${neutral}◦ · ${absent}∅`;
+  const tip = `Semáforo de convicción (display · provisional) — ${confirm} a favor · ${against} en contra · ${neutral} presentes-planas · ${absent} sin dato`;
+  return `<span class="sem-badge ${light}" title="${tip}">`+
          `<span class="sem-dot"></span>${txt}<span class="sem-cnt">${cnt}</span></span>`;
 }
 
