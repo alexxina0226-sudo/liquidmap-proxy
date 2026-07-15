@@ -2416,7 +2416,7 @@ function renderConfMeter(sig){
       <span class="cf-track"><span class="cf-bar" style="width:${pct}%"></span></span>
     </div>`;
   }).join('');
-  el.innerHTML = `<span class="cf-lead">Motor · capas</span>` + buildSemaforo(sig.layers, sig.type) + chips;
+  el.innerHTML = `<span class="cf-lead">Motor · capas</span>` + buildSemaforo(sig.layers) + chips;
 }
 
 // ── SEMÁFORO DE CONVICCIÓN (Paso 1 · s53) — DISPLAY-ONLY, provisional ─────────────────
@@ -2426,33 +2426,38 @@ function renderConfMeter(sig){
 //   🟡 media  = evidencia mixta o parcial-por-neutral
 //   🔴 baja   = mucha capa AUSENTE (ciego por falta de dato, no por mercado plano)
 // Umbrales provisionales — a calibrar con Gonzalo antes de darle peso de decisión.
-function buildSemaforo(layers, sigType){
+// ── s53c · OPCIÓN A (decidida por Gonzalo): el semáforo mide la EVIDENCIA, no la decisión ──
+// Ya NO mira sig.type. Motivo (cazado en vivo · ETH 5m 01:46): con 5 capas unánimes bajistas el
+// semáforo decía "SIN DIRECCIÓN" solo porque el Governor había colapsado la señal a NEUTRAL por
+// HTF. La evidencia SÍ tenía dirección; el que esperaba era el Governor. Mezclar las dos cosas
+// hacía que la luz repitiera lo que el cartel NEUTRAL/ESPERAR ya dice, y encima con texto falso.
+// Ahora el semáforo contesta solo lo suyo: ¿cuánta evidencia hay, cuán de acuerdo está, y para
+// dónde apunta? La flecha es OBLIGATORIA: sin ella, un verde al lado de un BUY con capas bajistas
+// se leería como "compra confiada" — lo opuesto de la verdad.
+function buildSemaforo(layers){
   if(!Array.isArray(layers) || !layers.length) return '';
-  const dirSign = sigType==='BUY' ? 1 : sigType==='SELL' ? -1 : 0;
-  let confirm=0, against=0, neutral=0, absent=0, bull=0, bear=0;
+  let neutral=0, absent=0, bull=0, bear=0;
   for(const L of layers){
     if(!L) continue;
-    if(L.present === false){ absent++; continue; }
-    if(L.dir === 0){ neutral++; continue; }
-    if(L.dir>0) bull++; else bear++;
-    // FIX s53b: solo se "confirma" contra una dirección REAL. Con NEUTRAL no hay qué confirmar.
-    if(dirSign !== 0){ if((L.dir>0)===(dirSign>0)) confirm++; else against++; }
+    if(L.present === false){ absent++; continue; }   // feed sin dato
+    if(L.dir === 0){ neutral++; continue; }          // dato presente, lee plano
+    if(L.dir > 0) bull++; else bear++;
   }
-  // FIX s53b (bug cazado en vivo · ETH 5m): antes, con señal NEUTRAL (dirSign=0) TODAS las capas
-  // direccionales contaban como "confirman" — incluso peleándose entre sí — y el semáforo daba VERDE
-  // sobre el máximo conflicto posible. Invertido. Ahora, sin dirección, se mide cuánto se pelean:
-  // lado dominante vs lado que contradice. Con capas en pelea el semáforo NUNCA da verde.
-  if(dirSign === 0){ confirm = Math.max(bull,bear); against = Math.min(bull,bear); }
+  const confirm = Math.max(bull, bear);   // lado dominante de la evidencia
+  const against = Math.min(bull, bear);   // lado que lo contradice
+  const arrow = bull > bear ? '▲' : bear > bull ? '▼' : '◆';
 
   let light='sem-y', txt='MEDIA';
-  if(absent >= 3){ light='sem-r'; txt='BAJA · ciego'; }                                  // falta evidencia
-  else if(dirSign===0 && against >= 1){ light='sem-r'; txt='BAJA · capas en pelea'; }    // evidencia contradictoria
-  else if(dirSign===0){ light='sem-y'; txt='MEDIA · sin dirección'; }                    // el mapa dice esperar
+  if(absent >= 3){ light='sem-r'; txt='BAJA · ciego'; }                        // ciego por falta de dato
+  else if(confirm === 0){ light='sem-y'; txt='MEDIA · sin sesgo'; }            // TODO plano: acá sí, no hay dirección
+  else if(against >= confirm){ light='sem-r'; txt='BAJA · capas en pelea'; }   // evidencia partida al medio
   else if(confirm >= 5 && against <= 1 && absent <= 1){ light='sem-g'; txt='ALTA'; }
+  const dirTxt = confirm === 0 ? '' : ' ' + arrow;
   const cnt = `${confirm}✓ · ${against}✗ · ${neutral}◦ · ${absent}∅`;
-  const tip = `Semáforo de convicción (display · provisional) — ${confirm} a favor · ${against} en contra · ${neutral} presentes-planas · ${absent} sin dato`;
+  const tip = `Semáforo de EVIDENCIA (display · provisional) — mide las capas por sí mismas, no la señal. `+
+              `${confirm} del lado dominante${confirm?' ('+arrow+')':''} · ${against} en contra · ${neutral} presentes-planas · ${absent} sin dato`;
   return `<span class="sem-badge ${light}" title="${tip}">`+
-         `<span class="sem-dot"></span>${txt}<span class="sem-cnt">${cnt}</span></span>`;
+         `<span class="sem-dot"></span>${txt}${dirTxt}<span class="sem-cnt">${cnt}</span></span>`;
 }
 
 // ═══════════════════════════════════════════════════════════
