@@ -164,7 +164,9 @@ function computeArc(candles, opts = {}) {
       arc = c.l - safeSlow * o.startMult;
       trend = true;
       initDone = true;
-      continue;   // el Pine en la barra de init no evalúa flip (arc recién nace bajo el low)
+      // Fix fidelidad 17-jul-2026: SIN `continue`. El Pine en la barra de init
+      // sigue de largo: evalúa flip (no-op, el arco nace bajo el low) y avanza
+      // si toca cadencia. El continue viejo corría la fase 1 avance en mesetas.
     }
     if (!initDone) continue;
 
@@ -197,7 +199,12 @@ function computeArc(candles, opts = {}) {
     }
 
     // ── Aceleración del arco (cada `smooth` velas, índice local) ──
-    const vwapDistNorm   = Math.min(Math.abs(c.c - vwapSession) / (safeAtr * 4), 1.0);
+    // Fix fidelidad 17-jul-2026: el Pine normaliza contra refVwap (según
+    // filterPeriod), no siempre contra Session. Con 'Session' es idéntico.
+    const refVwap = o.filterPeriod === 'Week'  ? vwapWeek
+                  : o.filterPeriod === 'Month' ? vwapMonth
+                  : vwapSession;
+    const vwapDistNorm   = Math.min(Math.abs(c.c - refVwap) / (safeAtr * 4), 1.0);
     const effectiveAccel = o.accelRate * (1.0 + (o.vwapAccelBoost - 1.0) * vwapDistNorm);
     if (i % o.smooth === 0) {
       velocity += effectiveAccel;
