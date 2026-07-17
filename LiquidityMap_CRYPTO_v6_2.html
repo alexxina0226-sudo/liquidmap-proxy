@@ -2585,6 +2585,11 @@ function updateDerived(){
       const _conflict = sig.score >= 8 && ((sig.type==='BUY' && _sw.dir==='BEAR') || (sig.type==='SELL' && _sw.dir==='BULL'));
       if(_conflict) _lbl = '⚠ ' + _lbl + ' (choca c/ señal fuerte)';
       const _ce = document.getElementById('sig-conf'); if(_ce) _ce.textContent = _lbl + '  ·  ' + _ce.textContent;
+    } else {
+      // PASO C.2 — pre-aviso de proximidad. Solo si NO hay barrido consumado (el hecho
+      // le gana a la advertencia). Mismo slot, mismo fail-open.
+      const _px = detectSweepProximityCrypto(detectSwings(candles), p, calcRealATR(candles,14));
+      if(_px){ const _ce2 = document.getElementById('sig-conf'); if(_ce2) _ce2.textContent = _px.label + '  ·  ' + _ce2.textContent; }
     }
   } catch(e){ /* el barrido nunca tumba el render */ }
   const q = evalQuality(sig.score);
@@ -3150,6 +3155,36 @@ function detectLiquiditySweepCrypto(candle, swings, price, atr){
                label:'🎯 Barrido de mínimos + reclaim — trampa bajista (probable reversión ▲)' };
   }
   return null;
+}
+
+// ── PASO C.2 (crypto) · PRE-AVISO DE PROXIMIDAD A POOLS ────────────────────────────
+// Portado del "aviso previo" del bolsa (sesión 54, 17-jul-2026). El barrido de arriba
+// avisa DESPUÉS de la trampa (sweep+reclaim consumado); esto avisa ANTES: el precio se
+// está ACERCANDO a un pool REAL de equal highs/lows (stops acumulados) → probable
+// barrida inminente. Mismos principios que el A1: gate de pool real (2+ equal H/L,
+// nada de swings sueltos) y distancia medida en ATR real. Señal de ATENCIÓN, no de
+// entrada. Display-only, fail-open, cero estado por símbolo.
+const SWEEP_PROX_ATR = 0.5;   // pre-aviso si el pool está a ≤ 0.5×ATR. Subir = avisa antes/más seguido
+function detectSweepProximityCrypto(swings, price, atr){
+  if(!price) return null;
+  const pools = cryptoLiquidityPools(swings, price);
+  const th = (atr && atr > 0) ? atr * SWEEP_PROX_ATR : price * 0.004; // fallback coherente con el cluster (0.4%)
+  const unit = (atr && atr > 0) ? atr : th;                            // para expresar la distancia en ATRs
+  let cand = null;
+  if(pools.res && pools.res.price && (pools.res.count||1) >= SWEEP_MIN_POOL_COUNT){
+    const d = pools.res.price - price;                                 // res solo contiene highs > price → d>0
+    if(d <= th) cand = { side:'res', pool:pools.res.price, count:pools.res.count||1, dist:d };
+  }
+  if(pools.sup && pools.sup.price && (pools.sup.count||1) >= SWEEP_MIN_POOL_COUNT){
+    const d = price - pools.sup.price;
+    if(d <= th && (!cand || d < cand.dist)) cand = { side:'sup', pool:pools.sup.price, count:pools.sup.count||1, dist:d };
+  }
+  if(!cand) return null;
+  const distAtr = (cand.dist / unit).toFixed(2).replace(/\.?0+$/,'') || '0';
+  cand.label = cand.side === 'res'
+    ? '👀 Precio a ' + distAtr + '×ATR del pool de máximos ' + fmt(cand.pool) + ' (' + cand.count + '×) — posible barrida ▲'
+    : '👀 Precio a ' + distAtr + '×ATR del pool de mínimos ' + fmt(cand.pool) + ' (' + cand.count + '×) — posible barrida ▼';
+  return cand;
 }
 
 function buildZones(mid){
