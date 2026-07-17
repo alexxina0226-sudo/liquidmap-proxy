@@ -101,6 +101,10 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .cf-bull{color:var(--green);} .cf-bull .cf-bar{background:var(--green);}
 .cf-bear{color:var(--red);} .cf-bear .cf-bar{background:var(--red);}
 .cf-neut{color:var(--muted);} .cf-neut .cf-bar{background:var(--muted);}
+.cf-sem{flex:0 0 auto;min-width:118px;font-family:'Space Mono',monospace;}
+.cf-sem.sem-g{color:#22c55e;border-color:rgba(34,197,94,.55);} .cf-sem.sem-g .cf-bar{background:#22c55e;}
+.cf-sem.sem-y{color:#eab308;border-color:rgba(234,179,8,.55);} .cf-sem.sem-y .cf-bar{background:#eab308;}
+.cf-sem.sem-r{color:#f43f5e;border-color:rgba(244,63,94,.55);} .cf-sem.sem-r .cf-bar{background:#f43f5e;}
 .cf-chip.lit{box-shadow:0 0 0 1px currentColor inset, 0 0 12px -4px currentColor;}
 .score-wrap{display:flex;flex-direction:column;gap:3px;min-width:120px;}
 .score-label{font-size:9px;color:var(--muted);font-family:'Space Mono',monospace;display:flex;justify-content:space-between;}
@@ -1145,7 +1149,7 @@ function computeNeuralScore(p){
   const layers = [];
   let score = 0;
   const rawMax = 12.5; // ST3 + VWAP1.5 + CVD1.5 + BOS3 + CHoCH0.5 + Presión1 + ValueArea1 + ADX1
-  const addL = (name, val, dir) => layers.push({ name, val, dir }); // dir: 1 bull, -1 bear, 0 neutral
+  const addL = (name, val, dir, abs) => layers.push({ name, val, dir, abs: !!abs }); // dir: 1 bull, -1 bear, 0 neutral · abs: feed sin dato (∅ ≠ neutral)
 
   // CAPA ADX — EL ALMA DE TV (= capa 13 del Pine v6.1, mismo peso que el bot)
   const adxObj = calcADX(candles);
@@ -1153,7 +1157,8 @@ function computeNeuralScore(p){
     if(adxObj.bull){ score += 1; conf.push('📡 ADX '+adxObj.adx.toFixed(1)+' + DMI alcista ✓'); addL('ADX', 1, 1); }
     else if(adxObj.bear){ score -= 1; conf.push('📡 ADX '+adxObj.adx.toFixed(1)+' + DMI bajista ✗'); addL('ADX', 1, -1); }
     else addL('ADX', 0, 0);
-  } else { addL('ADX', 0, 0); }
+  } else if(adxObj){ addL('ADX', 0, 0); }        // ADX presente pero lateral/débil = NEUTRAL (declaró plano)
+  else { addL('ADX', 0, 0, true); }              // sin dato de ADX = AUSENTE (∅) — el testigo no vino (s54)
 
   // CAPA 1 — SuperTrend JUEZ (3 pts máx)
   const stLast = stResult && stResult.length > 0 ? stResult[stResult.length - 1] : null;
@@ -1232,14 +1237,57 @@ function computeNeuralScore(p){
 // Funciones de GEX/Max Pain ELIMINADAS: requieren cadena de opciones real
 // (add-on Polygon, FASE 4). No se calculan con aproximaciones de precio.
 
+// ── SEMÁFORO DE EVIDENCIA (bolsa · sesión 54, 17-jul-2026) ─────────────────────
+// Port del Paso 1 del crypto — OPCIÓN A elegida por Gonzalo: la luz mide la
+// EVIDENCIA de las 8 capas, NO la decisión (esa la da el Governor). Dos preguntas
+// distintas: "¿cuánta evidencia hay y para dónde?" (luz) vs "¿conviene entrar?"
+// (Governor). Estados por capa: ✓ confirma el lado dominante · ✗ contradice ·
+// ◦ neutral (dato presente, lee plano) · ∅ ausente (feed sin dato — abs:true).
+// Reglas EN ORDEN (umbrales provisionales, mismos números que crypto, a calibrar
+// con ojo de trader): 1) 3+∅ → ROJA·ciego  2) nadie con dirección → AMARILLA·sin
+// sesgo  3) ✗≥✓ → ROJA·en pelea  4) 5+✓, máx 1✗, máx 1∅ → VERDE  5) resto AMARILLA.
+// Display-only · fail-open · no toca score ni Governor.
+function computeSemaforoBolsa(layers){
+  if(!layers || !layers.length) return null;
+  let b=0, s=0, neut=0, abs=0;
+  for(const L of layers){
+    if(L && L.abs){ abs++; continue; }
+    const dir = L ? (L.dir||0) : 0;
+    if(dir>0) b++; else if(dir<0) s++; else neut++;
+  }
+  const d = b>s ? 1 : s>b ? -1 : 0;
+  const conf    = d>0 ? b : d<0 ? s : Math.max(b,s);
+  const against = d>0 ? s : d<0 ? b : Math.max(b,s);   // empate exacto → against==conf → pelea
+  const arrow = d>0 ? '▲' : d<0 ? '▼' : '◆';
+  let label, cls;
+  if(abs >= 3){ label='BAJA · ciego'; cls='sem-r'; }
+  else if(b===0 && s===0){ label='MEDIA · sin sesgo'; cls='sem-y'; }
+  else if(against >= conf){ label='BAJA · capas en pelea'; cls='sem-r'; }
+  else if(conf >= 5 && against <= 1 && abs <= 1){ label='ALTA'; cls='sem-g'; }
+  else { label='MEDIA'; cls='sem-y'; }
+  return { label, cls, arrow, conf, against, neut, abs,
+           counter: conf+'✓·'+against+'✗·'+neut+'◦·'+abs+'∅' };
+}
+
 // ── CONFLUENCE METER PREMIUM ──────────────────────────────────
 // Muestra cada capa institucional con su peso y dirección, visual.
 function renderConfMeter(sig){
   const el = document.getElementById('conf-meter');
   if(!el || !sig || !sig.layers || !sig.layers.length){ if(el) el.style.display='none'; return; }
   el.style.display='flex';
+  // Semáforo de evidencia — primer chip de la fila. Fail-open: si algo falla, la fila sigue.
+  let semHtml = '';
+  try {
+    const sem = computeSemaforoBolsa(sig.layers);
+    if(sem) semHtml = `<div class="cf-chip cf-sem ${sem.cls}" title="Semáforo de evidencia: cuántas capas confirman (✓), contradicen (✗), leen plano (◦) o no tienen dato (∅). Mide la evidencia, NO la decisión — esa la da el Governor.">
+      <span class="cf-name">Semáforo · evidencia</span>
+      <span class="cf-val">● ${sem.label} ${sem.arrow}</span>
+      <span class="cf-track"><span class="cf-bar" style="width:100%"></span></span>
+      <span class="cf-name">${sem.counter}</span>
+    </div>`;
+  } catch(e){ /* la luz jamás tumba la fila */ }
   const maxW = { 'SuperTrend':3, 'VWAP':1.5, 'CVD':1.5, 'BOS':3, 'CHoCH':1.5, 'Presión':1, 'Value Area':1, 'ADX':1 };
-  el.innerHTML = sig.layers.map(L => {
+  el.innerHTML = semHtml + sig.layers.map(L => {
     const cls = L.dir>0?'cf-bull':L.dir<0?'cf-bear':'cf-neut';
     const arrow = L.dir>0?'▲':L.dir<0?'▼':'•';
     const lit = L.val>0 ? 'lit' : '';
