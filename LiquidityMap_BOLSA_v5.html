@@ -101,7 +101,9 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .cf-bull{color:var(--green);} .cf-bull .cf-bar{background:var(--green);}
 .cf-bear{color:var(--red);} .cf-bear .cf-bar{background:var(--red);}
 .cf-neut{color:var(--muted);} .cf-neut .cf-bar{background:var(--muted);}
-.cf-sem{flex:0 0 auto;min-width:118px;font-family:'Space Mono',monospace;}
+.cf-sem{flex:0 0 auto;min-width:132px;font-family:'Space Mono',monospace;background:rgba(255,255,255,.045);}
+.cf-sem .cf-val{font-size:12px;letter-spacing:.3px;}
+.cf-sem .cf-count{font-size:10px;font-weight:700;font-family:'Space Mono',monospace;letter-spacing:.8px;opacity:.95;margin-top:1px;}
 .cf-sem.sem-g{color:#22c55e;border-color:rgba(34,197,94,.55);} .cf-sem.sem-g .cf-bar{background:#22c55e;}
 .cf-sem.sem-y{color:#eab308;border-color:rgba(234,179,8,.55);} .cf-sem.sem-y .cf-bar{background:#eab308;}
 .cf-sem.sem-r{color:#f43f5e;border-color:rgba(244,63,94,.55);} .cf-sem.sem-r .cf-bar{background:#f43f5e;}
@@ -1283,7 +1285,7 @@ function renderConfMeter(sig){
       <span class="cf-name">Semáforo · evidencia</span>
       <span class="cf-val">● ${sem.label} ${sem.arrow}</span>
       <span class="cf-track"><span class="cf-bar" style="width:100%"></span></span>
-      <span class="cf-name">${sem.counter}</span>
+      <span class="cf-count">${sem.counter}</span>
     </div>`;
   } catch(e){ /* la luz jamás tumba la fila */ }
   const maxW = { 'SuperTrend':3, 'VWAP':1.5, 'CVD':1.5, 'BOS':3, 'CHoCH':1.5, 'Presión':1, 'Value Area':1, 'ADX':1 };
