@@ -1167,18 +1167,32 @@ function computeNeuralScore(p){
   const stDir = stLast ? stLast.trend : 0;
   if(stDir === 1)       { score += 3; conf.push('⚡ SuperTrend ALCISTA ✓'); addL('SuperTrend', 3, 1); }
   else if(stDir === -1) { score -= 3; conf.push('⚡ SuperTrend BAJISTA ✗'); addL('SuperTrend', 3, -1); }
-  else                  { addL('SuperTrend', 0, 0); }
+  else                  { addL('SuperTrend', 0, 0, !stLast); } // s57: sin serie ST = ∅ (el juez no vino); trend 0 real = ◦
 
   // CAPA 2 — VWAP REAL (1.5 pts) — precio sobre/bajo VWAP ponderado por volumen
+  // HONESTIDAD s57: banda muerta ±0.1×ATR14 (fallback ±0.05% del precio sin ATR) →
+  // dentro de la banda = NEUTRAL ◦ (antes era binario: 0.01% sobre el VWAP votaba ±1.5
+  // pleno y p===vwap leía bajista). Sin VWAP calculable (sesión sin volumen) → ∅ AUSENTE,
+  // sin fallback silencioso a POC (la etiqueta decía VWAP pero votaba el POC).
   const vwWin2 = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
   const vwObj = getVWAP(sessionBars(candles, tf, vwWin2));
-  const vwapVal = vwObj ? vwObj.vwap : getPOC(vp);
-  if(p > vwapVal) { score += 1.5; conf.push('📐 Precio sobre VWAP ✓'); addL('VWAP', 1.5, 1); }
-  else            { score -= 1.5; conf.push('📐 Precio bajo VWAP ✗'); addL('VWAP', 1.5, -1); }
+  if(!vwObj){ addL('VWAP', 0, 0, true); }            // el testigo no vino (∅)
+  else {
+    const trB=[]; for(let i=Math.max(1,candles.length-15);i<candles.length;i++){ const pc=candles[i-1].c; trB.push(Math.max(candles[i].h-candles[i].l, Math.abs(candles[i].h-pc), Math.abs(candles[i].l-pc))); }
+    const atrB = trB.length ? trB.reduce((a,v)=>a+v,0)/trB.length : 0;
+    const vwBand = atrB > 0 ? 0.1*atrB : p*0.0005;
+    if(p > vwObj.vwap + vwBand)      { score += 1.5; conf.push('📐 Precio sobre VWAP ✓'); addL('VWAP', 1.5, 1); }
+    else if(p < vwObj.vwap - vwBand) { score -= 1.5; conf.push('📐 Precio bajo VWAP ✗'); addL('VWAP', 1.5, -1); }
+    else                             { addL('VWAP', 0, 0); }  // pegado al valor justo = sin sesgo (◦)
+  }
 
-  // CAPA 3 — CVD (1.5 pts)
-  if(cvd > 0) { score += 1.5; conf.push('📈 CVD positivo ✓'); addL('CVD', 1.5, 1); }
-  else        { score -= 1.5; conf.push('📈 CVD negativo ✗'); addL('CVD', 1.5, -1); }
+  // CAPA 3 — CVD (1.5 pts) — HONESTIDAD s57: cvd===0 con volumen presente = plano ◦;
+  // velas sin volumen (feed ciego) = ∅. Antes ambos caían al else y leían VENTA -1.5.
+  const cvdVol = candles.slice(-30).reduce((a,b)=>a+Math.abs(b.v||0),0);
+  if(cvdVol <= 0) { addL('CVD', 0, 0, true); }        // sin volumen: ciego no opina (∅)
+  else if(cvd > 0) { score += 1.5; conf.push('📈 CVD positivo ✓'); addL('CVD', 1.5, 1); }
+  else if(cvd < 0) { score -= 1.5; conf.push('📈 CVD negativo ✗'); addL('CVD', 1.5, -1); }
+  else             { addL('CVD', 0, 0); }             // flujo balanceado exacto = neutral (◦)
 
   // CAPA 4 — ESTRUCTURA (BOS lidera; CHoCH confirma sin duplicar)
   // BOS = movimiento confirmado (señal principal para salidas en opciones) → peso completo.
@@ -1195,18 +1209,27 @@ function computeNeuralScore(p){
     addL('BOS', 0, 0);
   } else { addL('BOS', 0, 0); addL('CHoCH', 0, 0); }
 
-  // CAPA 5 — Buy pressure (1 pt)
-  const tot = buyV + sellV + 1;
-  const bp = (buyV / tot) * 100;
-  if(bp > 60)      { score += 1; conf.push('💪 Buy pressure 60%+ ✓'); addL('Presión', 1, 1); }
-  else if(bp < 40) { score -= 1; conf.push('💪 Sell pressure 60%+ ✗'); addL('Presión', 1, -1); }
-  else             { addL('Presión', 0, 0); }
+  // CAPA 5 — Buy pressure (1 pt) — HONESTIDAD s57: sin flujo (buyV+sellV=0) = ∅.
+  // Antes bp daba 0% y el "sin dato" leía máxima presión vendedora (-1).
+  if(buyV + sellV <= 0){ addL('Presión', 0, 0, true); }   // sin flujo: el testigo no vino (∅)
+  else {
+    const tot = buyV + sellV;
+    const bp = (buyV / tot) * 100;
+    if(bp > 60)      { score += 1; conf.push('💪 Buy pressure 60%+ ✓'); addL('Presión', 1, 1); }
+    else if(bp < 40) { score -= 1; conf.push('💪 Sell pressure 60%+ ✗'); addL('Presión', 1, -1); }
+    else             { addL('Presión', 0, 0); }
+  }
 
   // CAPA 6 — Posición vs Value Area (1 pt) — VAH/VAL del volume profile real
-  const va = getVA(vp);
-  if(p > va.vah)      { score += 1; conf.push('📊 Precio sobre VAH ✓ — aceptación alcista'); addL('Value Area', 1, 1); }
-  else if(p < va.val) { score -= 1; conf.push('📊 Precio bajo VAL ✗ — rechazo bajista'); addL('Value Area', 1, -1); }
-  else                { addL('Value Area', 0, 0); }  // dentro del VA = neutral, sin sesgo
+  // HONESTIDAD s57: perfil sin volumen (tot=0) = VA degenerado → ∅, no vota fantasma.
+  const vaTot = vp && vp.profile ? vp.profile.reduce((a,b)=>a+b,0) : 0;
+  if(vaTot <= 0){ addL('Value Area', 0, 0, true); }   // perfil vacío: el testigo no vino (∅)
+  else {
+    const va = getVA(vp);
+    if(p > va.vah)      { score += 1; conf.push('📊 Precio sobre VAH ✓ — aceptación alcista'); addL('Value Area', 1, 1); }
+    else if(p < va.val) { score -= 1; conf.push('📊 Precio bajo VAL ✗ — rechazo bajista'); addL('Value Area', 1, -1); }
+    else                { addL('Value Area', 0, 0); }  // dentro del VA = neutral, sin sesgo
+  }
 
   // Kill Zone bonus
   const kz = getKillZone();
