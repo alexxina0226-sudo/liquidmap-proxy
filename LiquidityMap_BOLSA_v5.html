@@ -1621,6 +1621,12 @@ function computeArcSeries(candles, opts){
   const tr=new Array(n).fill(null);
   for(let i=0;i<n;i++){ const c=candles[i]; tr[i]= i===0 ? (c.h-c.l) : Math.max(c.h-c.l, Math.abs(c.h-candles[i-1].c), Math.abs(c.l-candles[i-1].c)); }
 
+  // s58 F3: tamaño del TF por MEDIANA de deltas de timestamp (robusta a huecos de
+  // finde/overnight) — ancla de la cadencia de avance del arco, independiente de la ventana
+  const _deltas=[]; for(let i=1;i<Math.min(n,80);i++){ _deltas.push(_arcToMs(candles[i].t)-_arcToMs(candles[i-1].t)); }
+  _deltas.sort((a,b)=>a-b);
+  const _arcTfMs = _deltas.length ? _deltas[Math.floor(_deltas.length/2)] : 3600000;
+
   let trend=true, arc=NaN, velocity=0, initDone=false;
   let atr14=null, trSum100=0, atrSlow=null;
   let cumPvS=0, cumVolS=0, vwapSession=NaN, dayK=null;
@@ -1646,7 +1652,9 @@ function computeArcSeries(candles, opts){
     const safeSlow = atrSlow!==null&&atrSlow>0?atrSlow:1;
     const safeAtr  = atr14!==null&&atr14>0?atr14:1;
 
-    if(!initDone && atrSlow!==null && i>o.initBars){ arc=c.l-safeSlow*o.startMult; trend=true; initDone=true; series[i]=arc; trendSeries[i]=trend; flippedAt[i]=false; continue; }
+    if(!initDone && atrSlow!==null && i>o.initBars){ arc=c.l-safeSlow*o.startMult; trend=true; initDone=true; }
+    // s58 F1: sin `continue` en la vela init — el Pine sigue en esa misma vela (puede
+    // avanzar el arco si toca cadencia). Mismo fix aplicado al arc_boswaves.js del servidor.
     if(!initDone) continue;
 
     const prevTrend=trend;
@@ -1666,9 +1674,19 @@ function computeArcSeries(candles, opts){
 
     for(let k=levels.length-1;k>=0;k--){ const L=levels[k]; if(L.index===i) continue; const broken=L.bull?c.c<L.price:c.c>L.price; if(broken&&!isLast) levels.splice(k,1); }
 
-    const vwapDistNorm = Math.min(Math.abs(c.c-vwapSession)/(safeAtr*4), 1.0);
+    // s58 F2: turbo contra refVwap del filterPeriod (Pine) — antes usaba vwapSession fijo.
+    // Mismo fix aplicado al arc_boswaves.js del servidor el 17/07.
+    const refV = o.filterPeriod==='Week' ? vwapWeek : o.filterPeriod==='Month' ? vwapMonth : vwapSession;
+    const vwapDistNorm = Math.min(Math.abs(c.c-refV)/(safeAtr*4), 1.0);
     const effectiveAccel = o.accelRate*(1.0+(o.vwapAccelBoost-1.0)*vwapDistNorm);
-    if(i%o.smooth===0){ velocity+=effectiveAccel; const stepSize=safeSlow*0.15; arc+=(trend?1:-1)*stepSize*velocity; }
+    // s58 F3 (el triángulo que baila): cadencia anclada al TIMESTAMP de la vela, no al
+    // índice local de la ventana. Antes `i % smooth` cambiaba de fase cada vez que la
+    // ventana deslizaba al recargar → el arco avanzaba en velas distintas → los flips en
+    // mesetas se corrían entre recargas. Con floor(t/tf) % smooth la fase es determinista:
+    // la misma vela del calendario siempre avanza (o no), cargues las velas que cargues.
+    // (La fase absoluta de TV es incognoscible — bar_index de su historial completo — pero
+    // en giros decisivos el cruce domina; lo crítico es que la referencia sea ESTABLE.)
+    if(Math.floor(tMs/_arcTfMs)%o.smooth===0){ velocity+=effectiveAccel; const stepSize=safeSlow*0.15; arc+=(trend?1:-1)*stepSize*velocity; }
 
     series[i]=arc; trendSeries[i]=trend; flippedAt[i]=rawFlipped;
   }
