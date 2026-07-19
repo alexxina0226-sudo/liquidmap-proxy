@@ -849,21 +849,28 @@ function detectMomentumDivergence(bars, swings){
   const roc = i => (i - MOM < 0) ? 0 : (bars[i].c - bars[i-MOM].c) / (bars[i-MOM].c || 1);
   const hh = swings.filter(s => s.type === 'HH').slice(-2);
   const ll = swings.filter(s => s.type === 'LL').slice(-2);
+  // s57 REDACCIÓN: dirección PRIMERO y flecha distinta — las etiquetas viejas ("Fuerza
+  // compradora cayendo" / "Fuerza vendedora cayendo") se leían casi iguales de reojo.
+  let bear = null, bull = null;
   // BAJISTA: dos máximos, precio MÁS ALTO pero momentum MÁS DÉBIL → compradores sin fuerza
   if(hh.length === 2){
     const [a, b] = hh;
     if(b.price > a.price && roc(a.i) > 0 && roc(b.i) < roc(a.i)){
-      return { type:'BEAR_DIV', dir:'BEAR', label:'⚠ Fuerza compradora cayendo (divergencia bajista)' };
+      bear = { type:'BEAR_DIV', dir:'BEAR', label:'⚠🔻 DIV. BAJISTA — precio sube sin fuerza (compradores agotándose)' };
     }
   }
   // ALCISTA: dos mínimos, precio MÁS BAJO pero momentum MENOS NEGATIVO → vendedores sin fuerza
   if(ll.length === 2){
     const [a, b] = ll;
     if(b.price < a.price && roc(a.i) < 0 && roc(b.i) > roc(a.i)){
-      return { type:'BULL_DIV', dir:'BULL', label:'⚠ Fuerza vendedora cayendo (divergencia alcista)' };
+      bull = { type:'BULL_DIV', dir:'BULL', label:'⚠🔺 DIV. ALCISTA — precio baja sin fuerza (vendedores agotándose)' };
     }
   }
-  return null;
+  // s57 ASIMETRÍA CORREGIDA: antes la bajista salía con return temprano y, si ambas
+  // coexistían (chop ancho), la alcista jamás se mostraba. Doble agotamiento no es
+  // direccional: es aviso de rango, y se declara como tal — no se esconde ninguna.
+  if(bear && bull) return { type:'DUAL_DIV', dir:'NEUTRAL', label:'⚠◈ DIV. DOBLE — ambos lados agotados (rango, no direccional)' };
+  return bear || bull;
 }
 
 // ── WHALE DETECTION ────────────────────────────────────────────
