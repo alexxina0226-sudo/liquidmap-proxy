@@ -2010,27 +2010,49 @@ function toggleAL(el){ el.classList.toggle('on'); const id = el.id.replace('al-'
 // ═══════════════════════════════════════════════════════════
 
 // SuperTrend — versión exacta del mapa bolsa (array por barra con índice)
+// s58: ST JUEZ unificado — trasplante byte a byte de la función fiel del mapa bolsa
+// (ATR Wilder/RMA idéntico a ta.atr() + giro contra banda final de la vela PREVIA).
+// Reemplaza la variante vieja: ATR por SMA con off-by-one (11 TRs / 10 → +10% inflado,
+// bandas anchas, flips tardíos) y giro contra banda ACTUAL. Los dos jueces del reloj
+// leen ahora el MISMO lenguaje. Banco: bench_paridad_st.js
 function computeSuperTrend(bars, period, mult){
   if(!bars || bars.length < period + 1) return [];
+  // --- True Range serie ---
+  const tr = [];
+  for(let i = 0; i < bars.length; i++){
+    if(i === 0) tr.push(bars[i].h - bars[i].l);
+    else tr.push(Math.max(
+      bars[i].h - bars[i].l,
+      Math.abs(bars[i].h - bars[i-1].c),
+      Math.abs(bars[i].l - bars[i-1].c)
+    ));
+  }
+  // --- ATR Wilder (RMA), idéntico a ta.atr() del Pine ---
+  const atrArr = new Array(bars.length).fill(NaN);
+  let atrPrev = 0, seed = 0;
+  for(let i = 0; i < bars.length; i++){
+    if(i < period){ seed += tr[i]; if(i === period - 1){ atrPrev = seed / period; atrArr[i] = atrPrev; } }
+    else { atrPrev = (atrPrev * (period - 1) + tr[i]) / period; atrArr[i] = atrPrev; }
+  }
+  // --- SuperTrend: bandas con ratchet + giro contra banda de la vela PREVIA (como Pine) ---
   const result = [];
-  let prevUpper = 0, prevLower = 0, prevTrend = 1;
-  for(let i = period; i < bars.length; i++){
-    const slice = bars.slice(i - period, i + 1);
-    const trList = slice.map((b, j) => {
-      if(j === 0) return b.h - b.l;
-      return Math.max(b.h - b.l, Math.abs(b.h - slice[j-1].c), Math.abs(b.l - slice[j-1].c));
-    });
-    const atr = trList.reduce((a, v) => a + v, 0) / period;
+  let finalUpperPrev = 0, finalLowerPrev = 0, trendPrev = 1, started = false;
+  for(let i = period - 1; i < bars.length; i++){
+    const atr = atrArr[i];
+    if(isNaN(atr)) continue;
     const hl2 = (bars[i].h + bars[i].l) / 2;
     const upper = hl2 + mult * atr;
     const lower = hl2 - mult * atr;
-    const finalUpper = (upper < prevUpper || bars[i-1].c > prevUpper) ? upper : prevUpper;
-    const finalLower = (lower > prevLower || bars[i-1].c < prevLower) ? lower : prevLower;
-    let trend = prevTrend;
-    if(bars[i].c > finalUpper) trend = 1;
-    else if(bars[i].c < finalLower) trend = -1;
-    result.push({ i, upper:finalUpper, lower:finalLower, trend, line: trend===1?finalLower:finalUpper });
-    prevUpper = finalUpper; prevLower = finalLower; prevTrend = trend;
+    let finalUpper, finalLower, trend;
+    if(!started){
+      finalUpper = upper; finalLower = lower; trend = bars[i].c >= hl2 ? 1 : -1; started = true;
+    } else {
+      finalUpper = (upper < finalUpperPrev || bars[i-1].c > finalUpperPrev) ? upper : finalUpperPrev;
+      finalLower = (lower > finalLowerPrev || bars[i-1].c < finalLowerPrev) ? lower : finalLowerPrev;
+      trend = bars[i].c > finalUpperPrev ? 1 : bars[i].c < finalLowerPrev ? -1 : trendPrev;
+    }
+    result.push({ i, upper:finalUpper, lower:finalLower, trend, line: trend===1?finalLower:finalUpper, atr });
+    finalUpperPrev = finalUpper; finalLowerPrev = finalLower; trendPrev = trend;
   }
   return result;
 }
