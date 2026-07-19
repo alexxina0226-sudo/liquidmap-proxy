@@ -79,5 +79,47 @@ check('ratchet de banda inferior en tendencia alcista (nunca baja)', ratchetOk);
 // 4) INTERFAZ para los consumidores del crypto: {i, line, trend} presentes y sanos
 check('interfaz {i, line, trend} intacta', rC.every(x => Number.isInteger(x.i) && isFinite(x.line) && (x.trend===1||x.trend===-1)));
 
+// 5) CERTIFICACIÓN PINE v6.1 — referencia LITERAL del bloque ST juez del Pine de Gonzalo
+//    (LIQUIDMAP PRO v6.1, "ST ratchet fix"): ta.atr Wilder + ratchet de banda ajustada
+//    contra SU PROPIO previo con liberación por close[1] + giro contra banda AJUSTADA
+//    PREVIA (close > st_upper_adj[1]) + línea = banda ajustada actual del lado activo.
+//    Pine == mapa == bot: acá se prueba, no se asume.
+function pineV61(bars, period, mult){
+  const tr = bars.map((b,i)=> i===0 ? b.h-b.l : Math.max(b.h-b.l, Math.abs(b.h-bars[i-1].c), Math.abs(b.l-bars[i-1].c)));
+  const atrArr = new Array(bars.length).fill(NaN);
+  let prev=0, s=0;
+  for(let i=0;i<bars.length;i++){
+    if(i<period){ s+=tr[i]; if(i===period-1){ prev=s/period; atrArr[i]=prev; } }
+    else { prev=(prev*(period-1)+tr[i])/period; atrArr[i]=prev; }
+  }
+  const out=[]; let upAdjPrev=NaN, loAdjPrev=NaN, upFlag=true;     // Pine: var st_up = true
+  for(let i=period-1;i<bars.length;i++){
+    const atr=atrArr[i]; if(isNaN(atr)) continue;
+    const hl2=(bars[i].h+bars[i].l)/2;
+    const upRaw=hl2+mult*atr, loRaw=hl2-mult*atr;
+    const upAdj = isNaN(upAdjPrev) ? upRaw : ((upRaw<upAdjPrev || bars[i-1].c>upAdjPrev) ? upRaw : upAdjPrev);
+    const loAdj = isNaN(loAdjPrev) ? loRaw : ((loRaw>loAdjPrev || bars[i-1].c<loAdjPrev) ? loRaw : loAdjPrev);
+    // giro contra la banda AJUSTADA de la vela PREVIA (st_upper_adj[1] / st_lower_adj[1])
+    if(!isNaN(upAdjPrev)) upFlag = bars[i].c>upAdjPrev ? true : bars[i].c<loAdjPrev ? false : upFlag;
+    out.push({ i, trend: upFlag?1:-1, line: upFlag?loAdj:upAdj });
+    upAdjPrev=upAdj; loAdjPrev=loAdj;
+  }
+  return out;
+}
+const rP = pineV61(bars, 10, 3.0);
+// las semillas difieren (Pine arranca true; el mapa por c>=hl2) → convergen en el primer
+// flip común; se certifica identidad TOTAL desde ese punto de sincronización
+const mapaFlips = rB.map((x,k)=> k>0 && x.trend!==rB[k-1].trend ? x.i : null).filter(x=>x!==null);
+const pineFlips = rP.map((x,k)=> k>0 && x.trend!==rP[k-1].trend ? x.i : null).filter(x=>x!==null);
+const sync = mapaFlips.find(x=>pineFlips.includes(x));
+const desde = i => ({ m: rB.filter(x=>x.i>=sync), p: rP.filter(x=>x.i>=sync) });
+const { m: mS, p: pS } = desde(sync);
+check('Pine v6.1 literal vs mapa: mismos flips post-sincronización',
+  sync!==undefined && mapaFlips.filter(x=>x>=sync).join(',')===pineFlips.filter(x=>x>=sync).join(','));
+check('Pine v6.1 literal vs mapa: misma tendencia vela a vela post-sync',
+  mS.length===pS.length && mS.every((x,k)=>x.trend===pS[k].trend));
+check('Pine v6.1 literal vs mapa: misma LÍNEA ST vela a vela post-sync (< 1e-9)',
+  mS.every((x,k)=>Math.abs(x.line-pS[k].line) < 1e-9));
+
 console.log(`\nRESULTADO: ${pass}/${pass+fail}`);
 process.exit(fail ? 1 : 0);
