@@ -5,7 +5,7 @@
 //  CAPA 1 — SUPERTREND JUEZ (3pts) — igual al mapa v6
 //  CAPA 2 — POC / VWAP (1.5pts)
 //  CAPA 3 — CVD real + divergencia (1.5pts)
-//  CAPA 4 — CHoCH + BOS (2pts) — 2 cierres confirmados
+//  CAPA 4 — CHoCH/CHoCH+ + BOS — detector canónico v2 compartido con el mapa (s61)
 //  CAPA 5 — Stop Hunt + Order Blocks + EQH/EQL (1pt)
 //  CAPA 6 — Régimen de Volatilidad (REAL, contexto · 0pts al score)
 //  CAPA 7 — Dark Pool DESACTIVADA (requiere endpoint Trades · Developer $79)
@@ -46,6 +46,13 @@ catch (e) { console.log('⚠️ arc_boswaves.js no encontrado — CAPA 14 (Arco)
 let getOptionsMetrics = null;
 try { getOptionsMetrics = require('./options_live.js').getOptionsMetrics; }
 catch (e) { console.log('⚠️ options_live.js no encontrado — GEX/Max Pain reales desactivados (muestra N/D). Subir options_live.js + options_metrics.js para activarlos.'); }
+
+// ── DETECTOR DE ESTRUCTURA CANÓNICO (s61) — MISMO módulo que certifica el mapa ──
+// Una sola fuente de verdad: detectStructure_v2.js (ya en el repo desde s59).
+// Si falta, la CAPA 4 se APAGA (honesto: mejor callar que señalar con el detector viejo).
+let detectStructureV2 = null;
+try { detectStructureV2 = require('./detectStructure_v2.js').detectStructure_v2; }
+catch (e) { console.warn('⚠️ detectStructure_v2.js no encontrado — CAPA 4 (estructura) DESACTIVADA. Subir detectStructure_v2.js al repo.'); }
 
 // ── CONFIG ──────────────────────────────────────────────────
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
@@ -533,41 +540,29 @@ function calcCVD(candles) {
 }
 
 // ════════════════════════════════════════════════════════════
-//  CAPA 4 — CHoCH + BOS (con 2 cierres confirmados — igual mapa v6)
+//  CAPA 4 — CHoCH/CHoCH+ + BOS — DETECTOR CANÓNICO v2 (s61, mismo módulo que el mapa)
 // ════════════════════════════════════════════════════════════
+// Envuelve detectStructure_v2 (estado estructural, CHoCH contra tendencia, CHoCH+
+// soportado, BOS a favor, confirmación por 2 cierres REALES) y lo traduce a la
+// interfaz histórica del monitor {type, label, priority} — el resto del bot no cambia.
+// El detector viejo (sin estado, "confirmación" por banda 0.3%, giros fantasma en
+// continuaciones que rompían el cooldown) queda ENTERRADO — misma cirugía que s59.
 function detectStructure(candles) {
-  if (candles.length < 30) return null;
-
-  const lookback   = 5;
-  const swingHighs = [], swingLows = [];
-
-  for (let i = lookback; i < candles.length - lookback; i++) {
-    const c   = candles[i];
-    const win = [...candles.slice(i - lookback, i), ...candles.slice(i + 1, i + lookback + 1)];
-    if (win.every(x => c.h >= x.h)) swingHighs.push({ price: c.h, idx: i });
-    if (win.every(x => c.l <= x.l)) swingLows.push({ price: c.l, idx: i });
+  if (!detectStructureV2) return null;              // sin módulo: capa apagada (honesto)
+  if (!candles || candles.length < 30) return null;
+  const r = detectStructureV2(candles, { swingLen: 5, confirm: 2 }); // mismos knobs que el mapa
+  if (r.choch) {
+    const plus = !!r.choch.plus;
+    const name = plus ? 'CHoCH+' : 'CHoCH';
+    return r.choch.dir === 'BULL'
+      ? { type: 'CHOCH_BUY',  label: `⚡ ${name} ALCISTA`, priority: 10, plus }
+      : { type: 'CHOCH_SELL', label: `⚡ ${name} BAJISTA`, priority: 10, plus };
   }
-
-  if (swingHighs.length < 2 || swingLows.length < 2) return null;
-
-  const lastHigh  = swingHighs[swingHighs.length - 1];
-  const prevHigh  = swingHighs[swingHighs.length - 2];
-  const lastLow   = swingLows[swingLows.length - 1];
-  const prevLow   = swingLows[swingLows.length - 2];
-  const n         = candles.length;
-  const lastClose = candles[n - 1].c;
-  const prevClose = candles[n - 2].c;
-
-  // CHoCH: requiere 2 cierres confirmados (igual mapa v6)
-  if (lastClose < prevLow.price && prevClose < prevLow.price * 1.003)
-    return { type: 'CHOCH_SELL', label: '⚡ CHoCH BAJISTA', priority: 10 };
-  if (lastClose > prevHigh.price && prevClose > prevHigh.price * 0.997)
-    return { type: 'CHOCH_BUY',  label: '⚡ CHoCH ALCISTA', priority: 10 };
-  if (lastClose < lastLow.price && lastHigh.price < prevHigh.price)
-    return { type: 'BOS_SELL', label: '📉 BOS BAJISTA', priority: 7 };
-  if (lastClose > lastHigh.price && lastLow.price > prevLow.price)
-    return { type: 'BOS_BUY',  label: '📈 BOS ALCISTA', priority: 7 };
-
+  if (r.bos) {
+    return r.bos.dir === 'BULL'
+      ? { type: 'BOS_BUY',  label: '📈 BOS ALCISTA', priority: 7 }
+      : { type: 'BOS_SELL', label: '📉 BOS BAJISTA', priority: 7 };
+  }
   return null;
 }
 
@@ -734,11 +729,14 @@ function evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15
 
   if (struct4H) {
     const sDir = struct4H.type.includes('BUY') ? 'BUY' : 'SELL';
-    signals.push({ layer:4, dir:sDir, weight: struct4H.type.includes('CHOCH') ? 1.5 : 3.0, label:`${struct4H.label} 4H` });
+    // s61: BOS 3.0 · CHoCH+ 2.0 · CHoCH 1.5 — misma jerarquía que el mapa (s60)
+    const w4 = struct4H.type.includes('CHOCH') ? (struct4H.plus ? 2.0 : 1.5) : 3.0;
+    signals.push({ layer:4, dir:sDir, weight: w4, label:`${struct4H.label} 4H` });
   }
   if (struct1H) {
     const sDir = struct1H.type.includes('BUY') ? 'BUY' : 'SELL';
-    signals.push({ layer:4, dir:sDir, weight: struct1H.type.includes('CHOCH') ? 0.8 : 2.0, label:`${struct1H.label} 1H` });
+    const w1 = struct1H.type.includes('CHOCH') ? (struct1H.plus ? 1.0 : 0.8) : 2.0;
+    signals.push({ layer:4, dir:sDir, weight: w1, label:`${struct1H.label} 1H` });
   }
 
   // ── CAPA 5: SH + OB + EQH/EQL (1pt) ───────────────────
@@ -1095,7 +1093,7 @@ console.log(`   Tickers   : ${STOCK_TICKERS.join(', ')}`);
 console.log('   CAPA 1    : SuperTrend JUEZ (3pts)');
 console.log('   CAPA 2    : POC / VWAP (1.5pts)');
 console.log('   CAPA 3    : CVD real + divergencia (1.5pts)');
-console.log('   CAPA 4    : CHoCH + BOS con 2 cierres (2pts)');
+console.log('   CAPA 4    : Estructura canónica v2 (BOS 3 · CHoCH+ 2 · CHoCH 1.5) — módulo compartido con el mapa' + (detectStructureV2 ? '' : ' ⚠️ DESACTIVADA (falta detectStructure_v2.js)'));
 console.log('   CAPA 5    : Stop Hunt + OB + EQH/EQL (1pt)');
 console.log('   CAPA 6    : Régimen de Volatilidad (REAL · contexto, 0pts al score)');
 console.log('   CAPA 7    : Dark Pool — DESACTIVADA (requiere endpoint Trades · Developer $79)');
