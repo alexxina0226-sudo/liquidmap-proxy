@@ -811,30 +811,64 @@ function computeContext(activeCandles, intradaySrc, price){
 }
 
 // ── CHoCH + BOS ────────────────────────────────────────────────
-function detectStructure(bars){
-  if(!bars || bars.length < 10) return { choch:null, bos:null, swings:[] };
-  const swings = [];
-  for(let i = 2; i < bars.length - 2; i++){
-    if(bars[i].h > bars[i-1].h && bars[i].h > bars[i-2].h && bars[i].h > bars[i+1].h && bars[i].h > bars[i+2].h)
-      swings.push({ i, type:'HH', price: bars[i].h });
-    if(bars[i].l < bars[i-1].l && bars[i].l < bars[i-2].l && bars[i].l < bars[i+1].l && bars[i].l < bars[i+2].l)
-      swings.push({ i, type:'LL', price: bars[i].l });
+// Canónico SMC — CAPA SWING. La TENDENCIA es un ESTADO ESTRUCTURAL que gira con el
+// CHoCH (no EMA, no ciego). CHoCH = ruptura CONTRA el estado; BOS = a favor;
+// CHoCH+ = giro soportado (lower-high en alza / higher-low en baja). Confirmación por
+// cierre de cuerpo. Devuelve el evento estructural MÁS RECIENTE (choch XOR bos).
+// KNOBS de calibración en vivo: swingLen (fuerza del pivote) y confirm (nº de cierres).
+function detectStructure(bars, opts){
+  opts = opts || {};
+  const L = opts.swingLen || 5, NC = opts.confirm || 2;   // capa swing: pivote 5, 2 cierres
+  if(!bars || bars.length < (2*L + 2)) return { choch:null, bos:null, swings:[], trend:0 };
+
+  // 1) pivotes confirmados (fractal de fuerza L; el pivote en i se confirma en i+L)
+  const piv = [];
+  for(let i = L; i < bars.length - L; i++){
+    let isH = true, isL = true;
+    for(let k = 1; k <= L; k++){
+      if(!(bars[i].h > bars[i-k].h && bars[i].h > bars[i+k].h)) isH = false;
+      if(!(bars[i].l < bars[i-k].l && bars[i].l < bars[i+k].l)) isL = false;
+    }
+    if(isH) piv.push({ i, confAt:i+L, t:'H', price:bars[i].h });
+    if(isL) piv.push({ i, confAt:i+L, t:'L', price:bars[i].l });
   }
-  const lastBar = bars[bars.length - 1];
-  const recentHH = swings.filter(s => s.type === 'HH').slice(-3);
-  const recentLL = swings.filter(s => s.type === 'LL').slice(-3);
-  let choch = null, bos = null;
-  if(recentHH.length >= 2){
-    const [prev, last2] = recentHH.slice(-2);
-    if(last2.price < prev.price && lastBar.c < last2.price) choch = { dir:'BEAR', price:prev.price, label:'CHoCH ▼ BAJISTA' };
-    else if(last2.price > prev.price && lastBar.c > last2.price) bos = { dir:'BULL', price:last2.price, label:'BOS ▲ ALCISTA' };
+  piv.sort((a,b)=> a.confAt - b.confAt || a.i - b.i);
+
+  // 2) máquina de estados: clasifica cada ruptura como BOS (a favor) o CHoCH/CHoCH+ (en contra)
+  let trend = 0, lastSH = null, prevSH = null, lastSL = null, prevSL = null;
+  let failedCont = false, brokenSH = false, brokenSL = false;
+  let confUp = 0, confDn = 0, pIdx = 0, last = null;
+
+  for(let b = 0; b < bars.length; b++){
+    while(pIdx < piv.length && piv[pIdx].confAt <= b){
+      const p = piv[pIdx++];
+      if(p.t === 'H'){ prevSH = lastSH; lastSH = p.price; brokenSH = false;
+        if(trend > 0 && prevSH !== null && lastSH < prevSH) failedCont = true; }
+      else { prevSL = lastSL; lastSL = p.price; brokenSL = false;
+        if(trend < 0 && prevSL !== null && lastSL > prevSL) failedCont = true; }
+    }
+    const c = bars[b].c;
+    confUp = (lastSH !== null && c > lastSH) ? confUp + 1 : 0;
+    confDn = (lastSL !== null && c < lastSL) ? confDn + 1 : 0;
+
+    if(lastSH !== null && !brokenSH && confUp >= NC){
+      if(trend < 0){ const plus = failedCont;
+        last = { kind:'CHoCH', dir:'BULL', price:lastSH, label:(plus?'CHoCH+ ':'CHoCH ')+'▲ ALCISTA', plus };
+      } else { last = { kind:'BOS', dir:'BULL', price:lastSH, label:'BOS ▲ ALCISTA' }; }
+      trend = 1; failedCont = false; brokenSH = true;
+    }
+    if(lastSL !== null && !brokenSL && confDn >= NC){
+      if(trend > 0){ const plus = failedCont;
+        last = { kind:'CHoCH', dir:'BEAR', price:lastSL, label:(plus?'CHoCH+ ':'CHoCH ')+'▼ BAJISTA', plus };
+      } else { last = { kind:'BOS', dir:'BEAR', price:lastSL, label:'BOS ▼ BAJISTA' }; }
+      trend = -1; failedCont = false; brokenSL = true;
+    }
   }
-  if(recentLL.length >= 2){
-    const [prev, last2] = recentLL.slice(-2);
-    if(last2.price > prev.price && lastBar.c > last2.price && !choch) choch = { dir:'BULL', price:prev.price, label:'CHoCH ▲ ALCISTA' };
-    else if(last2.price < prev.price && lastBar.c < last2.price && !bos) bos = { dir:'BEAR', price:last2.price, label:'BOS ▼ BAJISTA' };
-  }
-  return { choch, bos, swings };
+
+  const choch = (last && last.kind === 'CHoCH') ? { dir:last.dir, price:last.price, label:last.label, plus:!!last.plus } : null;
+  const bos   = (last && last.kind === 'BOS')   ? { dir:last.dir, price:last.price, label:last.label } : null;
+  const swings = piv.map(p=>({ i:p.i, type:(p.t==='H'?'HH':'LL'), price:p.price }));
+  return { choch, bos, swings, trend };
 }
 
 // ── PASO B · PÉRDIDA DE FUERZA (divergencia de momentum sobre swings) ──────────────
