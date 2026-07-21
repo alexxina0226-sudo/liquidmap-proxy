@@ -1237,7 +1237,7 @@ function computeNeuralScore(p){
 
   // CAPA 4 — ESTRUCTURA (BOS lidera; CHoCH confirma sin duplicar)
   // BOS = movimiento confirmado (señal principal para salidas en opciones) → peso completo.
-  // CHoCH solo = reversa temprana → peso medio. CHoCH junto al BOS = confirma, no duplica.
+  // CHoCH solo = reversa temprana → peso medio (1.5; CHoCH+ soportado = 2.0). CHoCH junto al BOS = confirma, no duplica (0.5, con o sin +).
   const bosDir   = struct.bos   ? (struct.bos.dir   === 'BULL' ? 1 : -1) : 0;
   const chochDir = struct.choch ? (struct.choch.dir === 'BULL' ? 1 : -1) : 0;
   if(bosDir !== 0){
@@ -1246,7 +1246,11 @@ function computeNeuralScore(p){
       score += 0.5 * chochDir; conf.push(chochDir>0?'⚡ CHoCH confirma alcista':'⚡ CHoCH confirma bajista'); addL('CHoCH', 0.5, chochDir);
     } else { addL('CHoCH', 0, 0); }
   } else if(chochDir !== 0){
-    score += 1.5 * chochDir; conf.push(chochDir>0?'⚡ CHoCH ALCISTA (reversa temprana)':'⚡ CHoCH BAJISTA (reversa temprana)'); addL('CHoCH', 1.5, chochDir);
+    // s60: CHoCH+ (giro soportado) pesa 2.0 — más que el CHoCH simple (1.5), debajo del BOS (3).
+    const chPlus = !!(struct.choch && struct.choch.plus);
+    const wCh = chPlus ? 2.0 : 1.5;
+    const chName = chPlus ? 'CHoCH+' : 'CHoCH';
+    score += wCh * chochDir; conf.push(chochDir>0?('⚡ '+chName+' ALCISTA (reversa temprana)'):('⚡ '+chName+' BAJISTA (reversa temprana)')); addL('CHoCH', wCh, chochDir);
     addL('BOS', 0, 0);
   } else { addL('BOS', 0, 0); addL('CHoCH', 0, 0); }
 
@@ -1352,7 +1356,7 @@ function renderConfMeter(sig){
       <span class="cf-count">${sem.counter}</span>
     </div>`;
   } catch(e){ /* la luz jamás tumba la fila */ }
-  const maxW = { 'SuperTrend':3, 'VWAP':1.5, 'CVD':1.5, 'BOS':3, 'CHoCH':1.5, 'Presión':1, 'Value Area':1, 'ADX':1 };
+  const maxW = { 'SuperTrend':3, 'VWAP':1.5, 'CVD':1.5, 'BOS':3, 'CHoCH':2, 'Presión':1, 'Value Area':1, 'ADX':1 }; // s60: CHoCH+ tope 2
   el.innerHTML = semHtml + sig.layers.map(L => {
     const cls = L.dir>0?'cf-bull':L.dir<0?'cf-bear':'cf-neut';
     const arrow = L.dir>0?'▲':L.dir<0?'▼':'•';
