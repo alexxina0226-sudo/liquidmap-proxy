@@ -1,7 +1,7 @@
 // bench_estructura_v2.js — juez imparcial de la CAPA SWING canónica
 // Escenarios sintéticos con estructura CONOCIDA por definición ICT.
 // swingLen=2 en el banco: prueba la LÓGICA (la fuerza del pivote es calibración aparte).
-const { detectStructure_v2 } = require('/home/claude/detectStructure_v2.js');
+const { detectStructure_v2 } = require('./detectStructure_v2.js');
 
 let pass=0, fail=0;
 const ok=(name,cond)=>{ cond?pass++:fail++; console.log((cond?'  \u2713 ':'  \u2717 ')+name); };
