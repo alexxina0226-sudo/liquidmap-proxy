@@ -572,7 +572,7 @@ let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
 let vpBars = [];   // ROOT #5: fuente de VWAP/POC. En 4H = velas de 1H (sesión); en el resto = candles.
-let DATA_STALE = false, DATA_LAST_LABEL = '—';  // guarda de frescura: serie vieja = no confiable (vale para TODOS los tickers/TFs)
+let DATA_STALE = false, DATA_LAST_LABEL = '—', DATA_LAST_SEC = 0;  // guarda de frescura: serie vieja = no confiable (vale para TODOS los tickers/TFs)
 let cvd = 0, buyV = 0, sellV = 0;
 let tickerCache = {}, tickIdx = 0;
 let lastSignal = '', audioCtx = null;
@@ -1524,6 +1524,7 @@ async function loadCandles(){
     const lastSec = raw.length ? raw[raw.length-1].t : 0;
     const ageDays = lastSec ? (Date.now()/1000 - lastSec)/86400 : 999;
     DATA_STALE = ageDays > STALE_MAX_DAYS;
+    DATA_LAST_SEC = lastSec || 0;   // s62: lo consume la compuerta de Telegram (tgGate)
     DATA_LAST_LABEL = lastSec ? new Date(lastSec*1000).toLocaleDateString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric'}) : '—';
     if(DATA_STALE) console.warn('DATA VIEJA', sym, tf, '— última vela', DATA_LAST_LABEL, '('+ageDays.toFixed(0)+'d)');
     // Overlay precio vivo sobre la última vela CRUDA — SOLO si la serie está fresca.
@@ -1757,6 +1758,31 @@ function startWS(){
 // ── ALERTS ────────────────────────────────────────────────────
 let lastZoneAlert=0, lastMPAlert=0, lastDPAlert=0, lastWhaleAlert=0, lastStructAlert=0, gexWasPos=null;
 
+// ── s62 · COMPUERTA DE EMISIÓN A TELEGRAM ────────────────────────────────────
+// El mapa emite el activo/TF que estás mirando. Sin compuerta mandaba señales con
+// mercado cerrado y hasta los fines de semana (computando la última vela del viernes).
+// Mismo principio del semáforo: mejor callar que mentir. Devuelve {ok, why}.
+// El popup del mapa NO pasa por acá — vos seguís viendo todo en pantalla; lo que se
+// filtra es lo que sale al celular.
+const TF_MIN = { '5':5, '15':15, '60':60, '240':240, 'D':1440 };
+function tgGate(){
+  // 1) sesión: sólo con mercado abierto (pre/after y fin de semana NO emiten)
+  const mk = getMktStatus();
+  if(mk !== 'open') return { ok:false, why: mk==='pre' ? 'pre/after-hours' : 'mercado cerrado' };
+  // 2) frescura gruesa: la serie no puede ser vieja (guarda ya existente)
+  if(DATA_STALE) return { ok:false, why:'datos viejos (último '+DATA_LAST_LABEL+')' };
+  // 3) frescura fina: la última vela no puede tener más de 3 velas de atraso (feed atascado)
+  const tfm = TF_MIN[tf] || 60;
+  if(!DATA_LAST_SEC) return { ok:false, why:'sin timestamp de vela' };
+  const lagMin = (Date.now()/1000 - DATA_LAST_SEC) / 60;
+  if(tf !== 'D' && lagMin > tfm * 3) return { ok:false, why:'feed atrasado ('+Math.round(lagMin)+'min)' };
+  // 4) gatillo de opciones: en 5m/15m la señal debe traer estructura (BOS o CHoCH) — sin
+  //    evento estructural es ruido de scalping, no gatillo. El sesgo mayor vive en 1H/4H/D.
+  if((tf === '5' || tf === '15') && !(struct && (struct.bos || struct.choch)))
+    return { ok:false, why:'5m/15m sin BOS/CHoCH' };
+  return { ok:true };
+}
+
 function checkAlerts(p){
   // Stop Hunt
   if(candles.length > 0){
@@ -1773,8 +1799,8 @@ function checkAlerts(p){
   // Max Pain alert: DESACTIVADO — Max Pain real requiere cadena de opciones (FASE 4). No alertamos sobre dato inventado.
   // Signal
   const sig = computeNeuralScore(p);
-  if(sig.type==='BUY' && lastSignal!=='BUY' && alertCfg.buy){ playTone(880,0.4,'sine'); showAlertPopup('▲ BUY INSTITUCIONAL — Score '+sig.score+'/10'); if(sig.score>=7) sendTelegram('BUY',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='BUY'; }
-  else if(sig.type==='SELL' && lastSignal!=='SELL' && alertCfg.buy){ playTone(220,0.4,'sine'); showAlertPopup('▼ SELL INSTITUCIONAL — Score '+sig.score+'/10'); if(sig.score>=7) sendTelegram('SELL',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); lastSignal='SELL'; }
+  if(sig.type==='BUY' && lastSignal!=='BUY' && alertCfg.buy){ playTone(880,0.4,'sine'); showAlertPopup('▲ BUY INSTITUCIONAL — Score '+sig.score+'/10'); if(sig.score>=7){ const g=tgGate(); if(g.ok) sendTelegram('BUY',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); else console.log('TG bloqueado (BUY '+sym+' '+tf+'):', g.why); } lastSignal='BUY'; }
+  else if(sig.type==='SELL' && lastSignal!=='SELL' && alertCfg.buy){ playTone(220,0.4,'sine'); showAlertPopup('▼ SELL INSTITUCIONAL — Score '+sig.score+'/10'); if(sig.score>=7){ const g=tgGate(); if(g.ok) sendTelegram('SELL',sym,p.toFixed(2),sig.score,{conf:sig.conf.join(', ')}); else console.log('TG bloqueado (SELL '+sym+' '+tf+'):', g.why); } lastSignal='SELL'; }
   else if(sig.type==='NEUTRAL'){ lastSignal=''; }
   // GEX flip alert: DESACTIVADO — GEX real requiere opciones (FASE 4).
   // Whale
