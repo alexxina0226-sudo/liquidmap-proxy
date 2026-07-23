@@ -1549,7 +1549,7 @@ async function loadCandles(){
     // solo hoy) → quedaba congelado ~$314.7 en TODOS los TFs. TV ancla el VWAP a sesión (correcto)
     // pero su POC (VPVR) es RANGO VISIBLE → se ensancha con el TF. Le damos al POC su ventana propia.
     // El VWAP NO se toca (sigue corriendo por sessionBars, anclado a sesión).
-    vp = buildVP(pocWindowBars(candles, tf), 60);
+    vp = buildVP(pocSourceBars(candles, tf), POC_ROWS);
     const cp = quote.c || candles[candles.length-1].c;
     zones = buildZones(cp);
     // CVD aproximado por dirección de vela (FASE 3 = trades reales por agresor)
@@ -2156,23 +2156,47 @@ function resampleSession4Hh(bars, tMs){
   return order.map(k=>buckets.get(k));
 }
 
-// ── VENTANA DEL POC (VPVR) — RANGO ESTRUCTURAL, desacoplada del ancla de sesión ──────
-// El VWAP se ancla a la sesión (vía sessionBars) porque TV también lo ancla → correcto.
-// El POC de TV (VPVR) NO se ancla: es rango visible, se ensancha con el TF. Acá el POC
-// recibe su propia ventana rodante por TF, calibrada al rango visible típico de TV.
-// CALIBRACIÓN (validada en vivo AAPL 2026-07-09, 18:52 ET):
-//   15m: 104 velas → POC $312.80 vs TV 312.7 → Δ$0.10 CLAVADO ✅ (se mantiene).
-//   4H:  60 velas quedó $14 alto ($310.49 vs TV 295.9) → se ensancha a 100 para pesar la
-//        acumulación estructural de ~296 (POC 4H bimodal: volumen fuerte en ~296 y ~310).
-//   1H:  se ensancha en proporción (84→130 ≈ 3-4 semanas, TV 1H POC ~293.6).
-// NOTA: HTF puede no clavar al centavo (bimodal + feed Alpaca SIP ≠ feed de TV); apunta a la
-// zona estructural correcta y se MUEVE con el TF (ya no congelado). Sin filtro "solo hoy". Cero sintético.
-function pocWindowBars(candles, tf){
+// ── PERFIL DE VOLUMEN CANÓNICO (s64 · 23-jul-2026) ───────────────────────────────────
+// AUDITORÍA: la versión anterior tenía DOS problemas de fondo.
+//  1) La ventana eran constantes por TF {5:156, 15:104, 60:130, 240:100, D:60} afinadas
+//     contra UN activo en UN día ("CALIBRACIÓN validada en vivo AAPL 2026-07-09"). Eso es
+//     un parche por ticker: clavaba AAPL y se iba $99 en MU. Se reemplaza por UNA regla.
+//  2) El volumen de cada vela se sumaba ENTERO al bin del CIERRE. Un nivel que el precio
+//     cruzaba en todas las barras pero donde nadie cerraba quedaba INVISIBLE.
+// CANÓNICO (TradingView · ThinkorSwim · Steidlmayer): el POC es la MODA del volumen —
+// la fila con más volumen operado — explícitamente distinto del VWAP, que es la media.
+// Sin ticks, el estándar es repartir el volumen de cada vela entre las filas que toca su
+// rango H–L, y ganar resolución bajando de timeframe ("bar magnification").
+// VENTANA: 100 barras en TODOS los TF = i_poc_len del Pine v6.1 → comparables por
+// construcción, sin constantes mágicas por activo.
+const POC_WIN_BARS = 100;   // = i_poc_len del Pine v6.1
+const POC_ROWS     = 60;    // filas del histograma — declarado, compartido con el Pine
+// Reparto OHLC-proporcional. El reparto EQUITATIVO por todo el rango (el que sugiere
+// la versión simple del estándar) se probó en banco y fue PEOR que el binning viejo
+// ($3.81 vs $1.23 de error acumulado contra la verdad de los ticks): aplasta el perfil
+// de las velas de tendencia. Con peso al cuerpo el error baja a $0.88 — mejor que ambos.
+// 70/30 es el punto elegido: empata en exactitud con 50/85/100 y además CONSERVA las
+// mechas, que es lo que hace visible el nivel cruzado-pero-nunca-cerrado. 100% al cuerpo
+// volvería a ocultarlo. Knob declarado, no mágico: se mueve solo con banco de por medio.
+const POC_W_CUERPO = 0.70;
+
+// Fuente del perfil: las velas MÁS FINAS que tengamos cubriendo la ventana.
+// TV arma sus perfiles bajando de timeframe (para un perfil diario carga las de 1 minuto).
+// Acá hacemos lo mismo SIN pedir un dato nuevo: en 4H el mapa YA tiene las 1H crudas en
+// vpBars (son las que alimentan el resample de sesión) → ~3.5× más resolución gratis.
+function pocSourceBars(candles, tf){
   if(!candles || !candles.length) return candles || [];
-  const WIN = { '5':156, '15':104, '60':130, '240':100, 'D':60 };  // barras RTH ≈ 5m~2d · 15m~4d · 1H~3-4sem · 4H(sesión)~50d
-  const n = WIN[tf] || 60;
-  return candles.length > n ? candles.slice(-n) : candles;
+  const win = candles.length > POC_WIN_BARS ? candles.slice(-POC_WIN_BARS) : candles;
+  if(tf === '240' && typeof vpBars !== 'undefined' && vpBars && vpBars.length){
+    const desde = win[0].t;
+    let finas = vpBars.filter(b => b.t >= desde);
+    if(typeof filterRTH === 'function'){ try { finas = filterRTH(finas); } catch(e){} }
+    if(finas.length > win.length) return finas;   // magnificación real, no un cambio de nombre
+  }
+  return win;
 }
+// Alias histórico: quedó código y bancos llamando pocWindowBars. Una sola puerta.
+function pocWindowBars(candles, tf){ return pocSourceBars(candles, tf); }
 
 function sessionBars(bars, tf, fallbackN){
   // ROOT #5: en 4H las velas (candles) ahora son de SESIÓN (2 por día) → un VWAP/POC sobre
@@ -2198,17 +2222,45 @@ function getVWAP(bars){
   const sd = Math.sqrt(varSum/vol);
   return { vwap, up: vwap+sd, dn: vwap-sd };
 }
+// Reparte el volumen de CADA vela entre TODAS las filas que toca su rango H–L
+// (modelo de distribución equitativa, el estándar cuando no hay ticks). Antes se
+// tiraba todo al bin del cierre y el nivel más transitado podía no existir.
 function buildVP(bars,n){
-  if(!bars.length) return null;
+  if(!bars || !bars.length) return null;
+  n = n || POC_ROWS;
   const mn=Math.min(...bars.map(b=>b.l)), mx=Math.max(...bars.map(b=>b.h));
+  if(!(mx>mn)) return null;                       // serie plana: no hay perfil, mejor callar
   const bs=(mx-mn)/n, p=new Array(n).fill(0);
-  for(const b of bars){ const i=Math.max(0,Math.min(n-1,Math.floor((b.c-mn)/bs))); p[i]+=b.v||0; }
+  for(const b of bars){
+    const v=b.v||0; if(v<=0) continue;
+    const lo=Math.max(0,Math.min(n-1,Math.floor((b.l-mn)/bs)));
+    const hi=Math.max(0,Math.min(n-1,Math.floor((b.h-mn)/bs)));
+    const bo=Math.min(b.o,b.c), bc=Math.max(b.o,b.c);
+    const blo=Math.max(0,Math.min(n-1,Math.floor((bo-mn)/bs)));
+    const bhi=Math.max(0,Math.min(n-1,Math.floor((bc-mn)/bs)));
+    const cuotaMecha =v*(1-POC_W_CUERPO)/(hi-lo+1);
+    const cuotaCuerpo=v*POC_W_CUERPO/(bhi-blo+1);
+    for(let i=lo;i<=hi;i++)   p[i]+=cuotaMecha;    // todo el recorrido participa
+    for(let i=blo;i<=bhi;i++) p[i]+=cuotaCuerpo;   // donde se negoció de verdad, pesa más
+  }
   return {profile:p,min:mn,max:mx,binSize:bs};
 }
-function getPOC(v){ const i=v.profile.indexOf(Math.max(...v.profile)); return v.min+i*v.binSize+v.binSize/2; }
+// Índice del POC con el desempate canónico (ThinkorSwim): si hay varias filas iguales,
+// gana la más cercana al medio del rango; si empatan en distancia, la de abajo.
+function pocIndex(v){
+  const p=v.profile, mx=Math.max(...p), mid=(p.length-1)/2;
+  let best=-1, bestD=Infinity;
+  for(let i=0;i<p.length;i++){
+    if(p[i]!==mx) continue;
+    const d=Math.abs(i-mid);
+    if(d<bestD || (d===bestD && i<best)){ best=i; bestD=d; }
+  }
+  return best;
+}
+function getPOC(v){ const i=pocIndex(v); return v.min+i*v.binSize+v.binSize/2; }
 function getVA(v){
   const tot=v.profile.reduce((a,b)=>a+b,0),tgt=tot*.70;
-  const mi=v.profile.indexOf(Math.max(...v.profile));
+  const mi=pocIndex(v);
   let lo=mi,hi=mi,acc=v.profile[mi];
   while(acc<tgt){ const al=lo>0?v.profile[lo-1]:0,ah=hi<v.profile.length-1?v.profile[hi+1]:0; if(al>=ah&&lo>0){lo--;acc+=al;}else if(hi<v.profile.length-1){hi++;acc+=ah;}else break; }
   return{vah:v.min+hi*v.binSize+v.binSize,val:v.min+lo*v.binSize};
