@@ -54,6 +54,67 @@ let detectStructureV2 = null;
 try { detectStructureV2 = require('./detectStructure_v2.js').detectStructure_v2; }
 catch (e) { console.warn('⚠️ detectStructure_v2.js no encontrado — CAPA 4 (estructura) DESACTIVADA. Subir detectStructure_v2.js al repo.'); }
 
+// ── GOBERNADOR DE CONVICCIÓN CANÓNICO (s63) — MISMO módulo que el mapa ──
+// Una sola fuente de verdad: conviction_governor.js es el bloque del mapa
+// extraído byte a byte. Antes el bot etiquetaba la calidad SOLO por score
+// (⭐ INSTITUCIONAL con ADX 13 lateral, donde el mapa capaba a ⚠️ DÉBIL).
+// Si falta el módulo, se cae al etiquetado viejo por score y se AVISA en el
+// mensaje — nunca se muestra un grado gobernado que no se gobernó.
+let governConviction = null, govLabel = null;
+try { const _g = require('./conviction_governor.js'); governConviction = _g.governConviction; govLabel = _g.govLabel; }
+catch (e) { console.warn('⚠️ conviction_governor.js no encontrado — GOBERNADOR DESACTIVADO, calidad por score (degradado).'); }
+
+// Escala del Governor para el monitor: su score mostrado es min(10, round(net*1.2)),
+// o sea el full-scale del bot es net = 10/1.2. Pasando rawMax = 10/SCORE_GAIN el
+// govBaseGrade lee EXACTAMENTE el mismo 0-10 que ya muestra el mensaje.
+const SCORE_GAIN   = 1.2;
+const MON_RAWMAX   = 10 / SCORE_GAIN;
+// Capas del monitor → nombres que el GOV_PILLAR del mapa ya conoce, para que
+// los 4 pilares (Momentum · Volumen · Ubicación · Estructura) se cuenten igual:
+//  1 SuperTrend · 13 ADX · 14 Arco → Momentum   |  3 CVD 4H/1H · 8 CVD 15m → Volumen
+//  2 VWAP/POC/VA → Ubicación                    |  4 BOS/CHoCH · 5 SH/pools → Estructura
+//  6 (régimen de volatilidad, 0pts) y 7 (dark pool, desactivada) no aportan
+//  dirección → quedan FUERA del censo, no inflan ni desinflan la integridad.
+const MON_LAYER_NAME = { 1:'SuperTrend', 2:'VWAP', 3:'CVD', 4:'BOS',
+                         5:'BOS', 8:'CVD', 13:'ADX', 14:'SuperTrend' };
+const MON_LAYERS     = [1, 2, 3, 4, 5, 8, 13, 14];
+
+// Traduce el resultado del monitor al contrato de entrada del Governor.
+// El censo enumera las 8 capas SIEMPRE: la que no habló va con dir 0 y abs:true.
+// Así el GATE 3 (integridad · "DATOS PARCIALES") mide de verdad — si el censo
+// se armara solo con las capas que hablaron, jamás podría faltar ninguna.
+// HONESTIDAD: el bot NO calcula zona ICT (premium/discount), EMA200 ni MTF
+// superior → ctx va vacío y el GATE 2 (ubicación/HTF) NO se evalúa. Eso se
+// declara, no se disimula (ver govGradeForMonitor).
+function buildGovSig(result) {
+  const dirSign = result.direction === 'BUY' ? 1 : result.direction === 'SELL' ? -1 : 0;
+  const net     = Math.abs(result.buyScore - result.sellScore);
+  const best    = new Map();
+  for (const s of (result.signals || [])) {
+    if (!MON_LAYER_NAME[s.layer]) continue;
+    const d    = s.dir === 'BUY' ? 1 : s.dir === 'SELL' ? -1 : 0;
+    const prev = best.get(s.layer);
+    if (!prev || s.weight > prev.w) best.set(s.layer, { dir: d, w: s.weight });
+  }
+  const layers = MON_LAYERS.map(n => {
+    const hit = best.get(n);
+    return hit ? { name: MON_LAYER_NAME[n], dir: hit.dir, abs: false }
+               : { name: MON_LAYER_NAME[n], dir: 0,       abs: true  };
+  });
+  return { type: result.direction, rawScore: dirSign * net, adx: result.adx4H || null, layers };
+}
+
+// Gobierna y aplica el techo por gate ausente. Devuelve {label, reason, grade}.
+function govGradeForMonitor(result) {
+  if (!governConviction) return null;
+  const g = governConviction(buildGovSig(result), null, { rawMax: MON_RAWMAX });
+  // GATE 2 no evaluado en el bot (sin zona ICT / EMA200 / MTF): no se puede
+  // reclamar 🎯 SNIPER. Techo 🔥 FUERTE y se dice por qué. Mejor callar que mentir.
+  let grade = g.grade, reason = g.reason;
+  if (grade === 'SNIPER') { grade = 'FUERTE'; reason = reason || 'ubicación/HTF no evaluadas en el bot'; }
+  return { grade, reason, label: govLabel(grade), caps: g.caps, nPillars: g.nPillars };
+}
+
 // ── CONFIG ──────────────────────────────────────────────────
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
@@ -856,12 +917,14 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const t3Lb = tgt && tgt.tps[2] ? ' · ' + tgt.tps[2].label : '';
 
   const arrow   = isBuy ? '▲ BUY — COMPRA 🟢' : '▼ SELL — VENTA 🔴';
-  // Calidad alineada al Pine: 🔥 solo con ADX≥30 (tendencia fuerte real).
-  // Score alto en ADX 20-30 = ⭐ INSTITUCIONAL (válida, sin humo).
-  const adxV    = result.adx4H ? result.adx4H.adx : null;
-  const quality = (result.score >= 8 && (adxV === null || adxV >= ADX_FUERTE)) ? '🔥 MÁXIMA CALIDAD'
-                : result.score >= 6 ? '⭐ INSTITUCIONAL'
-                : '✅ VÁLIDA';
+  // ── CALIDAD GOBERNADA (s63) ──────────────────────────────────────────
+  // Antes: rótulo por score puro → "10/10 ⭐ INSTITUCIONAL" con ADX 13.2
+  // lateral, mientras el mapa capaba el MISMO activo a "⚠️ DÉBIL · CAPÓ:
+  // RANGO". Ahora manda el Governor canónico (mismo código que el mapa) y
+  // el mensaje dice el grado Y el motivo del cap, como el titular del mapa.
+  const gov     = govGradeForMonitor(result);
+  const quality = gov ? gov.label + (gov.reason ? ' · CAPÓ: ' + gov.reason : '')
+                      : '⚠️ SIN GOBERNAR (score ' + result.score + '/10)';
   const adxLine = result.adx4H ? `\n📡 Régimen: ADX ${result.adx4H.adx.toFixed(1)} · ${result.adx4H.quality}` : '';
   const arcLine = (result.arc4H && result.arc4H.initialized)
     ? `\n🌀 Arco: ${result.arc4H.trend === 'BULL' ? '▲ BULL' : '▼ BEAR'}${result.arc4H.lastFlip && result.arc4H.flipAgeBars <= 2 && result.arc4H.lastFlip.confirmed ? ' · FLIP confirmado hace ' + result.arc4H.flipAgeBars + ' vela' + (result.arc4H.flipAgeBars === 1 ? '' : 's') : ''} · VWAP ${result.arc4H.vwapAgreesNow ? '✓' : '✗'}`
@@ -1101,6 +1164,11 @@ console.log('   CAPA 8    : 15m + Power Hour timing');
 console.log(`   CAPA 13   : ADX/DMI Wilder(${ADX_LEN}) 4H — +1pt CONFLUENCIA si ADX≥${ADX_MIN} con DMI a favor (= Pine v6.1)`);
 console.log(`   RÉGIMEN   : ADX informa (🔥≥${ADX_FUERTE} / ✅≥${ADX_MIN} / ⚠️ rango) pero NO bloquea — el juez es SuperTrend+estructura, no el ADX (lento)`);
 console.log(`   CAPA 14   : ARCO BOSWaves 4H — estado +0.75 · flip VWAP-confirmado ≤2 velas +1.5 (gatillo del triángulo) · ${computeArc ? 'ACTIVA' : '⚠️ DESACTIVADA (falta arc_boswaves.js)'}`);
+console.log(`   GOBERNADOR: ${governConviction ? 'conviction_governor.js — módulo compartido con el mapa' : '⚠️ DESACTIVADO (falta conviction_governor.js) — calidad por score, degradado'}`);
+if (governConviction) {
+  console.log(`               gates ACTIVOS: RÉGIMEN (ADX<${ADX_MIN} → ⚠️ DÉBIL) · INTEGRIDAD (datos parciales + pilares)`);
+  console.log('               gate AUSENTE : UBICACIÓN/HTF (el bot no calcula zona ICT / EMA200 / MTF) → techo 🔥 FUERTE, sin 🎯 SNIPER');
+}
 console.log('   GEX/MaxPain: N/D — requieren cadena de opciones (no afectan el score)');
 console.log('   TP/SL     : ESTRUCTURALES (POC/VWAP/VAH-VAL/pools/máx-mín/proy) — idéntico al mapa v6');
 console.log(`   Score     : mínimo ${MIN_SCORE}/10 · 3 capas concordantes · max 10 · SOLO capas reales`);
