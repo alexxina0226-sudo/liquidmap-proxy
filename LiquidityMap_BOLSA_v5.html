@@ -1638,6 +1638,66 @@ function adxDiag(){
   }catch(e){ alert('adxDiag error: '+e.message); console.error(e); }
 }
 window.adxDiag = adxDiag;
+
+// ════════════════════════════════════════════════════════════════════
+//  /diag DEL POC (s66) — mismo patrón que adxDiag. Mide, no adivina.
+//  Nace de la caza del 23-jul: MU 1H daba POC 992.32 contra 929.4 del
+//  Pine, mientras 15m y 4H calzaban al centavo. Sospecha: el camino de
+//  1H pierde velas. Esto lo expone sin necesidad de consola.
+//  USO: escribir  /poc  en la casilla TICKER y Enter. (o Ctrl+Shift+L)
+// ════════════════════════════════════════════════════════════════════
+function pocDiag(){
+  try{
+    const cs = (typeof candles!=='undefined' && candles) ? candles : [];
+    if(!cs.length){ alert('pocDiag: no hay velas cargadas todavía'); return; }
+    const tfL = ({'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'})[tf]||tf;
+    const src = pocSourceBars(cs, tf) || [];
+    const etH = t => new Date(t*1000).toLocaleString('en-US',{timeZone:'America/New_York',hour:'2-digit',hour12:false});
+    const etF = t => new Date(t*1000).toLocaleString('en-US',{timeZone:'America/New_York',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',hour12:false});
+    const etD = t => new Date(t*1000).toLocaleDateString('en-US',{timeZone:'America/New_York'});
+    // histograma por hora ET: la hora que FALTA es el hallazgo
+    const porHora = {};
+    for(const b of src){ const k = etH(b.t); porHora[k] = (porHora[k]||0)+1; }
+    const dias = new Set(src.map(b=>etD(b.t))).size;
+    const magnif = (tf==='240' && typeof vpBars!=='undefined' && vpBars && src.length > Math.min(cs.length, POC_WIN_BARS));
+    const poc = vp ? getPOC(vp) : null, va = vp ? getVA(vp) : null;
+    const tot = vp ? vp.profile.reduce((a,b)=>a+b,0) : 0;
+    const fuerza = (vp && tot>0) ? (Math.max(...vp.profile)/tot*100) : null;
+    const horas = Object.keys(porHora).sort();
+    const lineas = [
+      `── /diag POC · ${sym} ${tfL} ──`,
+      `velas en serie:      ${cs.length}`,
+      `velas del perfil:    ${src.length}   (ventana ${POC_WIN_BARS} · ${POC_ROWS} filas · cuerpo ${(POC_W_CUERPO*100).toFixed(0)}%)`,
+      `días distintos:      ${dias}`,
+      `velas por día:       ${dias? (src.length/dias).toFixed(2) : '—'}`,
+      magnif ? `magnificación 4H:    SÍ (usa las 1H crudas)` : `magnificación:       no`,
+      ``,
+      `primera del perfil:  ${src.length? etF(src[0].t) : '—'}`,
+      `última del perfil:   ${src.length? etF(src[src.length-1].t) : '—'}`,
+      ``,
+      `POC: ${poc!=null? poc.toFixed(2):'—'}   VAH: ${va? va.vah.toFixed(2):'—'}   VAL: ${va? va.val.toFixed(2):'—'}`,
+      `fuerza del imán: ${fuerza!=null? fuerza.toFixed(1)+'%':'—'}   (perfil plano = ${(100/POC_ROWS).toFixed(2)}%)`,
+      ``,
+      `velas por hora ET:`,
+      ...horas.map(k=>`   ${k}:00 → ${porHora[k]}`)
+    ];
+    // veredicto: en intradía, si falta la hora de apertura el perfil está cojo
+    const intradia = (tf==='5'||tf==='15'||tf==='60');
+    const tieneApertura = horas.includes('09');
+    if(intradia){
+      lineas.push('');
+      lineas.push(tieneApertura
+        ? '✅ la hora de apertura (09) está en el perfil.'
+        : '⚠️ FALTA la hora de apertura (09) — el perfil no ve la vela de más volumen del día.');
+    }
+    console.log(lineas.join('\n'));
+    console.table(porHora);
+    alert(lineas.join('\n') + '\n\n(detalle completo en la consola)');
+  }catch(e){ alert('pocDiag error: '+e.message); console.error(e); }
+}
+window.pocDiag = pocDiag;
+document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==='L'||e.key==='l')){ e.preventDefault(); pocDiag(); } });
+
 document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==='D'||e.key==='d')){ e.preventDefault(); adxDiag(); } });
 
 const ARC_DEFAULTS = { accelRate:0.12, startMult:2.0, smooth:3, vwapAccelBoost:1.5,
@@ -2602,7 +2662,12 @@ function createSymBtn(s,isDefault=false){
   if(!isDefault){ const rm=document.createElement('button'); rm.textContent='×'; rm.title='Eliminar'; rm.style.cssText='background:rgba(255,45,107,.15);border:1px solid rgba(255,45,107,.3);color:#ff2d6b;border-radius:2px;cursor:pointer;font-size:10px;padding:1px 4px;line-height:1;'; rm.onclick=function(e){ e.stopPropagation(); wrap.remove(); saveSymbols(); if(sym===s) selectSym('SPY',document.querySelector('[data-sym="SPY"]')); }; wrap.appendChild(rm); }
   bar.appendChild(wrap);
 }
-function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.value.trim().toUpperCase(); if(!s||s.length<1||s.length>6) return; inp.value=''; if(document.querySelector(`[data-sym="${s}"]`)) return; createSymBtn(s,false); saveSymbols(); const btn=document.querySelector(`[data-sym="${s}"]`); if(btn) selectSym(s,btn); }
+function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.value.trim().toUpperCase(); if(!s||s.length<1||s.length>6) return;
+  // COMANDOS DE DIAGNÓSTICO por la casilla TICKER — no dependen de F12 ni de
+  // atajos de teclado (hay teclados/software que los secuestran).
+  if(s==='/POC'){ inp.value=''; pocDiag(); return; }
+  if(s==='/ADX'){ inp.value=''; adxDiag(); return; }
+  inp.value=''; if(document.querySelector(`[data-sym="${s}"]`)) return; createSymBtn(s,false); saveSymbols(); const btn=document.querySelector(`[data-sym="${s}"]`); if(btn) selectSym(s,btn); }
 function loadSavedSymbols(){ try{ const saved=localStorage.getItem('lm_syms'); if(saved){ JSON.parse(saved).forEach(s=>{ if(!DEFAULT_SYMS.includes(s)) createSymBtn(s,false); }); } }catch(e){} }
 
 async function selectSym(s,btn){
