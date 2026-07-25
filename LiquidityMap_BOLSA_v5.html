@@ -1506,7 +1506,14 @@ async function loadCandles(){
   // meses atrás → el 4H leía un régimen viejo). El 1H está fresco → el 4H pide 1H y
   // resamplea a sesión (09:30/13:30, como TV). El 1H sigue su camino nativo.
   const is4H = (tf === '240');
-  const cfg = is4H ? {mult:1, span:'hour', days:120} : tfToPolygon(tf); // 4H: 120d de 1H → ~160 velas de sesión (el arco pide 110+)
+  const is1H = (tf === '60');
+  // 4H: 120d de 1H → ~160 velas de sesión (el arco pide 110+).
+  // 1H: 70d de 15m → se resamplea a horarias ANCLADAS A 9:30 (= TV). Las 1H nativas de
+  // Alpaca vienen en punto (9:00,10:00,…) y filterRTH tiraba entera la de 9:00 = la HORA
+  // DE APERTURA (más volumen del día) → el 1H perdía la apertura en POC/VWAP/ADX/ST/estructura.
+  const cfg = is4H ? {mult:1,  span:'hour',   days:120}
+            : is1H ? {mult:15, span:'minute', days:70}
+            :        tfToPolygon(tf);
   const fmt = d => new Date(d).toISOString().slice(0,10);
   const to = fmt(Date.now()), from = fmt(Date.now() - cfg.days*86400000);
   const url = `${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/${cfg.mult}/${cfg.span}/${from}/${to}`)}&adjusted=true&sort=asc&limit=50000`;
@@ -1538,6 +1545,10 @@ async function loadCandles(){
     if(is4H){
       vpBars  = raw;                             // 1H crudos = fuente de VWAP/POC de sesión (vía sessionBars)
       candles = resampleSession4Hh(raw, false);  // 4H ancladas a sesión DESDE 1H → chart / ST / estructura = TV (y fresco)
+    } else if(is1H){
+      candles = resampleSessionHourly(raw);      // 1H ancladas a 9:30 DESDE 15m = TV (incluye la vela de apertura)
+      if(candles.length > 300) candles = candles.slice(-300);
+      vpBars  = candles;                         // convención no-4H: VWAP/POC sobre las mismas horarias (ya traen la apertura)
     } else {
       candles = raw;
       if(tf !== 'D') candles = filterRTH(candles);
@@ -2208,6 +2219,35 @@ function resampleSession4Hh(bars, tMs){
     let hh = parseInt(g('hour'),10); if(hh===24) hh=0;
     if(hh < 9 || hh > 15) continue;                    // fuera de RTH horario (09–15 ET)
     const slot = hh < 13 ? 'A' : 'B';                  // mañana 09–12 · tarde 13–15
+    const key = `${g('year')}-${g('month')}-${g('day')}|${slot}`;
+    let bk = buckets.get(key);
+    if(!bk){ bk = { t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }; buckets.set(key,bk); order.push(key); }
+    else { bk.h=Math.max(bk.h,b.h); bk.l=Math.min(bk.l,b.l); bk.c=b.c; bk.v+=(b.v||0); }
+  }
+  return order.map(k=>buckets.get(k));
+}
+
+// ── RESAMPLE 1H ANCLADO A SESIÓN (9:30 ET) DESDE 15m = TV "1 hour" en RTH (s67) ──────
+// Alpaca entrega las 1H ancladas EN PUNTO (9:00,10:00,…). filterRTH descartaba entera la
+// vela de 9:00 (mins 540 < 570) = la HORA DE APERTURA, la de más volumen del día. Resultado
+// probado con /poc en MU 1H: velas/día 5.88, histograma sin la hora 09 → el 1H perdía la
+// apertura en TODO (POC, VWAP, ADX, ST, estructura). TV ancla sus 1H a la sesión (9:30–10:30,
+// 10:30–11:30, …). Reconstruimos idéntico: agrupamos 15m RTH en cubos horarios que arrancan
+// a las 9:30. Cubo 0 = 9:30–10:30 (trae el open), … cubo 6 = 15:30–16:00 (media hora final).
+// Mismo patrón exacto que resampleSession4Hh, con cubos de 60' anclados a 9:30 en vez de 4H.
+function resampleSessionHourly(bars){
+  if(!bars || !bars.length) return [];
+  const fmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,
+    year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit'});
+  const buckets = new Map(); const order = [];
+  for(const b of bars){
+    const p = fmt.formatToParts(new Date(b.t*1000));
+    const g = t => p.find(x=>x.type===t).value;
+    let hh = parseInt(g('hour'),10); if(hh===24) hh=0;
+    const mm = parseInt(g('minute'),10);
+    const mins = hh*60+mm;
+    if(mins < 570 || mins >= 960) continue;            // fuera de RTH (9:30–16:00)
+    const slot = Math.floor((mins - 570)/60);          // 0=9:30–10:30 … 6=15:30–16:00
     const key = `${g('year')}-${g('month')}-${g('day')}|${slot}`;
     let bk = buckets.get(key);
     if(!bk){ bk = { t:b.t, o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }; buckets.set(key,bk); order.push(key); }
