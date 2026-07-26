@@ -88,19 +88,21 @@ async function getOptionsMetrics(sym, opts = {}, _fetch = nodeFetch) {
     const expiration = expReq || M.pickExpiration(raw, mode, today);
     const expSyms = raw.filter(c => c.expiration_date === expiration).map(c => c.symbol);
 
-    // 4) Precio de cada opción (dailyBar.c) vía snapshots por símbolo (lotes de 100)
+    // 4) Snapshot OPRA de cada opción (greeks + IV nativas · latestTrade/Quote) por lotes de 100
+    //    feed=opra: consolidado real de todas las bolsas (Algo Trader Plus). Antes iba
+    //    feed=indicative (degradado) y solo se tomaba el precio → griegas reconstruidas a mano.
     const snapshots = {};
     for (let i = 0; i < expSyms.length; i += 100) {
       const csv = expSyms.slice(i, i + 100).join(',');
       try {
-        const rsn = await _fetch(`${ALPACA_DATA}/v1beta1/options/snapshots?symbols=${encodeURIComponent(csv)}&feed=indicative&limit=100`, { headers: ALPACA_HEADERS, timeout: 12000 });
+        const rsn = await _fetch(`${ALPACA_DATA}/v1beta1/options/snapshots?symbols=${encodeURIComponent(csv)}&feed=opra&limit=100`, { headers: ALPACA_HEADERS, timeout: 12000 });
         diag.snapshots_status = rsn.status;
         const js = await rsn.json();
         if (js && js.snapshots) Object.assign(snapshots, js.snapshots);
       } catch (e) { diag.snapshots_err = e.message; }
     }
 
-    // 5) Motor: contratos → Max Pain (OI) + GEX (gamma BS)
+    // 5) Motor: contratos → Max Pain (OI) + GEX (gamma NATIVA OPRA · BS fallback)
     const built = M.buildContracts({ rawContracts: raw, snapshots, spot, expiration, r, nowMs: Date.now() });
     const mp  = M.computeMaxPain(built.oiContracts);
     const gex = M.aggregateGEX(built.gammaContracts, spot);
@@ -109,10 +111,14 @@ async function getOptionsMetrics(sym, opts = {}, _fetch = nodeFetch) {
     const tabla = [...strikes].sort((a, b) => Math.abs(b.netGEX_MM) - Math.abs(a.netGEX_MM)).slice(0, 12).sort((a, b) => a.strike - b.strike);
 
     const haveGEX = built.coverage.con_iv > 0, haveMP = mp.maxPain != null;
+    const nat = built.coverage.con_native || 0, bs = built.coverage.con_bs || 0;
+    const fuente_gamma = nat > 0 && bs === 0 ? 'OPRA nativa'
+      : nat > 0 && bs > 0 ? `mixta (${nat} OPRA · ${bs} BS)`
+      : bs > 0 ? 'BS fallback' : '—';
     const data = {
       ok: !!(haveGEX && haveMP), sym, spot, modo: mode || 'exp',
       expiration, dias_a_exp: +(built.T * 365.25).toFixed(1), banda: band, r,
-      cobertura: built.coverage,
+      cobertura: built.coverage, fuente_gamma,
       maxPain: mp.maxPain,
       gex: haveGEX ? {
         total_MM: +(gex.totalGEX / 1e6).toFixed(2),
@@ -121,8 +127,8 @@ async function getOptionsMetrics(sym, opts = {}, _fetch = nodeFetch) {
         callWall: gex.callWall, putWall: gex.putWall, gammaFlip: gex.gammaFlip,
       } : null,
       strikes, tabla,
-      veredicto: (haveGEX && haveMP) ? '✅ GEX (BS real) + Max Pain calculados con dato real'
-        : haveMP ? '🟡 Max Pain OK, pero sin IV/gamma (revisá precios de opción)'
+      veredicto: (haveGEX && haveMP) ? `✅ GEX (gamma ${fuente_gamma}) + Max Pain con dato real`
+        : haveMP ? '🟡 Max Pain OK, pero sin IV/gamma (revisá feed opra / banda / ventana)'
         : '❌ sin datos suficientes (revisá live/banda/ventana)',
       ms: Date.now() - t0,
     };
