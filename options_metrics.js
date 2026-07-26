@@ -1,18 +1,20 @@
 // ════════════════════════════════════════════════════════════════════
-//  options_metrics.js — GEX + Max Pain REALES (Opción B, sin add-on pago)
+//  options_metrics.js — GEX + Max Pain REALES (Algo Trader Plus · OPRA)
 // ────────────────────────────────────────────────────────────────────
 //  Pieza de matemática PURA (sin I/O, sin fetch) → testeable en banco.
-//  El server le pasa contratos {strike, type:'call'|'put', oi, price} con
-//  datos REALES de Alpaca (open interest del endpoint de contratos +
-//  precio de la opción del dailyBar/close_price) y el subyacente S real (SIP).
+//  El server le pasa el snapshot OPRA de cada contrato (greeks + IV nativas,
+//  latestTrade/latestQuote) + el OI del endpoint de contratos + el subyacente
+//  S real (SIP).
 //
-//  NO hay dato sintético: la gamma se DERIVA de precios reales de mercado
-//  vía Black-Scholes (se invierte el precio de la opción → IV → gamma), que
-//  es exactamente como una mesa institucional calcula el dealer gamma.
+//  s68 — GRIEGAS NATIVAS: la gamma y la IV se leen DIRECTO del snapshot de
+//  Alpaca (OPRA), precomputadas. El camino Black-Scholes (invertir el precio
+//  de la opción → IV → gamma por bisección) queda como FALLBACK para cuando
+//  el feed no trae griegas (contrato ilíquido / snapshot vacío). La cobertura
+//  reporta el split nativo vs BS.
 //
 //  HONESTIDAD del modelo (lo que es real vs lo que es supuesto):
-//   · gamma  → REAL (BS sobre IV implícita de precios reales)
-//   · OI     → REAL (Alpaca contracts, T+1, igual que todo proveedor de GEX)
+//   · gamma/IV → REAL (griegas OPRA nativas; BS solo como respaldo medido)
+//   · OI       → REAL (Alpaca contracts, T+1, igual que todo proveedor de GEX)
 //   · signo dealer → SUPUESTO estándar "naive": dealers LARGOS en calls,
 //     CORTOS en puts. Es la convención pública (SqueezeMetrics/SpotGamma).
 //     Por eso el GEX es un MODELO honesto, no una verdad absoluta — y así
@@ -145,13 +147,22 @@ function yearsToExpiry(dateStr, nowMs) {
 // ── Arma contratos desde el payload CRUDO de Alpaca (testeable) ───────
 // rawContracts: array del endpoint /v2/options/contracts (strike_price, type,
 //   open_interest, close_price, expiration_date, symbol — todos string).
-// snapshots: mapa symbol→{dailyBar:{c}} del endpoint de snapshots (precio opción).
-// Devuelve los contratos listos para Max Pain (oi) y para GEX (gamma) + cobertura.
+// snapshots: mapa symbol→snapshot de /v1beta1/options/snapshots (feed=opra).
+//   Cada snapshot trae greeks{delta,gamma,theta,vega,rho} e impliedVolatility
+//   NATIVOS (Algo Trader Plus · OPRA), + latestTrade/latestQuote. OJO: el snapshot
+//   de OPCIONES NO trae dailyBar (eso es del snapshot de ACCIONES) → el precio de
+//   referencia sale del mid del quote / last trade / close_price.
+//
+// CAMINO NATIVO (s68): si el snapshot trae gamma+IV, se usan DIRECTO — exactas, sin
+//   reconstruir. FALLBACK Black-Scholes: si faltan (feed sin dato / contrato ilíquido),
+//   se invierte el precio de opción por bisección, como antes. La cobertura reporta el
+//   split nativo vs BS para medir cuánto entra por cada camino.
+// Devuelve los contratos para Max Pain (oi) y para GEX (gamma) + cobertura.
 function buildContracts({ rawContracts, snapshots, spot, expiration, r, nowMs }) {
   const T = yearsToExpiry(expiration, nowMs);
   const snap = snapshots || {};
   const oiContracts = [], gammaContracts = [];
-  let con_oi = 0, con_precio = 0, con_iv = 0, total = 0;
+  let con_oi = 0, con_precio = 0, con_iv = 0, con_native = 0, con_bs = 0, total = 0;
   for (const c of rawContracts) {
     if (c.expiration_date !== expiration) continue;
     total++;
@@ -160,20 +171,44 @@ function buildContracts({ rawContracts, snapshots, spot, expiration, r, nowMs })
     const oi = Number(c.open_interest);
     if (!type || !(strike > 0)) continue;
     if (oi > 0) { oiContracts.push({ strike, type, oi }); con_oi++; }
-    let price = null;                                 // dailyBar.c, fallback close_price
-    const s = snap[c.symbol];
-    if (s && s.dailyBar && Number(s.dailyBar.c) > 0) price = Number(s.dailyBar.c);
-    else if (Number(c.close_price) > 0) price = Number(c.close_price);
+    const s = snap[c.symbol] || null;
+
+    // 1) NATIVO — griegas + IV de Alpaca (OPRA), sin reconstruir nada
+    let gamma = null, iv = null, delta = null, theta = null, vega = null, src = null;
+    const g = s && s.greeks;
+    if (g && Number(g.gamma) > 0 && Number(s.impliedVolatility) > 0) {
+      gamma = Number(g.gamma); iv = Number(s.impliedVolatility);
+      delta = Number(g.delta); theta = Number(g.theta); vega = Number(g.vega);
+      src = 'opra';
+    }
+
+    // precio de referencia: mid del quote → last trade → dailyBar (por si acaso) → close_price
+    let price = null;
+    if (s) {
+      const q = s.latestQuote;
+      if (q && Number(q.bp) > 0 && Number(q.ap) > 0) price = (Number(q.bp) + Number(q.ap)) / 2;
+      else if (s.latestTrade && Number(s.latestTrade.p) > 0) price = Number(s.latestTrade.p);
+      else if (s.dailyBar && Number(s.dailyBar.c) > 0) price = Number(s.dailyBar.c);
+    }
+    if (!(price > 0) && Number(c.close_price) > 0) price = Number(c.close_price);
     if (price > 0) con_precio++;
-    if (oi > 0 && price > 0) {
-      const iv = impliedVol(type, price, spot, strike, T, r);
-      if (iv !== null) {
-        const gamma = bsGamma(spot, strike, T, r, iv);
-        if (gamma > 0) { gammaContracts.push({ strike, type, oi, gamma, iv }); con_iv++; }
+
+    // 2) FALLBACK Black-Scholes — solo si el nativo NO vino (bisección sobre el precio)
+    if (gamma === null && oi > 0 && price > 0) {
+      const ivBS = impliedVol(type, price, spot, strike, T, r);
+      if (ivBS !== null) {
+        const gBS = bsGamma(spot, strike, T, r, ivBS);
+        if (gBS > 0) { gamma = gBS; iv = ivBS; src = 'bs'; }
       }
     }
+
+    if (oi > 0 && gamma > 0) {
+      gammaContracts.push({ strike, type, oi, gamma, iv, delta, theta, vega, src, price });
+      con_iv++;
+      if (src === 'opra') con_native++; else if (src === 'bs') con_bs++;
+    }
   }
-  return { T, oiContracts, gammaContracts, coverage: { total, con_oi, con_precio, con_iv } };
+  return { T, oiContracts, gammaContracts, coverage: { total, con_oi, con_precio, con_iv, con_native, con_bs } };
 }
 
 // ── Elige la expiración objetivo desde el payload crudo de contratos ──
