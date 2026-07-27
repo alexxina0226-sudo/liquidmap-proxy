@@ -1,6 +1,6 @@
 // ════════════════════════════════════════════════════════════════════
 //  options_live.js — capa REUSABLE: trae el dato real de Alpaca y calcula
-//  GEX (Black-Scholes) + Max Pain con options_metrics.js.
+//  GEX (griegas OPRA nativas) + Max Pain con options_metrics.js.
 // ────────────────────────────────────────────────────────────────────
 //  La usan el SERVER (ruta /alpaca-options-metrics) y el BOT (monitor),
 //  así los dos muestran lo MISMO (nunca divergen).
@@ -9,7 +9,8 @@
 //    ó 'nearest' (la más próxima, 0DTE en SPY).
 //  · caché en memoria (TTL 10 min): el GEX es de resolución diaria, no hace
 //    falta recalcular a cada tick → ahorra llamadas a Alpaca.
-//  · NADA sintético: gamma = BS sobre IV de precios reales; OI real.
+//  · NADA sintético: gamma e IV NATIVAS de OPRA (Algo Trader Plus); el camino
+//    Black-Scholes queda solo como fallback medido. OI real.
 // ════════════════════════════════════════════════════════════════════
 'use strict';
 let nodeFetch;
