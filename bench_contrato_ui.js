@@ -122,12 +122,53 @@ function hacerAlpaca(opts = {}) {
     /async function contratoDiag\(/.test(html) && /window\.contratoDiag\s*=\s*contratoDiag/.test(html));
 
   // B3: comando cableado en addSymbol, con las dos formas y el parseo de args
-  ok('B3 comando /CONTRATO y alias /CONT cableados',
-    /s==='\/CONTRATO'\|\|s\.startsWith\('\/CONTRATO '\)\|\|s==='\/CONT'\|\|s\.startsWith\('\/CONT '\)/.test(html));
+  ok('B3 comando /CONT* matchea la familia (cont/contr/contrato)', /s\.startsWith\('\/CONT'\)/.test(html));
   ok('B3 llama a contratoDiag(sideOv, horOv)', /contratoDiag\(sideOv,\s*horOv\)/.test(html));
   for (const [tok, val] of [['CALL', "sideOv='call'"], ['PUT', "sideOv='put'"], ['SCALP', "horOv='scalp'"], ['SWING', "horOv='swing'"], ['POSITION', "horOv='position'"]]) {
     ok('B3 token ' + tok + ' → ' + val, html.includes("t==='" + tok + "'") && html.includes(val), 'no mapea');
   }
+
+  // B3f: RUTEO FUNCIONAL — extrae addSymbol del HTML real y la ejecuta con stubs.
+  // Prueba la regresión del bug s72: /contrato (9 chars) NO debe morir en el guard
+  // de longitud (>6), y /CONTR / /CONT deben rutear al selector, no agregarse como ticker.
+  function routeVia(value){
+    const m = html.match(/function addSymbol\(\)\{[\s\S]*?selectSym\(s,btn\); \}/);
+    if(!m) return { err: 'addSymbol no encontrada' };
+    const calls = {};
+    const rec = name => (...a) => { (calls[name] = calls[name] || []).push(a); };
+    const inp = { value: value };
+    const env = {
+      document: { getElementById: () => inp, querySelector: () => null,
+                  createElement: () => ({ style:{}, appendChild(){}, setAttribute(){}, addEventListener(){} }) },
+      pocDiag: rec('pocDiag'), adxDiag: rec('adxDiag'), contratoDiag: rec('contratoDiag'),
+      createSymBtn: rec('createSymBtn'), saveSymbols: rec('saveSymbols'), selectSym: rec('selectSym'),
+    };
+    const fn = new Function(...Object.keys(env), m[0] + '\n return addSymbol;');
+    fn(...Object.values(env))();
+    return { calls, inpAfter: inp.value };
+  }
+  const rCompleto = routeVia('/CONTRATO');
+  ok('B3f /CONTRATO (9 chars) → dispara el selector, NO se vuelve ticker',
+    rCompleto.calls && rCompleto.calls.contratoDiag && !rCompleto.calls.createSymBtn, JSON.stringify(rCompleto.calls || rCompleto.err));
+  const rCortado = routeVia('/CONTR');
+  ok('B3f /CONTR (lo que tipeó Gonzalo) → dispara el selector, NO se vuelve ticker',
+    rCortado.calls && rCortado.calls.contratoDiag && !rCortado.calls.createSymBtn, JSON.stringify(rCortado.calls || rCortado.err));
+  const rAlias = routeVia('/CONT');
+  ok('B3f /CONT → dispara el selector', rAlias.calls && rAlias.calls.contratoDiag, JSON.stringify(rAlias.calls || rAlias.err));
+  const rPut = routeVia('/CONTRATO PUT');
+  ok('B3f /CONTRATO PUT → contratoDiag("put", null)',
+    rPut.calls && rPut.calls.contratoDiag && rPut.calls.contratoDiag[0][0] === 'put' && rPut.calls.contratoDiag[0][1] === null, JSON.stringify(rPut.calls));
+  const rCallScalp = routeVia('/CONTRATO CALL SCALP');
+  ok('B3f /CONTRATO CALL SCALP → contratoDiag("call","scalp")',
+    rCallScalp.calls && rCallScalp.calls.contratoDiag && rCallScalp.calls.contratoDiag[0][0] === 'call' && rCallScalp.calls.contratoDiag[0][1] === 'scalp', JSON.stringify(rCallScalp.calls));
+  const rPoc = routeVia('/POC');
+  ok('B3f /POC sigue ruteando a pocDiag', rPoc.calls && rPoc.calls.pocDiag && !rPoc.calls.createSymBtn, JSON.stringify(rPoc.calls));
+  const rTicker = routeVia('AAPL');
+  ok('B3f AAPL (ticker real) → se agrega como ticker, sin disparar diags',
+    rTicker.calls && rTicker.calls.createSymBtn && !rTicker.calls.contratoDiag && !rTicker.calls.pocDiag, JSON.stringify(rTicker.calls));
+  const rLargo = routeVia('TOOLONG');
+  ok('B3f ticker >6 chars sigue bloqueado por el guard (no se agrega)',
+    rLargo.calls && !rLargo.calls.createSymBtn && !rLargo.calls.contratoDiag, JSON.stringify(rLargo.calls));
 
   // B4: mapeo TF→horizonte EVALUADO DE VERDAD (extrae la función del HTML)
   const mTf = html.match(/function tfToHorizon\(t\)\{[^}]*\}/);
