@@ -161,7 +161,7 @@ function yearsToExpiry(dateStr, nowMs) {
 function buildContracts({ rawContracts, snapshots, spot, expiration, r, nowMs }) {
   const T = yearsToExpiry(expiration, nowMs);
   const snap = snapshots || {};
-  const oiContracts = [], gammaContracts = [];
+  const oiContracts = [], gammaContracts = [], chain = [];
   let con_oi = 0, con_precio = 0, con_iv = 0, con_native = 0, con_bs = 0, total = 0;
   for (const c of rawContracts) {
     if (c.expiration_date !== expiration) continue;
@@ -183,10 +183,10 @@ function buildContracts({ rawContracts, snapshots, spot, expiration, r, nowMs })
     }
 
     // precio de referencia: mid del quote → last trade → dailyBar (por si acaso) → close_price
-    let price = null;
+    let price = null, bid = null, ask = null;
     if (s) {
       const q = s.latestQuote;
-      if (q && Number(q.bp) > 0 && Number(q.ap) > 0) price = (Number(q.bp) + Number(q.ap)) / 2;
+      if (q && Number(q.bp) > 0 && Number(q.ap) > 0) { bid = Number(q.bp); ask = Number(q.ap); price = (bid + ask) / 2; }
       else if (s.latestTrade && Number(s.latestTrade.p) > 0) price = Number(s.latestTrade.p);
       else if (s.dailyBar && Number(s.dailyBar.c) > 0) price = Number(s.dailyBar.c);
     }
@@ -207,8 +207,111 @@ function buildContracts({ rawContracts, snapshots, spot, expiration, r, nowMs })
       con_iv++;
       if (src === 'opra') con_native++; else if (src === 'bs') con_bs++;
     }
+    // cadena completa para el SELECTOR (Fase 3): incluye bid/ask y símbolo.
+    // Ojo: entra aunque no tenga OI ni gamma — el selector aplica sus propios filtros.
+    chain.push({ symbol: c.symbol, strike, type, oi: oi > 0 ? oi : 0, price, bid, ask,
+                 iv, delta, gamma, theta, vega, src, expiration });
   }
-  return { T, oiContracts, gammaContracts, coverage: { total, con_oi, con_precio, con_iv, con_native, con_bs } };
+  return { T, oiContracts, gammaContracts, chain, coverage: { total, con_oi, con_precio, con_iv, con_native, con_bs } };
+}
+
+// ════════════════════════════════════════════════════════════════════
+//  FASE 3 — SELECTOR DE CONTRATO (s69)
+// ────────────────────────────────────────────────────────────────────
+//  Elige QUÉ contrato comprar para una direccion dada, usando las griegas
+//  NATIVAS de OPRA. No decide SI operar (eso es del score/Governor) — solo
+//  traduce "quiero ir largo/corto en X" al contrato concreto.
+//
+//  DISEÑO (s69): dos etapas, como una mesa.
+//   1) FILTROS DUROS de liquidez → lo que no se puede operar bien, se descarta
+//      y queda registrado POR QUÉ (nada se cae en silencio).
+//   2) PUNTAJE de los sobrevivientes → gana el más cercano al delta objetivo,
+//      penalizado por spread. El delta manda; el spread desempata.
+//
+//  PRESETS por horizonte (Gonzalo opera scalp Y swing de ~3 días):
+//   · scalp    → delta 0.50 · DTE 1-7   · el precio debe SEGUIR al subyacente
+//   · swing    → delta 0.40 · DTE 7-21  · aguanta 3 días sin que theta lo coma
+//   · position → delta 0.30 · DTE 25-60 · el clásico direccional barato
+//  Todo es parametrizable: opts pisa cualquier valor del preset.
+//
+//  REGLA DE ORO del vencimiento: comprar MÁS tiempo del que pensás sostener
+//  (~2-3× el horizonte). Por eso el swing de 3 días NO va a 3 DTE: la theta
+//  se acelera en la última semana y te cobra el error de timing.
+//
+//  HONESTIDAD: no gatea por volumen del día — el snapshot de opciones de
+//  Alpaca no lo entrega de forma confiable, así que gatear por él sería
+//  inventar un filtro. Se usa OI (real, T+1) + spread vivo, que sí tenemos.
+// ════════════════════════════════════════════════════════════════════
+const SELECTOR_PRESETS = {
+  scalp:    { targetDelta: 0.50, dteMin: 1,  dteMax: 7,  maxSpreadPct: 6,  minOI: 250 },
+  swing:    { targetDelta: 0.40, dteMin: 7,  dteMax: 21, maxSpreadPct: 8,  minOI: 100 },
+  position: { targetDelta: 0.30, dteMin: 25, dteMax: 60, maxSpreadPct: 10, minOI: 50  },
+};
+
+// pickContract(chain, opts)
+//   chain: salida de buildContracts().chain (una o varias expiraciones)
+//   opts: { side:'call'|'put', horizon:'scalp'|'swing'|'position', spot, nowMs,
+//           targetDelta?, dteMin?, dteMax?, maxSpreadPct?, minOI?, top? }
+// Devuelve { ok, elegido, alternativas, criterio, descartes, motivo }
+function pickContract(chain, opts = {}) {
+  const side = opts.side === 'put' ? 'put' : 'call';
+  const horizon = SELECTOR_PRESETS[opts.horizon] ? opts.horizon : 'swing';
+  const P = SELECTOR_PRESETS[horizon];
+  const targetDelta  = opts.targetDelta  != null ? Number(opts.targetDelta)  : P.targetDelta;
+  const dteMin       = opts.dteMin       != null ? Number(opts.dteMin)       : P.dteMin;
+  const dteMax       = opts.dteMax       != null ? Number(opts.dteMax)       : P.dteMax;
+  const maxSpreadPct = opts.maxSpreadPct != null ? Number(opts.maxSpreadPct) : P.maxSpreadPct;
+  const minOI        = opts.minOI        != null ? Number(opts.minOI)        : P.minOI;
+  const nowMs = opts.nowMs || Date.now();
+  const spot  = Number(opts.spot) || null;
+  const criterio = { side, horizon, targetDelta, dteMin, dteMax, maxSpreadPct, minOI };
+
+  const descartes = { tipo: 0, sin_griegas: 0, sin_quote: 0, dte: 0, oi: 0, spread: 0 };
+  const vivos = [];
+  for (const c of (chain || [])) {
+    if (c.type !== side) { descartes.tipo++; continue; }
+    // el delta es la brújula: sin él no hay selección posible
+    if (!(Number.isFinite(c.delta)) || c.delta === null) { descartes.sin_griegas++; continue; }
+    if (!(c.bid > 0) || !(c.ask > 0)) { descartes.sin_quote++; continue; }   // sin quote vivo no se opera
+    const dte = (etCloseMs(c.expiration) - nowMs) / 864e5;
+    if (!(dte >= dteMin && dte <= dteMax)) { descartes.dte++; continue; }
+    if (!(c.oi >= minOI)) { descartes.oi++; continue; }
+    const mid = (c.bid + c.ask) / 2;
+    const spreadPct = mid > 0 ? ((c.ask - c.bid) / mid) * 100 : Infinity;
+    if (!(spreadPct <= maxSpreadPct)) { descartes.spread++; continue; }
+
+    const absDelta = Math.abs(c.delta);
+    // theta diaria como % de la prima: cuánto te cuesta esperar un día
+    const thetaPctDia = (Number.isFinite(c.theta) && mid > 0) ? Math.abs(c.theta) / mid * 100 : null;
+    // movimiento del subyacente necesario para cubrir la prima (aprox. vía delta)
+    const breakevenMov = (spot > 0 && absDelta > 0) ? (mid / absDelta) : null;
+    // PUNTAJE: el delta manda (peso 1.0 sobre distancia normalizada),
+    // el spread desempata (peso 0.25). Menor = mejor.
+    const puntaje = (Math.abs(absDelta - targetDelta) / targetDelta) + 0.25 * (spreadPct / maxSpreadPct);
+    vivos.push({
+      symbol: c.symbol, strike: c.strike, type: c.type, expiration: c.expiration,
+      dte: +dte.toFixed(1), delta: c.delta, gamma: c.gamma, theta: c.theta, vega: c.vega,
+      iv: c.iv, oi: c.oi, bid: c.bid, ask: c.ask, mid: +mid.toFixed(2),
+      spreadPct: +spreadPct.toFixed(2),
+      thetaPctDia: thetaPctDia != null ? +thetaPctDia.toFixed(2) : null,
+      breakevenMov: breakevenMov != null ? +breakevenMov.toFixed(2) : null,
+      src: c.src, puntaje: +puntaje.toFixed(4),
+    });
+  }
+
+  if (!vivos.length) {
+    return { ok: false, elegido: null, alternativas: [], criterio, descartes,
+             motivo: 'ningún contrato pasó los filtros (revisá horizonte / liquidez / expiraciones cargadas)' };
+  }
+  vivos.sort((a, b) => a.puntaje - b.puntaje);
+  const top = Math.max(1, Number(opts.top) || 3);
+  const elegido = vivos[0];
+  return {
+    ok: true, elegido, alternativas: vivos.slice(1, top), criterio, descartes,
+    motivo: `${side} ${elegido.strike} exp ${elegido.expiration} · Δ${elegido.delta.toFixed(2)}`
+          + ` (objetivo ${targetDelta}) · ${elegido.dte}d · spread ${elegido.spreadPct}%`
+          + ` · theta ${elegido.thetaPctDia != null ? elegido.thetaPctDia + '%/día' : 'n/d'}`,
+  };
 }
 
 // ── Elige la expiración objetivo desde el payload crudo de contratos ──
@@ -237,4 +340,5 @@ module.exports = {
   normPdf, normCdf, bsD1, bsPrice, bsGamma, impliedVol,
   computeMaxPain, aggregateGEX,
   etCloseMs, yearsToExpiry, buildContracts, pickExpiration,
+  pickContract, SELECTOR_PRESETS,
 };
