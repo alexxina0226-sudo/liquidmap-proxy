@@ -239,13 +239,22 @@ async function getContractPick(sym, opts = {}, _fetch = nodeFetch) {
     });
 
     const nat = chain.filter(c => c.src === 'opra').length;
+    // fuente_gamma HONESTA (s72): se mide sobre los contratos que PASARON los
+    // filtros (el elegido + las alternativas), NO sobre la cadena cruda. La
+    // cadena incluye ilíquidos sin OI que nunca traen griegas y ensuciaban la
+    // etiqueta a "mixta" aunque el pick real fuera 100% OPRA nativa.
+    const _cand = [sel.elegido, ...(sel.alternativas || [])].filter(Boolean);
+    const _candNat = _cand.filter(c => c.src === 'opra').length;
+    const fuente_gamma = _cand.length
+      ? (_candNat === _cand.length ? 'OPRA nativa' : (_candNat > 0 ? 'mixta' : 'BS fallback'))
+      : (nat > 0 ? 'OPRA nativa' : 'sin griegas');
     const data = {
       ok: sel.ok, sym, spot, side, horizon,
       criterio: sel.criterio,
       elegido: sel.elegido, alternativas: sel.alternativas,
       motivo: sel.motivo, descartes: sel.descartes,
       cobertura: { contratos: chain.length, con_griegas_opra: nat, expiraciones: exps },
-      fuente_gamma: nat === chain.length && nat > 0 ? 'OPRA nativa' : (nat > 0 ? 'mixta' : 'sin griegas'),
+      fuente_gamma,
       nota: 'selector de contrato — NO decide si operar, sólo qué contrato para la dirección pedida',
       ms: Date.now() - t0,
     };
