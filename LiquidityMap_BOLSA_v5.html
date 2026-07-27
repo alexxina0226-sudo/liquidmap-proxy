@@ -118,6 +118,14 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .tp-item.tp1{color:var(--green);border-color:rgba(0,255,157,.4);}
 .tp-item.tp2{color:var(--yellow);border-color:rgba(255,224,0,.4);}
 .tp-item.tp3{color:var(--orange);border-color:rgba(255,140,0,.4);}
+/* s73: contrato sugerido pegado a la señal (readout compacto, clic abre el popup completo) */
+.sig-contrato{font-size:10px;font-family:'Space Mono',monospace;padding:3px 8px;border-radius:3px;border:1px solid var(--border);white-space:nowrap;cursor:pointer;}
+.sig-contrato b{font-weight:700;}
+.sig-contrato .ctr-dim{opacity:.6;font-weight:400;}
+.sig-contrato.is-call{color:var(--green);border-color:rgba(0,255,157,.45);background:rgba(0,255,157,.06);}
+.sig-contrato.is-put{color:var(--red);border-color:rgba(255,45,107,.45);background:rgba(255,45,107,.06);}
+.sig-contrato.loading{color:var(--muted);opacity:.75;cursor:default;}
+.sig-contrato.empty{color:var(--muted);cursor:default;}
 .kill-badge{font-family:'Space Mono',monospace;font-size:9px;padding:2px 7px;border-radius:2px;font-weight:700;}
 .kill-badge.active{background:rgba(255,224,0,.15);color:var(--yellow);border:1px solid var(--yellow);animation:blink 1s infinite;}
 .kill-badge.off{color:var(--muted);border:1px solid var(--border);}
@@ -288,6 +296,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <div class="tp-item tp2" id="sig-t2">TP2 —</div>
     <div class="tp-item tp3" id="sig-t3">TP3 —</div>
   </div>
+  <div id="sig-contrato" class="sig-contrato" style="display:none" title="Contrato sugerido para la dirección de la señal (clic = detalle completo)"></div>
   <div id="kill-zone-badge" class="kill-badge off">— KILL ZONE</div>
   <div id="struct-badge" class="struct-badge" style="display:none">—</div>
   <div id="whale-badge" class="whale-badge" style="display:none">🐋 —</div>
@@ -1796,6 +1805,50 @@ async function contratoDiag(sideOverride, horizonOverride){
 window.contratoDiag = contratoDiag;
 document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==='K'||e.key==='k')){ e.preventDefault(); contratoDiag(); } });
 
+// ════════════════════════════════════════════════════════════════════
+//  s73 — CONTRATO PEGADO A LA SEÑAL. Readout compacto en la barra de señal
+//  que aparece SOLO con señal direccional (BUY/SELL, mismo criterio que
+//  /contrato — NO gatea por score, ese gate es solo del emisor a Telegram).
+//  Amable con Render: throttle de 3 min por (sym|tf|lado) + el server ya
+//  cachea 3 min. NEUTRAL → oculto, cero llamadas. Clic → popup completo.
+// ════════════════════════════════════════════════════════════════════
+const _ctr = { key:null, ts:0, err:false };
+function updateContractReadout(sig){
+  const el = document.getElementById('sig-contrato');
+  if(!el) return;
+  // sin señal direccional → ocultar y no pedir nada
+  if(!sig || (sig.type!=='BUY' && sig.type!=='SELL')){ el.style.display='none'; el.onclick=null; _ctr.key=null; return; }
+  const side = sig.type==='BUY' ? 'call' : 'put';
+  const horizon = tfToHorizon(tf);
+  const key = sym+'|'+tf+'|'+side;
+  const now = Date.now();
+  el.style.display='';
+  el.onclick = ()=>contratoDiag();   // clic = el mismo detalle completo del comando
+  // throttle: mismo contrato pedido hace <3 min y sin error → no re-pedir
+  if(key===_ctr.key && !_ctr.err && (now-_ctr.ts)<180000) return;
+  _ctr.key=key; _ctr.ts=now; _ctr.err=false;
+  el.className='sig-contrato loading';
+  el.innerHTML='🎯 buscando contrato… <span class="ctr-dim">'+side.toUpperCase()+' · '+horizon+'</span>';
+  fetch(`${CONTRATO_URL}?sym=${encodeURIComponent(sym)}&side=${side}&horizon=${horizon}`)
+    .then(r=>r.json())
+    .then(j=>{
+      if(_ctr.key!==key) return;   // el usuario cambió de símbolo/TF mientras cargaba
+      if(!j || j.ok!==true){
+        el.className='sig-contrato empty';
+        el.innerHTML='🎯 sin contrato líquido <span class="ctr-dim">('+side+' · '+horizon+')</span>';
+        el.title='El selector no encontró un contrato que pase los filtros de liquidez para '+side+'/'+horizon+'. Con mercado cerrado el spread se ensancha; probá /contrato para ver los descartes.';
+        return;
+      }
+      const e = j.elegido, f = (v,d=2)=> (v==null||!isFinite(v)) ? '—' : (+v).toFixed(d);
+      el.className='sig-contrato '+(side==='call'?'is-call':'is-put');
+      el.innerHTML = '🎯 <b>'+e.type.toUpperCase()+' '+e.strike+'</b> · '+f(e.dte,1)+'DTE · Δ'+f(e.delta)
+        + ' · θ'+f(e.thetaPctDia)+'%/d · BE '+f(e.breakevenMov);
+      el.title = e.symbol+'\nexp '+e.expiration+' · '+f(e.dte,1)+' DTE\nprima (mid) '+f(e.mid)+' (bid '+f(e.bid)+'/ask '+f(e.ask)+')\nspread '+f(e.spreadPct)+'% · OI '+e.oi+' · IV '+f(e.iv!=null?e.iv*100:null)+'%\ngriegas: '+e.src+' · fuente '+ (j.fuente_gamma||'—') +'\n(clic = detalle completo)';
+    })
+    .catch(()=>{ if(_ctr.key===key){ _ctr.err=true; el.className='sig-contrato empty'; el.innerHTML='🎯 —'; el.title='Error consultando el selector. Reintenta en el próximo refresh.'; } });
+}
+window.updateContractReadout = updateContractReadout;
+
 const ARC_DEFAULTS = { accelRate:0.12, startMult:2.0, smooth:3, vwapAccelBoost:1.5,
   filterPeriod:'Session', initBars:100, maxLevels:10, anchorTz:'America/New_York' }; // BOLSA = ET
 const _arcToMs = t => (t < 1e12 ? t * 1000 : t);
@@ -2046,6 +2099,7 @@ function updateDerived(){
   scoreValEl.textContent = sig.score+'/10';
   scoreFillEl.style.width = (sig.score*10)+'%';
   renderConfMeter(sig);
+  updateContractReadout(sig);   // s73: contrato sugerido pegado a la señal
   const sc = sig.score;
   scoreFillEl.style.background = sc>=8?'var(--green)':sc>=5?'var(--yellow)':sc>=3?'var(--orange)':'var(--red)';
   // Kill Zone badge
