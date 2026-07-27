@@ -2787,14 +2787,16 @@ function createSymBtn(s,isDefault=false){
   if(!isDefault){ const rm=document.createElement('button'); rm.textContent='×'; rm.title='Eliminar'; rm.style.cssText='background:rgba(255,45,107,.15);border:1px solid rgba(255,45,107,.3);color:#ff2d6b;border-radius:2px;cursor:pointer;font-size:10px;padding:1px 4px;line-height:1;'; rm.onclick=function(e){ e.stopPropagation(); wrap.remove(); saveSymbols(); if(sym===s) selectSym('SPY',document.querySelector('[data-sym="SPY"]')); }; wrap.appendChild(rm); }
   bar.appendChild(wrap);
 }
-function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.value.trim().toUpperCase(); if(!s||s.length<1||s.length>6) return;
-  // COMANDOS DE DIAGNÓSTICO por la casilla TICKER — no dependen de F12 ni de
-  // atajos de teclado (hay teclados/software que los secuestran).
+function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.value.trim().toUpperCase();
+  if(!s) return;
+  // COMANDOS por la casilla TICKER — ANTES del guard de longitud. El guard corta en 6
+  // caracteres, así que /poc y /adx (4) colaban pero /contrato (9) no llegaba nunca.
+  // No dependen de F12 ni de atajos de teclado (hay teclados/software que los secuestran).
   if(s==='/POC'){ inp.value=''; pocDiag(); return; }
   if(s==='/ADX'){ inp.value=''; adxDiag(); return; }
-  if(s==='/CONTRATO'||s.startsWith('/CONTRATO ')||s==='/CONT'||s.startsWith('/CONT ')){
+  if(s.startsWith('/CONT')){   // /cont · /contr · /contrato  (+ args: put · call scalp · …)
     inp.value='';
-    const toks = s.split(/\s+/).slice(1);   // args tras el comando (lado / horizonte, cualquier orden)
+    const toks = s.split(/\s+/); toks.shift();   // saca la palabra del comando, dejo los args
     let sideOv=null, horOv=null;
     for(const t of toks){
       if(t==='CALL'||t==='C') sideOv='call';
@@ -2806,6 +2808,7 @@ function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.v
     contratoDiag(sideOv, horOv);
     return;
   }
+  if(s.length<1||s.length>6) return;   // guard de alta de ticker — DESPUÉS de los comandos
   inp.value=''; if(document.querySelector(`[data-sym="${s}"]`)) return; createSymBtn(s,false); saveSymbols(); const btn=document.querySelector(`[data-sym="${s}"]`); if(btn) selectSym(s,btn); }
 function loadSavedSymbols(){ try{ const saved=localStorage.getItem('lm_syms'); if(saved){ JSON.parse(saved).forEach(s=>{ if(!DEFAULT_SYMS.includes(s)) createSymBtn(s,false); }); } }catch(e){} }
 
