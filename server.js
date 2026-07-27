@@ -497,11 +497,11 @@ app.get('/alpaca-options-diag', async (req, res) => {
   res.json(out);
 });
 
-// ── GEX (Black-Scholes) + MAX PAIN REALES (Opción B, sin add-on pago) ──
+// ── GEX + MAX PAIN REALES (griegas OPRA nativas · Algo Trader Plus) ──
 // Junta dato REAL de Alpaca con el motor (vía la capa options_live.js que también usa el bot).
 //   · subyacente S → SIP (trades/latest)
-//   · open interest + precio opción → contracts (paper) + snapshots (dailyBar)
-//   · gamma → BS sobre IV implícita de precios reales (NO sintético)
+//   · open interest → contracts (T+1, igual que todo proveedor de GEX)
+//   · gamma e IV → NATIVAS del snapshot OPRA (Black-Scholes queda solo como fallback medido)
 // Probá:  /alpaca-options-metrics?sym=SPY            (mensual por defecto)
 //         ?mode=nearest (0DTE)  ·  ?exp=2026-07-17 (exp puntual)  ·  ?band=0.12
 //         ?live=1 (si las keys son live)  ·  ?fresh=1 (saltea la caché de 10min)
@@ -509,6 +509,26 @@ app.get('/alpaca-options-metrics', async (req, res) => {
   const out = await optLive.getOptionsMetrics(req.query.sym, {
     mode: req.query.mode, exp: req.query.exp, band: req.query.band,
     days: req.query.days, r: req.query.r, live: req.query.live,
+    ttl: req.query.fresh ? 0 : undefined,
+  });
+  res.json(out);
+});
+
+// ── SELECTOR DE CONTRATO (Fase 3 · griegas OPRA nativas) ──────────
+// Traduce "quiero ir largo/corto en X" al CONTRATO concreto. NO decide si operar
+// (eso es del score/Governor) — sólo qué comprar para la dirección pedida.
+// Filtros duros de liquidez (quote vivo · OI · spread) + puntaje: el delta manda,
+// el spread desempata. Devuelve el elegido, alternativas y POR QUÉ se descartó el resto.
+// Probá:  /alpaca-contrato?sym=SPY&side=call                (horizonte swing por defecto)
+//         ?horizon=scalp | swing | position
+//         ?targetDelta=0.35 ?dteMin=5 ?dteMax=14 ?maxSpreadPct=6 ?minOI=200  (ajustes finos)
+//         ?band=0.15 ?top=5 ?live=1 ?fresh=1 (saltea la caché de 3min)
+app.get('/alpaca-contrato', async (req, res) => {
+  const out = await optLive.getContractPick(req.query.sym, {
+    side: req.query.side, horizon: req.query.horizon,
+    targetDelta: req.query.targetDelta, dteMin: req.query.dteMin, dteMax: req.query.dteMax,
+    maxSpreadPct: req.query.maxSpreadPct, minOI: req.query.minOI,
+    band: req.query.band, r: req.query.r, top: req.query.top, live: req.query.live,
     ttl: req.query.fresh ? 0 : undefined,
   });
   res.json(out);
