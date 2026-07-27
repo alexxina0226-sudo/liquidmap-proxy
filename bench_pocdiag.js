@@ -14,7 +14,7 @@ console.log('\n── NO ROMPE EL ALTA DE TICKERS ──');
   const body=h.match(/function addSymbol\(\)\{[\s\S]*?\n\}/)[0];
   ok('los comandos salen ANTES de crear el boton', body.indexOf("'/POC'") < body.indexOf('createSymBtn'));
   ok('un ticker normal sigue su camino', /createSymBtn\(s,false\); saveSymbols\(\);/.test(body));
-  ok('limpia la casilla en los tres caminos', (body.match(/inp\.value=''/g)||[]).length===3);
+  ok('limpia la casilla en los cuatro caminos (/poc, /adx, /contrato, alta normal)', (body.match(/inp\.value=''/g)||[]).length===4);
 }
 
 console.log('\n── MIDE LO QUE HAY QUE MEDIR ──');
