@@ -430,7 +430,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 
     <!-- GEX / MAX PAIN (opciones reales, Black-Scholes; misma ruta que el bot) -->
     <div class="ps">
-      <h3>🎯 GEX / Max Pain <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· OPCIONES (BS real)</span></h3>
+      <h3>🎯 GEX / Max Pain <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· OPCIONES (OPRA nativa)</span></h3>
       <div class="mr"><span class="lb">Régimen GEX</span><span class="vl" id="opt-reg">—</span></div>
       <div class="mr"><span class="lb">Call Wall</span><span class="vl g" id="opt-cw">—</span></div>
       <div class="mr"><span class="lb">Put Wall</span><span class="vl r" id="opt-pw">—</span></div>
@@ -568,6 +568,7 @@ let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: única fuente
 const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/alpaca'; // ALPACA SIP real-time (reemplaza /polygon delay 15min). El proxy /alpaca devuelve las barras con forma Polygon → el motor del mapa no cambia.
 let sym = 'SPY', tf = '60';
 const OPT_METRICS_URL = POLY_PROXY.replace('/alpaca', '/alpaca-options-metrics'); // GEX/Max Pain reales (misma capa que el bot → coherencia total)
+const CONTRATO_URL = POLY_PROXY.replace('/alpaca', '/alpaca-contrato'); // Selector de contrato (Fase 3) — bajo demanda vía /contrato en la casilla TICKER
 let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si la ruta falla → degradación segura
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
@@ -1711,6 +1712,90 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==
 
 document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==='D'||e.key==='d')){ e.preventDefault(); adxDiag(); } });
 
+// ════════════════════════════════════════════════════════════════════
+//  /contrato (s72) — SELECTOR DE CONTRATO en el mapa. Bajo demanda.
+//  Le pregunta al server (/alpaca-contrato) QUÉ opción comprar para la
+//  dirección de la señal actual. NO decide si operar — sólo el contrato.
+//  · lado call/put ← titular BUY/SELL de la señal (pisable a mano)
+//  · horizonte     ← timeframe (5m/15m→scalp, 1H/4H→swing, D→position)
+//  Bajo demanda a propósito: cero llamadas de fondo (cuida el consumo).
+//  USO en la casilla TICKER:
+//     /contrato              lado por señal, horizonte por TF
+//     /contrato put          fuerza el lado
+//     /contrato call scalp   fuerza lado + horizonte
+//  (o Ctrl+Shift+K con lado/horizonte automáticos)
+// ════════════════════════════════════════════════════════════════════
+function tfToHorizon(t){ return (t==='5'||t==='15') ? 'scalp' : (t==='D') ? 'position' : 'swing'; }
+async function contratoDiag(sideOverride, horizonOverride){
+  try{
+    // 1) LADO: override → si no, deducido del titular BUY/SELL de la señal actual
+    let side = sideOverride || null;
+    if(!side){
+      const p = (typeof quote!=='undefined' && quote && quote.c) ? quote.c
+              : (typeof price!=='undefined' ? price : 0);
+      if(!p){ alert('/contrato: no hay precio/velas cargadas todavía'); return; }
+      const sig = computeNeuralScore(p);
+      side = sig.type==='BUY' ? 'call' : sig.type==='SELL' ? 'put' : null;
+      if(!side){ alert('/contrato: la señal está NEUTRAL — especificá el lado a mano:\n\n   /contrato call      o      /contrato put'); return; }
+    }
+    // 2) HORIZONTE: override → si no, del timeframe activo
+    const horizon = horizonOverride || tfToHorizon(tf);
+    const tfL = ({'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'})[tf]||tf;
+    const head = `── /contrato · ${sym} ${tfL} · ${side.toUpperCase()} · ${horizon} ──`;
+    const url = `${CONTRATO_URL}?sym=${encodeURIComponent(sym)}&side=${side}&horizon=${horizon}`;
+    console.log('/contrato → consultando', sym, side, horizon, '…', url);
+    const r = await fetch(url);
+    const j = await r.json();
+    const fmt = (v,d=2)=> (v==null || !isFinite(v)) ? '—' : (+v).toFixed(d);
+
+    // 3a) SIN resultado: mostrar los descartes (dicen POR QUÉ se cayó cada contrato)
+    if(!j || j.ok!==true){
+      const d = j && j.descartes ? j.descartes : null;
+      const lineas = [ head,
+        `❌ ${ (j && (j.motivo||j.error)) || 'sin resultado' }`,
+        d ? `` : null,
+        d ? `descartes:  tipo ${d.tipo} · sin_griegas ${d.sin_griegas} · sin_quote ${d.sin_quote} · dte ${d.dte} · oi ${d.oi} · spread ${d.spread}` : null,
+        ``,
+        `con mercado cerrado el spread se ensancha y puede descartar todo —`,
+        `reintentá en horario o subí el spread máx. con  ?maxSpreadPct=`
+      ].filter(x=>x!==null);
+      console.log(lineas.join('\n')); console.log(j);
+      alert(lineas.join('\n'));
+      return;
+    }
+
+    // 3b) CON resultado: el contrato elegido + alternativas + cobertura
+    const e = j.elegido;
+    const objDelta = j.criterio ? j.criterio.targetDelta : null;
+    const alt = (j.alternativas||[]).map(a=>`   ${a.type.toUpperCase()} ${a.strike} exp ${a.expiration} · Δ${fmt(a.delta)} · ${fmt(a.dte,1)}d · spread ${fmt(a.spreadPct)}%`);
+    const cob = j.cobertura || {};
+    const lineas = [ head,
+      `CONTRATO:  ${e.symbol}`,
+      `${e.type.toUpperCase()} ${e.strike}   ·   exp ${e.expiration}   ·   ${fmt(e.dte,1)} DTE`,
+      ``,
+      `Δ delta:        ${fmt(e.delta)}   (objetivo ${objDelta!=null?objDelta:'—'})`,
+      `spread:         ${fmt(e.spreadPct)}%`,
+      `OI:             ${e.oi}`,
+      `prima (mid):    ${fmt(e.mid)}   (bid ${fmt(e.bid)} / ask ${fmt(e.ask)})`,
+      `θ theta/día:    ${fmt(e.thetaPctDia)}%   (lo que pierde la prima si ${sym} no se mueve)`,
+      `breakeven mov:  ${fmt(e.breakevenMov)}   (cuánto debe moverse ${sym} para cubrir la prima)`,
+      `IV:             ${fmt(e.iv!=null? e.iv*100 : null)}%   ·   griegas: ${e.src}`,
+      ``,
+      alt.length ? `alternativas:` : `alternativas:   —`,
+      ...alt,
+      ``,
+      `cobertura:  ${cob.contratos!=null?cob.contratos:'—'} contratos · ${cob.con_griegas_opra||0} con OPRA · ${(cob.expiraciones||[]).length} exp`,
+      `fuente griegas:  ${j.fuente_gamma||'—'}${j.cached?'  · (caché)':''}`,
+      ``,
+      `⚠ el selector dice QUÉ contrato para la dirección pedida — NO decide si operar.`
+    ];
+    console.log(lineas.join('\n')); console.log(j);
+    alert(lineas.join('\n') + '\n\n(objeto completo en la consola)');
+  }catch(err){ alert('/contrato error: '+err.message); console.error(err); }
+}
+window.contratoDiag = contratoDiag;
+document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==='K'||e.key==='k')){ e.preventDefault(); contratoDiag(); } });
+
 const ARC_DEFAULTS = { accelRate:0.12, startMult:2.0, smooth:3, vwapAccelBoost:1.5,
   filterPeriod:'Session', initBars:100, maxLevels:10, anchorTz:'America/New_York' }; // BOLSA = ET
 const _arcToMs = t => (t < 1e12 ? t * 1000 : t);
@@ -2408,7 +2493,7 @@ function drawAll(){
     if(s>0.75){ ctx.fillStyle=col+'0.65)'; ctx.font='8px Space Mono,monospace'; ctx.fillText('$'+z.price.toFixed(2),4,y-3); }
   });
 
-  // GEX walls / Max Pain / Gamma Flip — OPCIONES REALES (BS, /alpaca-options-metrics).
+  // GEX walls / Max Pain / Gamma Flip — OPCIONES REALES (griegas OPRA nativas, /alpaca-options-metrics).
   // Solo se dibujan si hay dato real y si el nivel cae dentro del rango visible. Nunca inventa.
   if(optMetrics && optMetrics.ok && optMetrics.gex){
     const walls = [
@@ -2707,6 +2792,20 @@ function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.v
   // atajos de teclado (hay teclados/software que los secuestran).
   if(s==='/POC'){ inp.value=''; pocDiag(); return; }
   if(s==='/ADX'){ inp.value=''; adxDiag(); return; }
+  if(s==='/CONTRATO'||s.startsWith('/CONTRATO ')||s==='/CONT'||s.startsWith('/CONT ')){
+    inp.value='';
+    const toks = s.split(/\s+/).slice(1);   // args tras el comando (lado / horizonte, cualquier orden)
+    let sideOv=null, horOv=null;
+    for(const t of toks){
+      if(t==='CALL'||t==='C') sideOv='call';
+      else if(t==='PUT'||t==='P') sideOv='put';
+      else if(t==='SCALP') horOv='scalp';
+      else if(t==='SWING') horOv='swing';
+      else if(t==='POSITION'||t==='POS') horOv='position';
+    }
+    contratoDiag(sideOv, horOv);
+    return;
+  }
   inp.value=''; if(document.querySelector(`[data-sym="${s}"]`)) return; createSymBtn(s,false); saveSymbols(); const btn=document.querySelector(`[data-sym="${s}"]`); if(btn) selectSym(s,btn); }
 function loadSavedSymbols(){ try{ const saved=localStorage.getItem('lm_syms'); if(saved){ JSON.parse(saved).forEach(s=>{ if(!DEFAULT_SYMS.includes(s)) createSymBtn(s,false); }); } }catch(e){} }
 
