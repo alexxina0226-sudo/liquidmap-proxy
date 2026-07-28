@@ -21,6 +21,9 @@ const tick = () => new Promise(r => setTimeout(r, 5));   // vacía microtareas d
 // tfToHorizon REAL extraída del HTML (misma que usa el mapa)
 const tfToHorizon = new Function('return (' + html.match(/function tfToHorizon\(t\)\{[^}]*\}/)[0].replace('function tfToHorizon', 'function') + ')')();
 
+// fmtExpShort REAL extraída del HTML (s75 · formatea la fecha de expiración en la píldora)
+const fmtExpShort = new Function('return (' + html.match(/function fmtExpShort\(iso\)\{[\s\S]*?\n\}/)[0].replace('function fmtExpShort', 'function') + ')')();
+
 // cuerpo REAL de updateContractReadout (sin la línea `const _ctr` → _ctr se inyecta compartido)
 const FN_SRC = html.match(/function updateContractReadout\(sig\)\{[\s\S]*?\n\}(?=\nwindow\.updateContractReadout)/)[0];
 
@@ -32,7 +35,7 @@ function correr({ el, sym, tf, sig, resp, fetchLog, contratoDiagLog, _ctr }) {
     document: { getElementById: () => el },
     sym, tf,
     CONTRATO_URL: 'https://x/alpaca-contrato',
-    tfToHorizon,
+    tfToHorizon, fmtExpShort,
     contratoDiag: () => { contratoDiagLog.push(1); },
     fetch: (url) => { fetchLog.push(url); return Promise.resolve({ json: async () => resp }); },
     _ctr,
@@ -80,6 +83,8 @@ const NEUTRAL = { type: 'NEUTRAL', score: 0 };
     ok('A2 clase is-put', el.className.includes('is-put'), el.className);
     ok('A2 muestra strike PUT 305', el.innerHTML.includes('PUT 305'), el.innerHTML);
     ok('A2 muestra DTE, Δ, θ y BE', el.innerHTML.includes('7.2DTE') && el.innerHTML.includes('Δ-0.41') && el.innerHTML.includes('θ8.74%/d') && el.innerHTML.includes('BE 16.05'), el.innerHTML);
+    ok('A2 (s75) fecha de expiración pegada al strike (PUT 305 · 3Ago)', el.innerHTML.includes('PUT 305 · 3Ago'), el.innerHTML);
+    ok('A2 (s75) tooltip etiqueta OI como (previo)', el.title.includes('(previo)'), el.title);
     ok('A2 tooltip trae fuente OPRA nativa', el.title.includes('OPRA nativa'), el.title);
     ok('A2 clic cableado a contratoDiag', typeof el.onclick === 'function', typeof el.onclick);
     el.onclick(); ok('A2 el clic llama contratoDiag', cdLog.length === 1, String(cdLog.length));
