@@ -1795,6 +1795,15 @@ async function contratoDiag(sideOverride, horizonOverride){
       ``,
       `cobertura:  ${cob.contratos!=null?cob.contratos:'—'} contratos · ${cob.con_griegas_opra||0} con OPRA · ${(cob.expiraciones||[]).length} exp`,
       `fuente griegas:  ${j.fuente_gamma||'—'}${j.cached?'  · (caché)':''}`,
+      ...(j.salida ? (function(){
+        const s=j.salida, dir=s.dir;
+        const filas=(s.niveles||[]).map(n=>`   si ${sym} ${dir} a ${fmt(n.target)}  →  prima ~${fmt(n.projPremium)}  (${n.pctGain>=0?'+':''}${n.pctGain}%)`);
+        return ['',
+          `── SALIDA (theta-aware · hold ~${s.daysHeld}d) ──`,
+          `θ si NO se mueve en ${s.daysHeld}d: perdés ~${fmt(s.thetaDragAbs)} de prima (${s.thetaDragPct}%)`,
+          ...filas,
+          `   (estimación delta+gamma−theta; ignora IV. Es guía, no promesa.)`];
+      })() : []),
       ``,
       `⚠ el selector dice QUÉ contrato para la dirección pedida — NO decide si operar.`
     ];
