@@ -437,7 +437,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div style="margin-top:4px;font-size:8px;color:var(--muted)">Equal highs/lows = stops acumulados (imán de precio)</div>
     </div>
 
-    <!-- GEX / MAX PAIN (opciones reales, Black-Scholes; misma ruta que el bot) -->
+    <!-- GEX / MAX PAIN (opciones reales, griegas OPRA nativas; misma ruta que el bot) -->
     <div class="ps">
       <h3>🎯 GEX / Max Pain <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· OPCIONES (OPRA nativa)</span></h3>
       <div class="mr"><span class="lb">Régimen GEX</span><span class="vl" id="opt-reg">—</span></div>
@@ -1412,7 +1412,7 @@ async function initApp(){
 }
 
 // ── DATA ──────────────────────────────────────────────────────
-// ── OPCIONES REALES (GEX / Max Pain, BS) · misma ruta que el bot ──────────────
+// ── OPCIONES REALES (GEX / Max Pain, OPRA nativa) · misma ruta que el bot ─────
 async function loadOptionsMetrics(){
   try {
     const r = await fetch(`${OPT_METRICS_URL}?sym=${encodeURIComponent(sym)}`);
@@ -1784,7 +1784,7 @@ async function contratoDiag(sideOverride, horizonOverride){
       ``,
       `Δ delta:        ${fmt(e.delta)}   (objetivo ${objDelta!=null?objDelta:'—'})`,
       `spread:         ${fmt(e.spreadPct)}%`,
-      `OI:             ${e.oi}`,
+      `OI:             ${e.oi}   (cierre previo · OCC T+1)`,
       `prima (mid):    ${fmt(e.mid)}   (bid ${fmt(e.bid)} / ask ${fmt(e.ask)})`,
       `θ theta/día:    ${fmt(e.thetaPctDia)}%   (lo que pierde la prima si ${sym} no se mueve)`,
       `breakeven mov:  ${fmt(e.breakevenMov)}   (cuánto debe moverse ${sym} para cubrir la prima)`,
@@ -1821,6 +1821,16 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==
 //  Amable con Render: throttle de 3 min por (sym|tf|lado) + el server ya
 //  cachea 3 min. NEUTRAL → oculto, cero llamadas. Clic → popup completo.
 // ════════════════════════════════════════════════════════════════════
+// s75 (pulido): fecha de expiración compacta para la píldora (ej. 15Ago) —
+// parse manual del ISO 'YYYY-MM-DD' para NO depender de Date() ni de timezone.
+function fmtExpShort(iso){
+  if(!iso || typeof iso!=='string') return '';
+  const p = iso.split('-'); if(p.length<3) return iso;
+  const mi = (+p[1]) - 1; if(!(mi>=0 && mi<=11)) return iso;
+  const d = +p[2]; if(!(d>=1 && d<=31)) return iso;
+  const M = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'];
+  return d + M[mi];
+}
 const _ctr = { key:null, ts:0, err:false };
 function updateContractReadout(sig){
   const el = document.getElementById('sig-contrato');
@@ -1850,9 +1860,9 @@ function updateContractReadout(sig){
       }
       const e = j.elegido, f = (v,d=2)=> (v==null||!isFinite(v)) ? '—' : (+v).toFixed(d);
       el.className='sig-contrato '+(side==='call'?'is-call':'is-put');
-      el.innerHTML = '🎯 <b>'+e.type.toUpperCase()+' '+e.strike+'</b> · '+f(e.dte,1)+'DTE · Δ'+f(e.delta)
+      el.innerHTML = '🎯 <b>'+e.type.toUpperCase()+' '+e.strike+' · '+fmtExpShort(e.expiration)+'</b> · '+f(e.dte,1)+'DTE · Δ'+f(e.delta)
         + ' · θ'+f(e.thetaPctDia)+'%/d · BE '+f(e.breakevenMov);
-      el.title = e.symbol+'\nexp '+e.expiration+' · '+f(e.dte,1)+' DTE\nprima (mid) '+f(e.mid)+' (bid '+f(e.bid)+'/ask '+f(e.ask)+')\nspread '+f(e.spreadPct)+'% · OI '+e.oi+' · IV '+f(e.iv!=null?e.iv*100:null)+'%\ngriegas: '+e.src+' · fuente '+ (j.fuente_gamma||'—') +'\n(clic = detalle completo)';
+      el.title = e.symbol+'\nexp '+e.expiration+' · '+f(e.dte,1)+' DTE\nprima (mid) '+f(e.mid)+' (bid '+f(e.bid)+'/ask '+f(e.ask)+')\nspread '+f(e.spreadPct)+'% · OI '+e.oi+' (previo) · IV '+f(e.iv!=null?e.iv*100:null)+'%\ngriegas: '+e.src+' · fuente '+ (j.fuente_gamma||'—') +'\n(clic = detalle completo)';
     })
     .catch(()=>{ if(_ctr.key===key){ _ctr.err=true; el.className='sig-contrato empty'; el.innerHTML='🎯 —'; el.title='Error consultando el selector. Reintenta en el próximo refresh.'; } });
 }
@@ -2053,7 +2063,7 @@ function updateOptionsPanel(){
   if(S('opt-pw'))   S('opt-pw').textContent   = money(o.gex.putWall);
   if(S('opt-flip')) S('opt-flip').textContent = o.gex.gammaFlip ? money(o.gex.gammaFlip) : '—';
   if(S('opt-mp'))   S('opt-mp').textContent   = money(o.maxPain);
-  if(S('opt-note')) S('opt-note').textContent = `exp ${o.expiration} · GEX ${o.gex.total_MM} MM · ${o.dias_a_exp}d`;
+  if(S('opt-note')) S('opt-note').textContent = `exp ${o.expiration} · GEX ${o.gex.total_MM} MM · ${o.dias_a_exp}d · OI cierre previo (OCC T+1)`;
 }
 
 function updateQuotePanel(){
@@ -2963,6 +2973,8 @@ document.getElementById('lock-input').addEventListener('keydown',e=>{ if(e.key==
         <div class="lm-item"><div class="lm-icon">+</div><div class="lm-text"><strong>GEX Positivo</strong><span>Market makers long gamma. Precio lento, pineado. Vender premium (iron condor, covered call).</span></div></div>
         <div class="lm-item"><div class="lm-icon">−</div><div class="lm-text"><strong>GEX Negativo</strong><span>Market makers short gamma. Volatilidad amplificada. Comprar opciones direccionales.</span></div></div>
         <div class="lm-item"><div class="lm-icon">🎯</div><div class="lm-text"><strong>Max Pain</strong><span>El precio gravita aquí antes del vencimiento (viernes). Si estás cerca = alta probabilidad de pin. Línea naranja en el gráfico.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🎯</div><div class="lm-text"><strong>Contrato sugerido (píldora)</strong><span>Pegado a la señal BUY/SELL: tipo, strike, fecha de expiración, DTE, delta, theta/día y breakeven móvil. Dice QUÉ contrato para la dirección de la señal — no si operar. Clic = detalle completo (alternativas, cobertura y salida). El OI mostrado es de cierre previo (OCC T+1).</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🚪</div><div class="lm-text"><strong>Salida theta-aware</strong><span>En el detalle del contrato: cuánto valdría la prima si el activo se mueve a cada nivel, con el theta ya descontado por los días de hold. Estimación (delta+gamma−theta, ignora IV/vega y asume theta constante) — guía, no promesa.</span></div></div>
       </div>
       <div class="lm-section">
         <h3>💧 Zonas de Liquidez</h3>
