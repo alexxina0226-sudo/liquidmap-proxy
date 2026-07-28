@@ -1735,6 +1735,22 @@ document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==
 //  (o Ctrl+Shift+K con lado/horizonte automáticos)
 // ════════════════════════════════════════════════════════════════════
 function tfToHorizon(t){ return (t==='5'||t==='15') ? 'scalp' : (t==='D') ? 'position' : 'swing'; }
+// ── v2 (joya · s76): proyección de PRIMA en un precio objetivo cualquiera (TP/SL reales del mapa).
+//    MISMA fórmula que projectExit del server: prima = mid + delta·dS + 0.5·gamma·dS² − thetaDrag,
+//    con dS = target − spot (delta firmado → el put gana al bajar). Clamp a 0 (una opción no vale <0).
+//    Base-independiente: dS a un TP del mapa es el múltiplo de ATR, no depende del ancla del precio.
+//    Paridad con projectExit verificada por banco diferencial (bench_joya_v2). Guía, no promesa.
+function projPremAt(mid, delta, gamma, thetaDragAbs, spot, target){
+  if(!(mid>0) || !isFinite(delta) || !(spot>0) || target==null || !isFinite(target)) return null;
+  const dS = target - spot;
+  let proj = mid + delta*dS + (isFinite(gamma) ? 0.5*gamma*dS*dS : 0) - (isFinite(thetaDragAbs) ? thetaDragAbs : 0);
+  if(proj < 0) proj = 0;
+  proj = +proj.toFixed(2);
+  const pctGain = mid>0 ? +(((proj-mid)/mid)*100).toFixed(0) : null;
+  return { target:+(+target).toFixed(2), projPremium:proj, pctGain };
+}
+window.projPremAt = projPremAt;
+
 async function contratoDiag(sideOverride, horizonOverride){
   try{
     // 1) LADO: override → si no, deducido del titular BUY/SELL de la señal actual
@@ -1797,12 +1813,29 @@ async function contratoDiag(sideOverride, horizonOverride){
       `fuente griegas:  ${j.fuente_gamma||'—'}${j.cached?'  · (caché)':''}`,
       ...(j.salida ? (function(){
         const s=j.salida, dir=s.dir;
-        const filas=(s.niveles||[]).map(n=>`   si ${sym} ${dir} a ${fmt(n.target)}  →  prima ~${fmt(n.projPremium)}  (${n.pctGain>=0?'+':''}${n.pctGain}%)`);
-        return ['',
+        // v2 (joya): proyectar la prima en los TP/SL REALES del mapa (misma getTargets del panel/chart/Telegram).
+        const sigForTps = side==='call' ? 'BUY' : 'SELL';
+        let tgt=null; try{ tgt = getTargets(j.spot, sigForTps, tf, sym); }catch(_){}
+        const filaLvl = (etq, target, label) => {
+          const pr = projPremAt(e.mid, e.delta, e.gamma, s.thetaDragAbs, j.spot, target);
+          if(!pr) return null;
+          return `   ${etq} ${fmt(target)}${label?' ('+label+')':''}  →  prima ~${fmt(pr.projPremium)}  (${pr.pctGain>=0?'+':''}${pr.pctGain}%)`;
+        };
+        const head = ['',
           `── SALIDA (theta-aware · hold ~${s.daysHeld}d) ──`,
-          `θ si NO se mueve en ${s.daysHeld}d: perdés ~${fmt(s.thetaDragAbs)} de prima (${s.thetaDragPct}%)`,
-          ...filas,
-          `   (estimación delta+gamma−theta; ignora IV. Es guía, no promesa.)`];
+          `θ si NO se mueve en ${s.daysHeld}d: perdés ~${fmt(s.thetaDragAbs)} de prima (${s.thetaDragPct}%)`];
+        let cuerpo;
+        if(tgt && tgt.tps && tgt.tps.length){
+          cuerpo=[]; const etqs=['TP1','TP2','TP3'];
+          tgt.tps.forEach((tp,i)=>{ const f=filaLvl(etqs[i], tp.price, tp.label); if(f) cuerpo.push(f); });
+          if(tgt.sl){ const f=filaLvl('SL ', tgt.sl.price, tgt.sl.label); if(f) cuerpo.push(f); }
+          cuerpo.push(`   (prima sobre TUS TP/SL del mapa · delta+gamma−theta, ignora IV — guía, no promesa)`);
+        } else {
+          // fallback: grilla de breakeven del server (cuando no hay TP a mano, ej. NEUTRAL)
+          cuerpo=(s.niveles||[]).map(n=>`   si ${sym} ${dir} a ${fmt(n.target)}  →  prima ~${fmt(n.projPremium)}  (${n.pctGain>=0?'+':''}${n.pctGain}%)`);
+          cuerpo.push(`   (grilla breakeven · delta+gamma−theta, ignora IV — guía, no promesa)`);
+        }
+        return [...head, ...cuerpo];
       })() : []),
       ``,
       `⚠ el selector dice QUÉ contrato para la dirección pedida — NO decide si operar.`
