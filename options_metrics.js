@@ -336,9 +336,50 @@ function pickExpiration(rawContracts, mode, today) {
   return exps[0];                                    // 'nearest' por defecto
 }
 
+// ════════════════════════════════════════════════════════════════════
+//  projectExit (s74) — SALIDA theta-aware. Traduce movimientos del
+//  subyacente a PRIMA de la opcion elegida, restando el theta del hold.
+//  Estimacion delta+gamma (Taylor 2do orden) − theta*dias. HONESTA: es
+//  una GUIA, NO una promesa — ignora cambios de IV (vega) y asume theta
+//  constante (en realidad acelera cerca del vencimiento). Sirve para ver
+//  cuanto vale la opcion si el precio llega al objetivo y cuanto cuesta
+//  esperar (el theta es lo que mas pesa en opciones, sobre todo scalp).
+//  hold tipico por horizonte: scalp 1d · swing 3d · position 10d.
+//  La grilla de objetivos se ancla al breakevenMov (0.5x/1x/1.5x): a 1x
+//  la prima ~duplica (ganancia de primer orden = prima), util como regla.
+// ════════════════════════════════════════════════════════════════════
+const EXIT_HOLD = { scalp: 1, swing: 3, position: 10 };
+function projectExit(elegido, spot, horizon) {
+  if (!elegido || !(spot > 0)) return null;
+  const mid = elegido.mid, delta = elegido.delta, gamma = elegido.gamma, theta = elegido.theta;
+  if (!(mid > 0) || !Number.isFinite(delta)) return null;
+  const daysHeld = EXIT_HOLD[horizon] != null ? EXIT_HOLD[horizon] : 3;
+  const isPut = elegido.type === 'put';
+  const dir = isPut ? -1 : 1;                                   // direccion favorable del subyacente
+  const thetaPerDay = Number.isFinite(theta) ? Math.abs(theta) : 0;
+  const thetaDragAbs = +(thetaPerDay * daysHeld).toFixed(2);    // lo que pierde la prima si NO se mueve
+  const thetaDragPct = mid > 0 ? +(thetaDragAbs / mid * 100).toFixed(1) : null;
+  const step = (elegido.breakevenMov && elegido.breakevenMov > 0) ? elegido.breakevenMov : spot * 0.01;
+  const niveles = [0.5, 1.0, 1.5].map(k => {
+    const move = k * step;
+    const dS = dir * move;                                       // cambio del subyacente (favorable)
+    const target = +(spot + dS).toFixed(2);
+    // prima proyectada = mid + delta*dS + 0.5*gamma*dS^2 − theta*dias (delta firmado: put gana al bajar)
+    let proj = mid + (delta * dS) + (Number.isFinite(gamma) ? 0.5 * gamma * dS * dS : 0) - thetaDragAbs;
+    if (proj < 0) proj = 0;                                      // una opcion no vale menos que 0
+    proj = +proj.toFixed(2);
+    const pctGain = mid > 0 ? +(((proj - mid) / mid) * 100).toFixed(0) : null;
+    return { k, move: +move.toFixed(2), target, projPremium: proj, pctGain };
+  });
+  return {
+    daysHeld, thetaDragAbs, thetaDragPct, dir: isPut ? 'baja' : 'sube', niveles,
+    metodo: 'delta+gamma−theta (estimacion; ignora IV/vega y asume theta constante — es guia, no promesa)',
+  };
+}
+
 module.exports = {
   normPdf, normCdf, bsD1, bsPrice, bsGamma, impliedVol,
   computeMaxPain, aggregateGEX,
   etCloseMs, yearsToExpiry, buildContracts, pickExpiration,
-  pickContract, SELECTOR_PRESETS,
+  pickContract, SELECTOR_PRESETS, projectExit,
 };
