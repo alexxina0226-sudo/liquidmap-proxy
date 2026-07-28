@@ -248,13 +248,14 @@ async function getContractPick(sym, opts = {}, _fetch = nodeFetch) {
     const fuente_gamma = _cand.length
       ? (_candNat === _cand.length ? 'OPRA nativa' : (_candNat > 0 ? 'mixta' : 'BS fallback'))
       : (nat > 0 ? 'OPRA nativa' : 'sin griegas');
+    const salida = sel.ok ? M.projectExit(sel.elegido, spot, horizon) : null;   // s74: salida theta-aware
     const data = {
       ok: sel.ok, sym, spot, side, horizon,
       criterio: sel.criterio,
       elegido: sel.elegido, alternativas: sel.alternativas,
       motivo: sel.motivo, descartes: sel.descartes,
       cobertura: { contratos: chain.length, con_griegas_opra: nat, expiraciones: exps },
-      fuente_gamma,
+      fuente_gamma, salida,
       nota: 'selector de contrato — NO decide si operar, sólo qué contrato para la dirección pedida',
       ms: Date.now() - t0,
     };
