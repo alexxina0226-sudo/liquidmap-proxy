@@ -48,12 +48,17 @@ console.log('\n── ARRANQUE REAL + CONSULTA HTTP ──');
 
   await new Promise(r => setTimeout(r, 600));
   const base = `http://127.0.0.1:${process.env.PORT}`;
+  const _authTok = require('./auth.js').makeToken(process.env.LM_PASSWORD || 'trader2026'); // s78: sesión válida para el gate
   const get = async (p) => {
-    const r = await fetch(base + p);
+    const r = await fetch(base + p, { headers: { Cookie: 'lm_sess=' + _authTok } });
     return { status: r.status, body: await r.json() };
   };
 
   try {
+    // s78: el gate bloquea a quien no tiene sesión (a nivel HTTP real)
+    const rNoAuth = await fetch(base + '/alpaca-contrato?sym=SPY');
+    ok('s78 · /alpaca-contrato SIN sesión → 401 (gate activo)', rNoAuth.status === 401, 'status=' + rNoAuth.status);
+
     const r1 = await get('/alpaca-contrato?sym=SPY&side=call&horizon=swing');
     ok('GET /alpaca-contrato responde 200', r1.status === 200, 'status=' + r1.status);
     ok('devuelve JSON del selector', r1.body && r1.body.ok === true && !!r1.body.elegido);
