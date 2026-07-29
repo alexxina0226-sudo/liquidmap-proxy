@@ -349,6 +349,18 @@ function pickExpiration(rawContracts, mode, today) {
 //  la prima ~duplica (ganancia de primer orden = prima), util como regla.
 // ════════════════════════════════════════════════════════════════════
 const EXIT_HOLD = { scalp: 1, swing: 3, position: 10 };
+// projPremiumAt (s77) — prima proyectada en UN precio objetivo (delta+gamma−theta).
+// Espejo EXACTO del projPremAt del mapa (browser) y motor UNICO de projectExit y de la auditoria.
+// prima = mid + delta·dS + 0.5·gamma·dS² − thetaDragAbs, dS = target−spot; delta firmado; clamp a 0.
+function projPremiumAt(mid, delta, gamma, thetaDragAbs, spot, target) {
+  if (!(mid > 0) || !Number.isFinite(delta) || !(spot > 0) || target == null || !Number.isFinite(target)) return null;
+  const dS = target - spot;
+  let proj = mid + delta * dS + (Number.isFinite(gamma) ? 0.5 * gamma * dS * dS : 0) - (Number.isFinite(thetaDragAbs) ? thetaDragAbs : 0);
+  if (proj < 0) proj = 0;
+  proj = +proj.toFixed(2);
+  const pctGain = mid > 0 ? +(((proj - mid) / mid) * 100).toFixed(0) : null;
+  return { target: +(+target).toFixed(2), projPremium: proj, pctGain };
+}
 function projectExit(elegido, spot, horizon) {
   if (!elegido || !(spot > 0)) return null;
   const mid = elegido.mid, delta = elegido.delta, gamma = elegido.gamma, theta = elegido.theta;
@@ -363,13 +375,9 @@ function projectExit(elegido, spot, horizon) {
   const niveles = [0.5, 1.0, 1.5].map(k => {
     const move = k * step;
     const dS = dir * move;                                       // cambio del subyacente (favorable)
-    const target = +(spot + dS).toFixed(2);
-    // prima proyectada = mid + delta*dS + 0.5*gamma*dS^2 − theta*dias (delta firmado: put gana al bajar)
-    let proj = mid + (delta * dS) + (Number.isFinite(gamma) ? 0.5 * gamma * dS * dS : 0) - thetaDragAbs;
-    if (proj < 0) proj = 0;                                      // una opcion no vale menos que 0
-    proj = +proj.toFixed(2);
-    const pctGain = mid > 0 ? +(((proj - mid) / mid) * 100).toFixed(0) : null;
-    return { k, move: +move.toFixed(2), target, projPremium: proj, pctGain };
+    // MISMA formula via projPremiumAt (fuente unica; la auditoria y el mapa usan la misma)
+    const pr = projPremiumAt(mid, delta, gamma, thetaDragAbs, spot, spot + dS);
+    return { k, move: +move.toFixed(2), target: pr.target, projPremium: pr.projPremium, pctGain: pr.pctGain };
   });
   return {
     daysHeld, thetaDragAbs, thetaDragPct, dir: isPut ? 'baja' : 'sube', niveles,
@@ -381,5 +389,5 @@ module.exports = {
   normPdf, normCdf, bsD1, bsPrice, bsGamma, impliedVol,
   computeMaxPain, aggregateGEX,
   etCloseMs, yearsToExpiry, buildContracts, pickExpiration,
-  pickContract, SELECTOR_PRESETS, projectExit,
+  pickContract, SELECTOR_PRESETS, projectExit, projPremiumAt,
 };
