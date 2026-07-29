@@ -223,8 +223,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 <body>
 <div id="lbar"></div>
 
-<!-- LOCK SCREEN -->
-<div id="lock-screen">
+<!-- LOCK SCREEN — s78: oculto; el acceso se valida en el SERVIDOR (sesión por cookie) -->
+<div id="lock-screen" class="hidden">
   <div class="lock-box">
     <div class="lock-logo">LIQUIDMAP</div>
     <div class="lock-sub">PRO v7 · Neuronal Institucional</div>
@@ -552,25 +552,12 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 //  (GEX/MaxPain = FASE 4, requieren cadena de opciones real)
 // ═══════════════════════════════════════════════════════════════
 
-// ── PASSWORD ─────────────────────────────────────────────────
-const DEFAULT_PASS = 'trader2026';
-function getPass(){ return localStorage.getItem('lm_pass') || DEFAULT_PASS; }
-function checkPass(){
-  const val = document.getElementById('lock-input').value;
-  if(val === getPass()){
-    document.getElementById('lock-screen').classList.add('hidden');
-    document.getElementById('lock-err').textContent = '';
-    initAfterLock();
-  } else {
-    document.getElementById('lock-err').textContent = '❌ Contraseña incorrecta';
-    document.getElementById('lock-input').value = '';
-  }
-}
-function showChangePass(){
-  const np = prompt('Nueva contraseña (mín 6 caracteres):');
-  if(np && np.length >= 6){ localStorage.setItem('lm_pass', np); alert('✅ Contraseña cambiada: ' + np); }
-  else if(np !== null){ alert('❌ Mínimo 6 caracteres.'); }
-}
+// ── ACCESO (s78) ─────────────────────────────────────────────
+// El acceso se valida en el SERVIDOR (sesión por cookie). El navegador ya
+// NO guarda ni compara contraseña — cuando el mapa carga, el server ya
+// autorizó. checkPass queda como auto-desbloqueo por compatibilidad.
+function checkPass(){ document.getElementById('lock-screen').classList.add('hidden'); initAfterLock(); }
+function showChangePass(){ if(confirm('¿Cerrar sesión?')) location.href = '/logout'; }
 
 // ── STATE ─────────────────────────────────────────────────────
 let POLY_KEY = localStorage.getItem('poly_key') || ''; // Polygon: única fuente (velas + precio)
@@ -578,6 +565,7 @@ const POLY_PROXY = 'https://liquidmap-proxy.onrender.com/alpaca'; // ALPACA SIP 
 let sym = 'SPY', tf = '60';
 const OPT_METRICS_URL = POLY_PROXY.replace('/alpaca', '/alpaca-options-metrics'); // GEX/Max Pain reales (misma capa que el bot → coherencia total)
 const CONTRATO_URL = POLY_PROXY.replace('/alpaca', '/alpaca-contrato'); // Selector de contrato (Fase 3) — bajo demanda vía /contrato en la casilla TICKER
+const AUDIT_URL = POLY_PROXY.replace('/alpaca', '/alpaca-audit');       // s77: auditoría de la salida contra la realidad (comando /audit)
 let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si la ruta falla → degradación segura
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
@@ -1845,6 +1833,74 @@ async function contratoDiag(sideOverride, horizonOverride){
   }catch(err){ alert('/contrato error: '+err.message); console.error(err); }
 }
 window.contratoDiag = contratoDiag;
+
+// ════════════════════════════════════════════════════════════════════
+//  /audit (s77) — AUDITORIA de la salida contra la REALIDAD, desde el mapa.
+//   /audit save [earningsISO] → captura la señal+contrato de AHORA (localStorage)
+//   /audit                    → audita todo lo capturado vía /alpaca-audit
+//   /audit list · /audit clear
+//  Guarda el SNAPSHOT de entrada CON griegas (las barras historicas no las traen).
+//  Forward test: capturás al entrar, auditás dias despues.
+// ════════════════════════════════════════════════════════════════════
+function auditLoad(){ try{ return JSON.parse(localStorage.getItem('lm_audit')||'[]'); }catch(e){ return []; } }
+function auditSave(arr){ try{ localStorage.setItem('lm_audit', JSON.stringify(arr)); }catch(e){} }
+const _TF_ALP = {'5':'15Min','15':'15Min','60':'1Hour','240':'1Hour','D':'1Day'};
+
+async function auditCapture(earningsISO){
+  try{
+    const p=(typeof quote!=='undefined'&&quote&&quote.c)?quote.c:(typeof price!=='undefined'?price:0);
+    if(!p){ alert('/audit save: no hay precio/velas cargadas'); return; }
+    const sig=computeNeuralScore(p);
+    const side=sig.type==='BUY'?'call':sig.type==='SELL'?'put':null;
+    if(!side){ alert('/audit save: la señal está NEUTRAL — capturá cuando haya BUY o SELL'); return; }
+    const horizon=tfToHorizon(tf);
+    const r=await fetch(`${CONTRATO_URL}?sym=${encodeURIComponent(sym)}&side=${side}&horizon=${horizon}`);
+    const j=await r.json();
+    if(!j||j.ok!==true||!j.elegido){ alert('/audit save: no se pudo elegir contrato ('+((j&&(j.motivo||j.error))||'sin resultado')+')'); return; }
+    const e=j.elegido, tg=getTargets(j.spot, sig.type, tf, sym);
+    if(!tg||!tg.tps||!tg.tps.length){ alert('/audit save: sin TP para esta señal'); return; }
+    const rec={ contract:e.symbol, sym, side, horizon, entry:new Date().toISOString(), spot0:j.spot,
+      mid:e.mid, delta:e.delta, gamma:e.gamma, theta:e.theta, be:e.breakevenMov,
+      tp1:tg.tps[0]&&tg.tps[0].price, tp2:tg.tps[1]&&tg.tps[1].price, tp3:tg.tps[2]&&tg.tps[2].price,
+      sl:tg.sl&&tg.sl.price, tf:_TF_ALP[tf]||'1Hour', earnings:earningsISO||null };
+    const arr=auditLoad(); arr.push(rec); auditSave(arr);
+    alert('✅ /audit capturado:\n'+rec.contract+'  @ '+(+rec.spot0).toFixed(2)+'\nentry '+rec.entry.slice(0,16).replace('T',' ')+'  ('+side.toUpperCase()+' · '+horizon+')'
+      +'\nTP1 '+(+rec.tp1).toFixed(2)+' · TP2 '+(rec.tp2!=null?(+rec.tp2).toFixed(2):'—')+' · TP3 '+(rec.tp3!=null?(+rec.tp3).toFixed(2):'—')+' · SL '+(rec.sl!=null?(+rec.sl).toFixed(2):'—')
+      +(rec.earnings?'\nearning: '+rec.earnings:'')
+      +'\n\n'+arr.length+' en seguimiento. Corré /audit en unos días para ver cómo salió.');
+  }catch(err){ alert('/audit save error: '+err.message); console.error(err); }
+}
+
+async function auditRun(){
+  const arr=auditLoad();
+  if(!arr.length){ alert('/audit: no hay nada en seguimiento.\n\nUsá  /audit save  cuando entres a una señal para empezar a seguirla.'); return; }
+  const L=['── AUDITORÍA · '+arr.length+' en seguimiento ──',''];
+  let gano=0, stop=0, resu=0, tp1=0, conE=0;
+  for(const rec of arr){
+    const qs=new URLSearchParams({ contract:rec.contract, sym:rec.sym, side:rec.side, horizon:rec.horizon, entry:rec.entry,
+      spot0:rec.spot0, mid:rec.mid, delta:rec.delta, gamma:rec.gamma==null?'':rec.gamma, theta:rec.theta==null?'':rec.theta,
+      be:rec.be==null?'':rec.be, tp1:rec.tp1==null?'':rec.tp1, tp2:rec.tp2==null?'':rec.tp2, tp3:rec.tp3==null?'':rec.tp3, sl:rec.sl==null?'':rec.sl });
+    if(rec.tf) qs.set('tf',rec.tf); if(rec.earnings) qs.set('earnings',rec.earnings);
+    let j; try{ const r=await fetch(`${AUDIT_URL}?${qs.toString()}`); j=await r.json(); }catch(err){ L.push(rec.contract+': error '+err.message,''); continue; }
+    if(!j||j.ok!==true){ L.push(rec.contract+': '+((j&&j.error)||'sin resultado'),''); continue; }
+    const a=j.auditoria; const oc={gano:'✅ GANÓ',stop:'🛑 STOP',sin_resolver:'⏳ abierta',ambiguo:'⚠ ambiguo'}[a.outcome]||a.outcome;
+    if(a.outcome==='gano'){gano++;resu++;} else if(a.outcome==='stop'){stop++;resu++;}
+    if(a.tps[0]&&a.tps[0].hit) tp1++;
+    if(a.earnings&&a.earnings.enVentana) conE++;
+    L.push(rec.contract+'   '+oc);
+    L.push('  entry '+rec.entry.slice(0,10)+' · spot0 '+(+rec.spot0).toFixed(2)+' · '+j.barras.subyacente+' velas · '+j.barras.opcion+' de prima');
+    a.tps.forEach((t,i)=>{ L.push('  TP'+(i+1)+' '+t.price+': '+(t.hit?('✓ real '+t.realPremium+' vs proy '+t.projPremium+' ('+(t.errPct>=0?'+':'')+t.errPct+'%)'):'— no tocado')); });
+    if(a.sl) L.push('  SL '+a.sl.price+': '+(a.sl.hit?'✗ tocado':'— ok'));
+    L.push('  R/R real en prima: máx +'+a.realRR.maxFavPct+'% / mín '+a.realRR.maxAdvPct+'%');
+    if(a.earnings&&a.earnings.enVentana) L.push('  ⚠ earning en el hold → IV crush; la proyección sobreestima la prima');
+    L.push('');
+  }
+  L.push('── RESUMEN ──');
+  L.push('resueltas '+resu+' · win rate '+(resu?Math.round(gano/resu*100):'—')+'% · TP1 tocado '+tp1+'/'+arr.length+' · con earning '+conE);
+  console.log(L.join('\n')); console.log(arr);
+  alert(L.join('\n')+'\n\n(detalle en consola)');
+}
+window.auditCapture=auditCapture; window.auditRun=auditRun;
 document.addEventListener('keydown', e=>{ if(e.ctrlKey && e.shiftKey && (e.key==='K'||e.key==='k')){ e.preventDefault(); contratoDiag(); } });
 
 // ════════════════════════════════════════════════════════════════════
@@ -2914,6 +2970,15 @@ function addSymbol(){ const inp=document.getElementById('sym-add-input'),s=inp.v
     contratoDiag(sideOv, horOv);
     return;
   }
+  if(s.startsWith('/AUDIT')){   // /audit · /audit save [earningsISO] · /audit list · /audit clear
+    inp.value='';
+    const toks=s.split(/\s+/); const arg=toks[1]||'';
+    if(arg==='SAVE'||arg==='CAP') auditCapture(toks[2]||null);
+    else if(arg==='CLEAR'){ try{ localStorage.removeItem('lm_audit'); }catch(e){} alert('/audit: seguimiento borrado.'); }
+    else if(arg==='LIST'){ const a=auditLoad(); alert('/audit · '+a.length+' en seguimiento:\n\n'+(a.map(r=>r.contract+' · '+r.side+' · entry '+r.entry.slice(0,10)).join('\n')||'(vacío)')); }
+    else auditRun();
+    return;
+  }
   if(s.length<1||s.length>6) return;   // guard de alta de ticker — DESPUÉS de los comandos
   inp.value=''; if(document.querySelector(`[data-sym="${s}"]`)) return; createSymBtn(s,false); saveSymbols(); const btn=document.querySelector(`[data-sym="${s}"]`); if(btn) selectSym(s,btn); }
 function loadSavedSymbols(){ try{ const saved=localStorage.getItem('lm_syms'); if(saved){ JSON.parse(saved).forEach(s=>{ if(!DEFAULT_SYMS.includes(s)) createSymBtn(s,false); }); } }catch(e){} }
@@ -2966,6 +3031,8 @@ function toggleLegend(){ document.getElementById('legend-modal').classList.toggl
 
 // ── LOCK KEY LISTENER ──
 document.getElementById('lock-input').addEventListener('keydown',e=>{ if(e.key==='Enter') checkPass(); });
+// s78: el server ya autorizó la sesión (si no, ni sirve este HTML) → auto-desbloqueo al cargar
+try{ checkPass(); }catch(e){ console.error('auto-init', e); }
 </script>
 
 <!-- LEGEND MODAL -->
