@@ -17,6 +17,7 @@ let nodeFetch;
 try { nodeFetch = require('node-fetch'); }            // producción (Render lo tiene)
 catch { nodeFetch = (typeof fetch !== 'undefined') ? fetch : null; }
 const M = require('./options_metrics');
+const A = require('./options_audit');            // s77: cerebro puro de auditoria
 
 const ALPACA_KEY_ID  = process.env.ALPACA_KEY_ID  || '';
 const ALPACA_SECRET  = process.env.ALPACA_SECRET_KEY || '';
@@ -266,4 +267,94 @@ async function getContractPick(sym, opts = {}, _fetch = nodeFetch) {
   }
 }
 
-module.exports = { getOptionsMetrics, getContractPick, _CACHE: CACHE };
+// ════════════════════════════════════════════════════════════════════
+//  AUDITORIA (s77) — trae de Alpaca barras del SUBYACENTE + barras de PRIMA
+//  de la opcion en la ventana [entry, end] y llama al cerebro puro
+//  (options_audit.auditSignal). Las griegas de ENTRADA no estan en las barras
+//  historicas (son OHLCV) → las recibe del snapshot de entrada que el mapa ya
+//  tiene en el /contrato. _fetch inyectable para test (default node-fetch).
+// ════════════════════════════════════════════════════════════════════
+const TF_POR_HORIZONTE = { scalp: '15Min', swing: '1Hour', position: '1Day' };
+
+async function _barsPaginadas(url0, key, _fetch) {
+  const out = [];
+  let token = null;
+  for (let i = 0; i < 10; i++) {                        // techo 10 paginas (cuida el consumo)
+    const url = token ? `${url0}&page_token=${encodeURIComponent(token)}` : url0;
+    const r = await _fetch(url, { headers: ALPACA_HEADERS });
+    const j = await r.json();
+    const arr = (j && j.bars && (Array.isArray(j.bars) ? j.bars : j.bars[key])) || [];
+    for (const b of arr) out.push({ t: b.t, o: b.o, h: b.h, l: b.l, c: b.c, v: b.v });
+    token = j && j.next_page_token;
+    if (!token) break;
+  }
+  return out;
+}
+
+// barras del SUBYACENTE (acciones) — /v2/stocks/bars
+async function getUnderlyingBars(sym, startISO, endISO, timeframe, _fetch = nodeFetch, feed = 'sip') {
+  const u = `${ALPACA_DATA}/v2/stocks/bars?symbols=${encodeURIComponent(sym)}&timeframe=${encodeURIComponent(timeframe)}`
+          + `&start=${encodeURIComponent(startISO)}${endISO ? `&end=${encodeURIComponent(endISO)}` : ''}&limit=10000&feed=${feed}&sort=asc`;
+  return _barsPaginadas(u, sym, _fetch);
+}
+
+// barras de PRIMA de la opcion — /v1beta1/options/bars (feed OPRA nativo)
+async function getOptionBars(contract, startISO, endISO, timeframe, _fetch = nodeFetch, feed = 'opra') {
+  const u = `${ALPACA_DATA}/v1beta1/options/bars?symbols=${encodeURIComponent(contract)}&timeframe=${encodeURIComponent(timeframe)}`
+          + `&start=${encodeURIComponent(startISO)}${endISO ? `&end=${encodeURIComponent(endISO)}` : ''}&limit=10000&feed=${feed}&sort=asc`;
+  return _barsPaginadas(u, contract, _fetch);
+}
+
+// OCC: SYMBOL + YYMMDD + C/P + strike(8) → { sym, side }
+function parseOCC(contract) {
+  const m = String(contract || '').toUpperCase().match(/^([A-Z]+)(\d{6})([CP])(\d{8})$/);
+  return m ? { sym: m[1], side: m[3] === 'C' ? 'call' : 'put' } : { sym: null, side: null };
+}
+
+// auditContract — orquestador de la ruta /alpaca-audit
+async function auditContract(q = {}, _fetch = nodeFetch) {
+  const contract = String(q.contract || '').toUpperCase().trim();
+  if (!contract) return { ok: false, error: 'falta ?contract= (símbolo OCC de la opción)' };
+  const occ  = parseOCC(contract);
+  const sym  = String(q.sym || occ.sym || '').toUpperCase();
+  const side = String(q.side || occ.side || '').toLowerCase();
+  if (!sym || (side !== 'call' && side !== 'put')) return { ok: false, error: 'no pude resolver sym/side del contrato' };
+  const entry = q.entry ? String(q.entry) : null;
+  if (!entry) return { ok: false, error: 'falta ?entry= (ISO del momento de entrada)' };
+  const end = q.end ? String(q.end) : new Date().toISOString();
+  const horizon = ['scalp', 'swing', 'position'].includes(q.horizon) ? q.horizon : 'swing';
+  const tf = q.tf || TF_POR_HORIZONTE[horizon];
+  const num = v => { const n = Number(v); return Number.isFinite(n) ? n : null; };
+  const spot0 = num(q.spot0);
+  const elegido = { type: side, mid: num(q.mid), delta: num(q.delta), gamma: num(q.gamma), theta: num(q.theta), breakevenMov: num(q.be) };
+  const tps = [];
+  [['tp1', 'tp1l'], ['tp2', 'tp2l'], ['tp3', 'tp3l']].forEach(([k, lk], i) => {
+    const p = num(q[k]); if (p != null) tps.push({ price: p, label: q[lk] || 'TP' + (i + 1) });
+  });
+  const sl = num(q.sl) != null ? { price: num(q.sl), label: q.sll || 'SL' } : null;
+  if (spot0 == null || elegido.mid == null || elegido.delta == null || !tps.length) {
+    return { ok: false, error: 'faltan datos de entrada (spot0/mid/delta y al menos un tp)' };
+  }
+  const earningsDates = q.earnings ? String(q.earnings).split(',').map(s => s.trim()).filter(Boolean) : [];
+  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return { ok: false, error: 'ALPACA keys no configuradas' };
+
+  const t0 = Date.now();
+  let underlyingBars, optionBars;
+  try {
+    [underlyingBars, optionBars] = await Promise.all([
+      getUnderlyingBars(sym, entry, end, tf, _fetch),
+      getOptionBars(contract, entry, end, tf, _fetch),
+    ]);
+  } catch (e) { return { ok: false, error: 'fetch Alpaca: ' + e.message }; }
+  if (!underlyingBars.length) return { ok: false, error: `sin barras de ${sym} en la ventana`, meta: { tf, entry, end } };
+
+  const card = A.auditSignal({ side, spot0, elegido, horizon, targets: { tps, sl }, underlyingBars, optionBars, earningsDates });
+  return {
+    ok: true, contract, sym, side, horizon, tf, entry, end,
+    barras: { subyacente: underlyingBars.length, opcion: optionBars.length },
+    entrada: { spot0, mid: elegido.mid, delta: elegido.delta, gamma: elegido.gamma, theta: elegido.theta, be: elegido.breakevenMov },
+    auditoria: card, ms: Date.now() - t0,
+  };
+}
+
+module.exports = { getOptionsMetrics, getContractPick, auditContract, getUnderlyingBars, getOptionBars, parseOCC, _CACHE: CACHE };
