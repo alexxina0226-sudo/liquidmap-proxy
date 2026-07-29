@@ -23,17 +23,63 @@ app.use((req, res, next) => {
 });
 app.use(express.json());
 
+// ════════════════════════════════════════════════════════════════════
+//  SEGURIDAD (s78) — sesión por cookie server-side. La contraseña vive en
+//  el env LM_PASSWORD (NO en el HTML). Un extraño que pegue la URL recibe
+//  /login, no el mapa; las rutas de datos exigen sesión válida.
+// ════════════════════════════════════════════════════════════════════
+const AUTH = require('./auth');
+const LM_PASSWORD = process.env.LM_PASSWORD || 'trader2026';   // ⚠ CAMBIAR en Render. Default = clave vieja para no quedar afuera.
+const AUTH_TOKEN  = AUTH.makeToken(LM_PASSWORD);
+function requirePage(req, res, next) { if (AUTH.isAuthed(req.headers.cookie, AUTH_TOKEN)) return next(); return res.redirect('/login'); }
+function requireApi(req, res, next)  { if (AUTH.isAuthed(req.headers.cookie, AUTH_TOKEN)) return next(); return res.status(401).json({ ok: false, error: 'sesión requerida' }); }
+
+// guard de las rutas de DATOS por prefijo (health/status/login/favicon quedan abiertas)
+const API_PROTECT = ['/proxy', '/alpaca', '/diag', '/liquidations', '/deribit'];
+app.use((req, res, next) => {
+  if (API_PROTECT.some(p => req.path === p || req.path.startsWith(p))) return requireApi(req, res, next);
+  next();
+});
+
+// ── LOGIN (público) ──
+const LOGIN_HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>LiquidMap · acceso</title>
+<style>*{box-sizing:border-box}body{margin:0;height:100vh;display:flex;align-items:center;justify-content:center;background:#02040c;font-family:'Space Mono',ui-monospace,monospace;color:#e8eefc}
+.box{width:320px;max-width:90vw;text-align:center;padding:32px;border:1px solid #16233f;border-radius:12px;background:#060a16}
+.logo{font-size:22px;font-weight:700;letter-spacing:3px;color:#00ff9d}.sub{font-size:11px;color:#5a6a86;margin:6px 0 22px}
+input{width:100%;background:#0a1020;border:1px solid #16233f;border-radius:6px;padding:12px 16px;color:#e8eefc;font-family:inherit;font-size:14px;text-align:center;letter-spacing:4px;outline:none;margin-bottom:12px}
+input:focus{border-color:#00ff9d}button{width:100%;background:#00ff9d;border:0;border-radius:6px;padding:12px;color:#02040c;font-family:inherit;font-weight:700;letter-spacing:2px;cursor:pointer}
+.err{color:#ff2d6b;font-size:12px;min-height:16px;margin-top:10px}</style></head>
+<body><div class="box"><div class="logo">LIQUIDMAP</div><div class="sub">PRO v7 · acceso institucional</div>
+<input id="p" type="password" placeholder="clave" autocomplete="off" autofocus>
+<button id="b">ACCEDER</button><div class="err" id="e"></div></div>
+<script>
+const p=document.getElementById('p'),b=document.getElementById('b'),e=document.getElementById('e');
+async function go(){b.disabled=true;e.textContent='';try{const r=await fetch('/login',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({pass:p.value})});const j=await r.json();if(j.ok){location.href='/bolsa';}else{e.textContent='clave incorrecta';p.value='';b.disabled=false;}}catch(_){e.textContent='error de red';b.disabled=false;}}
+b.onclick=go;p.addEventListener('keydown',ev=>{if(ev.key==='Enter')go();});
+</script></body></html>`;
+app.get('/login', (req, res) => {
+  if (AUTH.isAuthed(req.headers.cookie, AUTH_TOKEN)) return res.redirect('/bolsa');
+  res.set('Content-Type', 'text/html; charset=utf-8').send(LOGIN_HTML);
+});
+app.post('/login', (req, res) => {
+  const pass = (req.body && req.body.pass) || '';
+  if (AUTH.checkPassword(pass, LM_PASSWORD)) {
+    res.setHeader('Set-Cookie', AUTH.sessionCookie(AUTH_TOKEN));
+    return res.json({ ok: true });
+  }
+  return res.status(401).json({ ok: false, error: 'clave incorrecta' });
+});
+app.get('/logout', (req, res) => { res.setHeader('Set-Cookie', AUTH.clearCookie()); res.redirect('/login'); });
+
 // ── MAPAS HTML ───────────────────────────────────
-app.get('/', (req, res) => {
+app.get('/', (req, res) => res.redirect('/bolsa'));
+app.get('/bolsa', requirePage, (req, res) => {
   res.sendFile(path.join(__dirname, 'LiquidityMap_BOLSA_v5.html'));
 });
-app.get('/bolsa', (req, res) => {
-  res.sendFile(path.join(__dirname, 'LiquidityMap_BOLSA_v5.html'));
-});
-app.get('/crypto', (req, res) => {
+app.get('/crypto', requirePage, (req, res) => {
   res.sendFile(path.join(__dirname, 'LiquidityMap_CRYPTO_v6_2.html'));
 });
-app.get('/salud', (req, res) => {
+app.get('/salud', requirePage, (req, res) => {
   res.sendFile(path.join(__dirname, 'salud.html'));
 });
 
@@ -532,6 +578,16 @@ app.get('/alpaca-contrato', async (req, res) => {
     ttl: req.query.fresh ? 0 : undefined,
   });
   res.json(out);
+});
+
+// ── /alpaca-audit (s77): audita una señal/contrato contra la REALIDAD ──
+// Trae de Alpaca las barras del subyacente + las barras de PRIMA de la opción
+// en la ventana [entry, end] y llama al cerebro (options_audit). Las griegas de
+// entrada = snapshot del /contrato. Params: ?contract= &sym= &side= &entry= &end=
+// &horizon= &tf= &spot0= &mid= &delta= &gamma= &theta= &be= &tp1= &tp2= &tp3= &sl= &earnings=
+app.get('/alpaca-audit', async (req, res) => {
+  try { res.json(await optLive.auditContract(req.query)); }
+  catch (e) { res.status(500).json({ ok: false, error: e.message }); }
 });
 
 // ── HEALTH CHECK ─────────────────────────────────
