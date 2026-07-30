@@ -115,6 +115,53 @@ function govGradeForMonitor(result) {
   return { grade, reason, label: govLabel(grade), caps: g.caps, nPillars: g.nPillars };
 }
 
+// ── FILTRO DE CALIDAD (s80) · el bot SOLO emite señales de VERDAD buenas ──
+// Opera sobre el motor REAL (score/estructura/Governor ya portados del mapa) —
+// nada inventado aparte. Tres perillas, calibradas conservadoras.
+// Comentarios ARRIBA de cada const (el banco las extrae por linea limpia).
+//   QUALITY_FILTER         master switch (false = comportamiento viejo)
+//   QUALITY_MIN_SCORE      piso de score para emitir (el MIN_SCORE=6 base era muy laxo)
+//   QUALITY_REQUIRE_STRUCT exigir BOS/CHoCH A FAVOR (el gatillo, espeja el tgGate del mapa)
+//   QUALITY_GOV_SMART      Governor inteligente (preserva el oro ADX-lateral+estructura)
+const QUALITY_FILTER = true;
+const QUALITY_MIN_SCORE = 8;
+const QUALITY_REQUIRE_STRUCT = true;
+const QUALITY_GOV_SMART = true;
+
+// passesQualityFilter(result) -> {pass, why}. 'why' se loguea con el motivo.
+//  1) score >= QUALITY_MIN_SCORE
+//  2) estructura BOS/CHoCH del 4H A FAVOR de la direccion (el gatillo)
+//  3) Governor: NO emite lo capado a DEBIL/ESPERAR... SALVO que el UNICO motivo del
+//     cap sea ADX-lateral (regimen) — con estructura fresca esa es la señal TEMPRANA,
+//     el oro (ej HOOD: el precio explota antes de que el ADX confirme). Los caps de
+//     debilidad REAL (datos parciales, data vieja, pocos pilares) SI bloquean.
+function passesQualityFilter(result) {
+  if (!QUALITY_FILTER) return { pass: true, why: 'filtro OFF' };
+  const dir = result.direction;
+  if (result.score < QUALITY_MIN_SCORE)
+    return { pass: false, why: `score ${result.score}/${QUALITY_MIN_SCORE} < piso calidad` };
+  if (QUALITY_REQUIRE_STRUCT) {
+    const st = result.struct4H;
+    const stDir = st ? (st.type.includes('BUY') ? 'BUY' : st.type.includes('SELL') ? 'SELL' : null) : null;
+    if (!st || stDir !== dir)
+      return { pass: false, why: st ? `estructura ${st.type} no confirma ${dir}` : 'sin estructura BOS/CHoCH a favor' };
+  }
+  if (QUALITY_GOV_SMART) {
+    const gov = govGradeForMonitor(result);
+    if (gov) {
+      const weak = gov.grade === 'DÉBIL' || gov.grade === 'ESPERAR';
+      if (weak) {
+        const r = gov.reason || '';
+        const onlyRegime = /rango — ADX/.test(r) && !/PARCIALES|VIEJA|sin ADX|pilares/.test(r);
+        if (!onlyRegime)
+          return { pass: false, why: `Governor ${gov.grade} · capó: ${gov.reason}` };
+      }
+    }
+    // gov null (módulo ausente) -> fail-open en la parte del Governor: score+estructura ya filtran
+  }
+  return { pass: true, why: 'ok' };
+}
+
 // ── CONFIG ──────────────────────────────────────────────────
 const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
 const CHAT_IDS             = ['1218461753', '1373309702'];
@@ -1071,6 +1118,13 @@ async function scanTicker(ticker, session) {
 
     if (result.layersInDir.size < 3) {
       console.log(`[${ticker}] Solo ${result.layersInDir.size} capas — necesita 3`);
+      return;
+    }
+
+    // ── FILTRO DE CALIDAD (s80) — el bot solo emite señales de VERDAD buenas ──
+    const qf = passesQualityFilter(result);
+    if (!qf.pass) {
+      console.log(`[${ticker}] 🚫 Filtro calidad: ${qf.why} — silencio`);
       return;
     }
 
