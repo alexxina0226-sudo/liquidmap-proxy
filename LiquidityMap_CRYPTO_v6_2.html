@@ -247,7 +247,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 <div id="lbar"></div>
 
 <!-- LOCK SCREEN -->
-<div id="lock-screen">
+<div id="lock-screen" class="hidden">
   <div class="lock-box">
     <div class="lock-logo">LIQUIDMAP</div>
     <div class="lock-sub">INSTITUTIONAL GRADE</div>
@@ -605,7 +605,6 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <div class="ps">
       <h3>⚙ Configuración</h3>
       <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
-        <button onclick="showChangePass()" style="flex:1;padding:6px;background:rgba(0,229,255,.08);border:1px solid var(--accent);color:var(--accent);border-radius:4px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;font-weight:700;">🔒 CAMBIAR PASS</button>
         <button onclick="resetAll()" style="flex:1;padding:6px;background:rgba(255,45,107,.08);border:1px solid var(--red);color:var(--red);border-radius:4px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">⟳ RECONECTAR</button>
       </div>
       <div style="margin-top:6px;font-size:8px;color:#5a7a9a;text-align:center;">LiquidityMap CRYPTO v1 · Binance RT</div>
@@ -639,28 +638,13 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 // Webhook: lambent-pothos-6493c5.netlify.app
 // ═══════════════════════════════════════════════════════════
 
-const DEFAULT_PASS = 'trader2026';
-function getPass(){ return localStorage.getItem('lm_c_pass') || DEFAULT_PASS; }
-
+// s79: acceso gobernado server-side (login + cookie). El candado del cliente es redundante:
+// checkPass queda como no-op que oculta el lock y arranca la app (auto-desbloqueo al cargar).
 function checkPass(){
-  const val = document.getElementById('lock-input').value;
-  if(val === getPass()){
-    document.getElementById('lock-screen').classList.add('hidden');
-    document.getElementById('lock-err').textContent = '';
-    initApp();
-  } else {
-    document.getElementById('lock-err').textContent = '❌ Contraseña incorrecta';
-    document.getElementById('lock-input').value = '';
-  }
+  const ls = document.getElementById('lock-screen'); if(ls) ls.classList.add('hidden');
+  const err = document.getElementById('lock-err'); if(err) err.textContent = '';
+  initApp();
 }
-
-function showChangePass(){
-  const np = prompt('Nueva contraseña (mín 6 caracteres):');
-  if(np && np.length >= 6){ localStorage.setItem('lm_c_pass', np); alert('✅ Cambiada: ' + np); }
-  else if(np !== null) alert('❌ Mínimo 6 caracteres.');
-}
-
-document.getElementById('lock-input').addEventListener('keydown', e => { if(e.key==='Enter') checkPass(); });
 
 // ═══════════════════════════════════════════════════════════
 // STATE
@@ -4309,6 +4293,9 @@ async function runMonitorScan(){
   const scanEl = document.getElementById('mon-scan-time');
   if(scanEl) scanEl.textContent = 'Último escaneo: '+timeStr+' · #'+monScanCount;
 }
+
+// s79: auto-desbloqueo al cargar (el server ya autorizo via cookie de /login)
+try{ checkPass(); }catch(e){}
 </script>
 
 <!-- LEGEND MODAL -->
