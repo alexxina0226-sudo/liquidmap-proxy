@@ -383,7 +383,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 
     <!-- CVD/Delta -->
     <div class="ps">
-      <h3>📈 CVD / Delta</h3>
+      <h3>📈 CVD / Delta <span style="font-size:8px;color:var(--muted);font-weight:400;border:1px solid var(--muted);border-radius:3px;padding:0 3px;margin-left:4px;vertical-align:middle;" title="Estimado por direccion de vela (CVD) y posicion del cierre en el rango (Buy/Sell, Presion) - NO order-flow real de agresor. Alpaca no entrega el split taker buy/sell; el marcador ≈ lo confiesa. FASE 3 = trades reales.">≈ est.</span></h3>
       <div class="mr"><span class="lb">CVD neto</span><span class="vl" id="cvd-v">—</span></div>
       <div class="dbar"><div class="dbuy" id="dbuy" style="width:50%"></div><div class="dsell" id="dsell" style="width:50%"></div><div class="dctr"></div></div>
       <div class="dlbl"><span id="bp-v" style="color:var(--green)">50% Buy</span><span id="sp-v" style="color:var(--red)">50% Sell</span></div>
@@ -571,7 +571,7 @@ let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
 let vpBars = [];   // ROOT #5: fuente de VWAP/POC. En 4H = velas de 1H (sesión); en el resto = candles.
 let DATA_STALE = false, DATA_LAST_LABEL = '—', DATA_LAST_SEC = 0;  // guarda de frescura: serie vieja = no confiable (vale para TODOS los tickers/TFs)
-let cvd = 0, buyV = 0, sellV = 0;
+let cvd = 0, buyV = 0, sellV = 0, cvdReal = false; // s79b HONESTIDAD: bolsa no tiene order-flow real de agresor (bars Alpaca) -> CVD/Presion ESTIMADOS. Espejo del cvdReal del crypto; queda false hasta FASE 3 (trades reales).
 let tickerCache = {}, tickIdx = 0;
 let lastSignal = '', audioCtx = null;
 let stResult = [], struct = { choch: null, bos: null, swings: [] };
@@ -2282,7 +2282,7 @@ function updateDerived(){
   document.getElementById('s-note').textContent=hasStructure?(struct.choch?'Cambio de tendencia detectado — alta prioridad':'Ruptura de estructura — confirmar con CVD'):'Estructura lateral — esperar confirmación';
   // CVD
   const tot=buyV+sellV+1,bp2=Math.min(95,Math.max(5,buyV/tot*100)),sp2=100-bp2;
-  const cvdM=(cvd/1e6).toFixed(2)+'M'; set('cvd-v',(cvd>=0?'+':'')+cvdM,cvd>=0?'g':'r');
+  const cvdM=(cvd/1e6).toFixed(2)+'M'; set('cvd-v',(cvdReal?'📡 ':'≈ ')+(cvd>=0?'+':'')+cvdM,cvd>=0?'g':'r');
   document.getElementById('dbuy').style.width=bp2+'%'; document.getElementById('dsell').style.width=sp2+'%';
   document.getElementById('bp-v').textContent=bp2.toFixed(0)+'% Buy'; document.getElementById('sp-v').textContent=sp2.toFixed(0)+'% Sell';
   set('bvol-v',(buyV/1e6).toFixed(1)+'M','g'); set('svol-v',(sellV/1e6).toFixed(1)+'M','r');
@@ -2985,7 +2985,7 @@ function loadSavedSymbols(){ try{ const saved=localStorage.getItem('lm_syms'); i
 
 async function selectSym(s,btn){
   if(!POLY_KEY) return;
-  sym=s; candles=[];zones=[];quote={};cvd=0;buyV=0;sellV=0;stResult=[];struct={choch:null,bos:null,swings:[]};whaleDetected=null;arcResult={initialized:false,series:[],trendSeries:[],plot:[],flips:[],levels:[],trend:'BULL'};
+  sym=s; candles=[];zones=[];quote={};cvd=0;buyV=0;sellV=0;cvdReal=false;stResult=[];struct={choch:null,bos:null,swings:[]};whaleDetected=null;arcResult={initialized:false,series:[],trendSeries:[],plot:[],flips:[],levels:[],trend:'BULL'};
   document.querySelectorAll('.sym-btn').forEach(b=>b.classList.remove('active'));
   if(btn) btn.classList.add('active');
   if(ws&&ws.readyState===1){ ws.send(JSON.stringify({type:'unsubscribe',symbol:sym})); setTimeout(()=>ws.send(JSON.stringify({type:'subscribe',symbol:s})),200); }
