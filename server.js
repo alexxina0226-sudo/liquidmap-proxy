@@ -2,6 +2,7 @@ const express = require('express');
 const fetch   = require('node-fetch');
 const path    = require('path');
 const optLive    = require('./options_live');    // capa I/O reusable (server + bot): GEX (BS) + Max Pain reales
+const cvdLive    = require('./cvd_live');         // FASE 3: CVD por agresor real (Lee-Ready sobre trades+quotes SIP)
 const app     = express();
 
 // ── LATIDO DE MONITORES (health_state) — defensivo: si falta el archivo, NO tumba el server ──
@@ -588,6 +589,29 @@ app.get('/alpaca-contrato', async (req, res) => {
 app.get('/alpaca-audit', async (req, res) => {
   try { res.json(await optLive.auditContract(req.query)); }
   catch (e) { res.status(500).json({ ok: false, error: e.message }); }
+});
+
+// ── /alpaca-cvd (FASE 3): CVD REAL por AGRESOR (Lee-Ready) de una ventana ──
+// Trae trades+quotes SIP de [start,end], clasifica cada trade por agresor y
+// devuelve el NETO agregado {buyV,sellV,cvd,cvdReal,partial}. El mapa lo usa
+// para reemplazar el CVD ESTIMADO (direccion de vela) del panel y del score.
+// Params: ?sym= &start=RFC3339 &end=RFC3339 [&rth=0 para incluir extended hours]
+app.get('/alpaca-cvd', async (req, res) => {
+  try {
+    if (!ALPACA_KEY_ID || !ALPACA_SECRET) {
+      return res.status(500).json({ status: 'ERROR', error: 'ALPACA keys no configuradas' });
+    }
+    const sym = String(req.query.sym || '').toUpperCase();
+    const start = req.query.start, end = req.query.end;
+    if (!sym || !start || !end) {
+      return res.status(400).json({ status: 'ERROR', error: 'faltan params (sym, start, end)' });
+    }
+    const rth = String(req.query.rth) !== '0';
+    const r = await cvdLive.fetchAggressorCVD(sym, start, end, { rth });
+    return res.json({ status: 'OK', ticker: sym, ...r });
+  } catch (e) {
+    res.status(500).json({ status: 'ERROR', error: e.message });
+  }
 });
 
 // ── HEALTH CHECK ─────────────────────────────────
