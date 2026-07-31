@@ -455,8 +455,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div class="mr"><span class="lb">Dirección huella</span><span class="vl" id="fl-foot">—</span></div>
       <div class="mr"><span class="lb">Prints &gt;$1M</span><span class="vl" id="fl-prints" style="color:var(--muted)">🔒 Developer $79</span></div>
       <div class="mr"><span class="lb">Dark Pool real</span><span class="vl" id="fl-dpool" style="color:var(--muted)">🔒 Developer $79</span></div>
-      <div class="mr"><span class="lb">CVD por agresor</span><span class="vl" id="fl-cvdagg" style="color:var(--muted)">🔒 Developer $79</span></div>
-      <div style="margin-top:4px;font-size:8px;color:var(--muted)">RVOL real (huella de vol.). Print-level/dark pool/CVD agresor requieren endpoint Trades (Developer $79).</div>
+      <div class="mr"><span class="lb">CVD por agresor</span><span class="vl" id="fl-cvdagg" style="color:var(--muted)">📡 …</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted)">RVOL real (huella). CVD por agresor = order-flow REAL (Lee-Ready, ventana reciente). Prints/dark pool requieren condiciones de trade / venues (próxima fase).</div>
     </div>
 
     <!-- ZONAS LIQUIDEZ -->
@@ -566,6 +566,8 @@ let sym = 'SPY', tf = '60';
 const OPT_METRICS_URL = POLY_PROXY.replace('/alpaca', '/alpaca-options-metrics'); // GEX/Max Pain reales (misma capa que el bot → coherencia total)
 const CONTRATO_URL = POLY_PROXY.replace('/alpaca', '/alpaca-contrato'); // Selector de contrato (Fase 3) — bajo demanda vía /contrato en la casilla TICKER
 const AUDIT_URL = POLY_PROXY.replace('/alpaca', '/alpaca-audit');       // s77: auditoría de la salida contra la realidad (comando /audit)
+const CVD_URL = POLY_PROXY.replace('/alpaca', '/alpaca-cvd');           // FASE 3 s81: CVD real por agresor (Lee-Ready). Display-only en el slot fl-cvdagg; NO alimenta el score (eso es Etapa 3b).
+const CVD_AGG_WINDOW_MIN = 10;  // ventana reciente del CVD por agresor (order-flow reciente; corto = rápido y sin 'partial' aun en SPY). Tunable.
 let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si la ruta falla → degradación segura
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
@@ -1957,6 +1959,45 @@ function updateContractReadout(sig){
 }
 window.updateContractReadout = updateContractReadout;
 
+// ── FASE 3 (s81): CVD REAL POR AGRESOR en el slot fl-cvdagg (Flujo & Ballenas) ──
+//  DISPLAY-ONLY. Pide /alpaca-cvd (Lee-Ready sobre trades+quotes SIP reales) para
+//  una ventana reciente acotada y lo muestra. NO toca cvd/buyV/sellV del motor →
+//  el score sigue con el CVD estimado (la decisión de meterlo al score es Etapa 3b).
+//  Throttle por símbolo (120s) + guarda de cambio de símbolo — amable con Render.
+const _cvdAgg = { key:null, ts:0, err:false };
+function _fmtK(n){ const a=Math.abs(n); if(a>=1e6) return (n/1e6).toFixed(1)+'M'; if(a>=1e3) return (n/1e3).toFixed(1)+'K'; return String(Math.round(n)); }
+function updateAggressorCVD(symArg, tfArg, cndls){
+  const el = document.getElementById('fl-cvdagg');
+  if(!el || !cndls || !cndls.length) return;
+  const key = symArg, now = Date.now();
+  if(key===_cvdAgg.key && !_cvdAgg.err && (now-_cvdAgg.ts)<120000) return;   // throttle
+  _cvdAgg.key=key; _cvdAgg.ts=now; _cvdAgg.err=false;
+  // ventana reciente: mercado abierto → termina ahora; cerrado → termina en la última vela
+  const lastBar = cndls[cndls.length-1];
+  const tfMin = ({'5':5,'15':15,'60':60,'240':240,'D':1440})[tfArg] || 60;
+  const open = (typeof getMktStatus==='function') && getMktStatus()==='open';
+  const endMs = open ? now : (lastBar.t + tfMin*60000);
+  const startISO = new Date(endMs - CVD_AGG_WINDOW_MIN*60000).toISOString();
+  const endISO = new Date(endMs).toISOString();
+  el.style.color='var(--muted)'; el.textContent='📡 …';
+  fetch(`${CVD_URL}?sym=${encodeURIComponent(symArg)}&start=${encodeURIComponent(startISO)}&end=${encodeURIComponent(endISO)}`)
+    .then(r=>r.json())
+    .then(j=>{
+      if(_cvdAgg.key!==key) return;   // cambió de símbolo mientras cargaba
+      if(!j || j.status!=='OK'){ el.style.color='var(--muted)'; el.textContent='—'; el.title=(j&&j.error)?('CVD agresor: '+j.error):'CVD agresor: sin respuesta'; return; }
+      if(!j.cvdReal || (j.nTrades||0)===0){ el.style.color='var(--muted)'; el.textContent='sin flujo'; el.title='Sin trades reales en la ventana ('+CVD_AGG_WINDOW_MIN+'m'+(open?'':' · mercado cerrado')+').'; return; }
+      const tot=(j.buyV||0)+(j.sellV||0)||1, buyPct=Math.round((j.buyV||0)/tot*100);
+      el.style.color = j.cvd>=0 ? 'var(--green)' : 'var(--red)';
+      el.textContent = '📡 '+(j.cvd>=0?'+':'')+_fmtK(j.cvd)+' · '+buyPct+'% buy';
+      el.title = 'CVD por AGRESOR (Lee-Ready, order-flow REAL)\n'
+        + 'ventana '+CVD_AGG_WINDOW_MIN+'m'+(open?' (en vivo)':' (última sesión)')+(j.partial?' · PARCIAL (tope de datos)':'')+'\n'
+        + 'buy '+_fmtK(j.buyV)+' vs sell '+_fmtK(j.sellV)+' → neto '+(j.cvd>=0?'+':'')+_fmtK(j.cvd)+'\n'
+        + j.nTrades+' trades · '+j.nQuotes+' quotes clasificados';
+    })
+    .catch(err=>{ if(_cvdAgg.key===key){ _cvdAgg.err=true; el.style.color='var(--muted)'; el.textContent='—'; el.title='Error consultando CVD agresor: '+err.message; } });
+}
+window.updateAggressorCVD = updateAggressorCVD;
+
 const ARC_DEFAULTS = { accelRate:0.12, startMult:2.0, smooth:3, vwapAccelBoost:1.5,
   filterPeriod:'Session', initBars:100, maxLevels:10, anchorTz:'America/New_York' }; // BOLSA = ET
 const _arcToMs = t => (t < 1e12 ? t * 1000 : t);
@@ -2345,7 +2386,8 @@ function updateDerived(){
     const whF = detectWhale(candles, 3.0);
     if(whF){ set('fl-foot', whF.dir==='BUY'?'▲ COMPRADORA':'▼ VENDEDORA', whF.dir==='BUY'?'g':'r'); }
     else set('fl-foot','Normal','');
-    // fl-prints / fl-dpool / fl-cvdagg quedan en "🔒 Developer $79" (se activan con endpoint Trades)
+    // fl-prints / fl-dpool quedan en "🔒 Developer $79" (necesitan condiciones de trade / venues — sesión Flujo & Ballenas)
+    updateAggressorCVD(sym, tf, candles);   // FASE 3 s81: CVD real por agresor (display-only, NO toca el score)
   }
   // VWAP REAL (precio típico ponderado por volumen sobre la ventana de sesión)
   const vwWin = ({'5':78, '15':52, '60':60, '240':60, 'D':60})[tf] || 60;
