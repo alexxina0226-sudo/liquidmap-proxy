@@ -47,23 +47,36 @@ ok('maneja error de la ruta (status!==OK)', /j\.status!=='OK'/.test(fn));
 ok('honesto: sin trades reales -> "sin flujo"', /'sin flujo'/.test(fn));
 ok('marca PARCIAL si la ruta trunca', /j\.partial/.test(fn));
 
-console.log('\n=== 6. VENTANA MERCADO CERRADO: segundos→ms (anti-1970, fix s83) ===');
-// Bug s83: lastBar.t está en SEGUNDOS (todo el mapa usa new Date(b.t*1000)).
-// Sin *1000, la ventana con mercado cerrado caía en 1970 → 'sin flujo' siempre.
-const endMsExpr = ((fn.match(/const endMs\s*=\s*open\s*\?\s*now\s*:\s*\(([^;]*)\)\s*;/) || [,''])[1] || '').trim();
-ok('rama cerrada multiplica lastBar.t por 1000', /lastBar\.t\s*\*\s*1000/.test(endMsExpr));
-ok('NO usa lastBar.t crudo sin *1000 (anti-regresión del bug 1970)', !/lastBar\.t\s*\+/.test(endMsExpr));
-// chequeo NUMÉRICO sobre la EXPRESIÓN REAL del HTML: con un ts de viernes en
-// segundos, la ventana debe caer en fecha reciente (>=2020), no en 1970.
-let yearClosed = null;
-try {
-  const f = new Function('lastBar','tfMin','now','open', 'return (open ? now : (' + endMsExpr + '));');
-  const endMs = f({ t: 1785600000 }, 60, Date.now(), false);   // 1785600000 s ≈ ago-2026
-  yearClosed = new Date(endMs).getUTCFullYear();
-} catch (e) { yearClosed = 'ERR:' + e.message; }
-ok('ventana cerrada (expr real del HTML) cae en año >= 2020 (no 1970)', yearClosed >= 2020);
-// y el camino abierto sigue usando `now` (ms) sin tocar
-ok('rama abierta usa now (ms) directo', /open\s*\?\s*now\s*:/.test(fn));
+console.log('\n=== 6. VENTANA MERCADO CERRADO: segundos→ms + tope RTH 16:00 (fix s83) ===');
+// Bug s83: (1) lastBar.t está en SEGUNDOS (todo el mapa usa new Date(b.t*1000)) → sin
+// *1000 la ventana caía en 1970. (2) la última vela intradía está TRUNCADA al cierre
+// (1H ancla 9:30 → último slot 15:30–16:00); sumar el TF entero se iba a after-hours
+// (16:20–16:30) donde no hay trades → 'sin flujo' falso. Fix: ×1000 + tope a 16:00 ET.
+const winBlock = (fn.match(/const barOpenMs = lastBar\.t\*1000;[\s\S]*?const endISO = new Date\(endMs\)\.toISOString\(\);/) || [''])[0];
+ok('usa lastBar.t*1000 (segundos→ms)', /lastBar\.t\s*\*\s*1000/.test(winBlock));
+ok('topa la ventana al cierre RTH (Math.min ... 960)', /Math\.min\(/.test(winBlock) && /\b960\b/.test(winBlock));
+ok('NO usa lastBar.t crudo sin *1000 (anti-1970)', !/[^*]\blastBar\.t\s*\+/.test(winBlock));
+ok('rama abierta usa now (ms) directo', /if\(open\)\{\s*endMs\s*=\s*now/.test(winBlock));
+
+// harness NUMÉRICO sobre el BLOQUE REAL extraído del HTML
+const _rthFmt = new Intl.DateTimeFormat('en-US',{timeZone:'America/New_York',hour12:false,hour:'2-digit',minute:'2-digit'});
+const etMin = ms => { const p=_rthFmt.formatToParts(new Date(ms)); let h=+p.find(x=>x.type==='hour').value; if(h===24)h=0; return h*60 + (+p.find(x=>x.type==='minute').value); };
+const secAt = iso => Math.floor(Date.parse(iso)/1000);   // ISO UTC → epoch segundos (como el mapa)
+let runWin=null;
+try { runWin = new Function('lastBar','tfMin','now','open','_rthFmt','CVD_AGG_WINDOW_MIN', winBlock + '\n return { startMs: Date.parse(startISO), endMs };'); }
+catch(e){ console.log('  (no compiló el bloque: '+e.message+')'); }
+if(runWin && winBlock.length>40){
+  // 2026-07-31 es EDT (UTC-4): 15:30 ET = 19:30Z, 16:00 ET = 20:00Z
+  const r1h  = runWin({t:secAt('2026-07-31T19:30:00Z')}, 60, Date.now(), false, _rthFmt, 10); // última vela 1H (15:30–16:00)
+  ok('1H (vela 15:30): fin de ventana = 16:00 ET (topado, no 16:30)', etMin(r1h.endMs)===960);
+  ok('1H: inicio de ventana = 15:50 ET (dentro de RTH)', etMin(r1h.startMs)===950);
+  ok('1H: ventana cae en año >= 2020 (no 1970)', new Date(r1h.endMs).getUTCFullYear()>=2020);
+  const r5   = runWin({t:secAt('2026-07-31T19:55:00Z')}, 5,  Date.now(), false, _rthFmt, 10); // vela 5m 15:55
+  ok('5m (vela 15:55): fin de ventana = 16:00 ET', etMin(r5.endMs)===960);
+  const rMid = runWin({t:secAt('2026-07-31T18:30:00Z')}, 60, Date.now(), false, _rthFmt, 10); // vela 14:30 (no es la de cierre)
+  ok('1H (vela 14:30, no cierre): fin = 15:30 ET (fin real, no forzado a 16:00)', etMin(rMid.endMs)===930);
+  ok('ninguna ventana cerrada termina después de 16:00 ET', etMin(r1h.endMs)<=960 && etMin(r5.endMs)<=960 && etMin(rMid.endMs)<=960);
+}
 
 console.log('\n──────────────────────────────');
 console.log(`RESULTADO: ${pass}/${pass+fail} verde` + (fail? `  (${fail} en rojo)`:' — TODO VERDE'));
