@@ -1978,7 +1978,7 @@ function updateAggressorCVD(symArg, tfArg, cndls){
   const lastBar = cndls[cndls.length-1];
   const tfMin = ({'5':5,'15':15,'60':60,'240':240,'D':1440})[tfArg] || 60;
   const open = (typeof getMktStatus==='function') && getMktStatus()==='open';
-  const endMs = open ? now : (lastBar.t + tfMin*60000);
+  const endMs = open ? now : (lastBar.t*1000 + tfMin*60000);   // FASE 3 fix s83: lastBar.t está en SEGUNDOS (como todo el mapa: new Date(b.t*1000)) → ×1000 a ms. Sin esto la ventana con mercado cerrado caía en 1970 y daba 'sin flujo' siempre.
   const startISO = new Date(endMs - CVD_AGG_WINDOW_MIN*60000).toISOString();
   const endISO = new Date(endMs).toISOString();
   el.style.color='var(--muted)'; el.textContent='📡 …';
