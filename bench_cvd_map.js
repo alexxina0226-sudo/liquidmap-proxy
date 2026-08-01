@@ -47,6 +47,24 @@ ok('maneja error de la ruta (status!==OK)', /j\.status!=='OK'/.test(fn));
 ok('honesto: sin trades reales -> "sin flujo"', /'sin flujo'/.test(fn));
 ok('marca PARCIAL si la ruta trunca', /j\.partial/.test(fn));
 
+console.log('\n=== 6. VENTANA MERCADO CERRADO: segundos→ms (anti-1970, fix s83) ===');
+// Bug s83: lastBar.t está en SEGUNDOS (todo el mapa usa new Date(b.t*1000)).
+// Sin *1000, la ventana con mercado cerrado caía en 1970 → 'sin flujo' siempre.
+const endMsExpr = ((fn.match(/const endMs\s*=\s*open\s*\?\s*now\s*:\s*\(([^;]*)\)\s*;/) || [,''])[1] || '').trim();
+ok('rama cerrada multiplica lastBar.t por 1000', /lastBar\.t\s*\*\s*1000/.test(endMsExpr));
+ok('NO usa lastBar.t crudo sin *1000 (anti-regresión del bug 1970)', !/lastBar\.t\s*\+/.test(endMsExpr));
+// chequeo NUMÉRICO sobre la EXPRESIÓN REAL del HTML: con un ts de viernes en
+// segundos, la ventana debe caer en fecha reciente (>=2020), no en 1970.
+let yearClosed = null;
+try {
+  const f = new Function('lastBar','tfMin','now','open', 'return (open ? now : (' + endMsExpr + '));');
+  const endMs = f({ t: 1785600000 }, 60, Date.now(), false);   // 1785600000 s ≈ ago-2026
+  yearClosed = new Date(endMs).getUTCFullYear();
+} catch (e) { yearClosed = 'ERR:' + e.message; }
+ok('ventana cerrada (expr real del HTML) cae en año >= 2020 (no 1970)', yearClosed >= 2020);
+// y el camino abierto sigue usando `now` (ms) sin tocar
+ok('rama abierta usa now (ms) directo', /open\s*\?\s*now\s*:/.test(fn));
+
 console.log('\n──────────────────────────────');
 console.log(`RESULTADO: ${pass}/${pass+fail} verde` + (fail? `  (${fail} en rojo)`:' — TODO VERDE'));
 process.exit(fail ? 1 : 0);
