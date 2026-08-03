@@ -568,7 +568,7 @@ const CONTRATO_URL = POLY_PROXY.replace('/alpaca', '/alpaca-contrato'); // Selec
 const AUDIT_URL = POLY_PROXY.replace('/alpaca', '/alpaca-audit');       // s77: auditoría de la salida contra la realidad (comando /audit)
 const CVD_URL = POLY_PROXY.replace('/alpaca', '/alpaca-cvd');           // FASE 3 s81: CVD real por agresor (Lee-Ready). Display-only en el slot fl-cvdagg; NO alimenta el score (eso es Etapa 3b).
 const CVD_AGG_WINDOW_MIN = 10;  // ventana reciente del CVD por agresor (order-flow reciente; corto = rápido y sin 'partial' aun en SPY). Tunable.
-const CVD_TO_SCORE = false;     // FASE 3 etapa 3b: ¿el SCORE usa el CVD real por agresor? Arranca OFF — se prende tras validar la 3a en vivo. Fallback honesto al estimado siempre.
+const CVD_TO_SCORE = true;      // FASE 3 etapa 3b: el SCORE usa el CVD real por agresor. PRENDIDO 03/08 tras validar la 3a EN MOVIMIENTO (SPY 📡 latiendo, coherente con estimado). Fallback honesto al estimado si el real no viene limpio.
 let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si la ruta falla → degradación segura
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
