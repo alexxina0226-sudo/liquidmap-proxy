@@ -10,8 +10,8 @@ const fn = (H.match(/function applyCvdSource\(\)\{[\s\S]*?\n\}/) || [''])[0];
 let pass=0, fail=0;
 function ok(n,c){ if(c){pass++;console.log('  ✓ '+n);}else{fail++;console.log('  ✗ '+n);} }
 
-console.log('\n=== 1. FLAG (arranca OFF = comportamiento actual) ===');
-ok('CVD_TO_SCORE definido y en false', /const CVD_TO_SCORE = false;/.test(H));
+console.log('\n=== 1. FLAG (ON tras validar 3a EN MOVIMIENTO 03/08) ===');
+ok('CVD_TO_SCORE definido y en true (prendido 03/08 tras validar 3a en vivo)', /const CVD_TO_SCORE = true;/.test(H));
 ok('applyCvdSource existe', fn.length>0);
 ok('primera guarda = si el flag está OFF, return (no toca nada)', /if\(!CVD_TO_SCORE\) return;/.test(fn));
 
