@@ -64,6 +64,29 @@ let governConviction = null, govLabel = null;
 try { const _g = require('./conviction_governor.js'); governConviction = _g.governConviction; govLabel = _g.govLabel; }
 catch (e) { console.warn('⚠️ conviction_governor.js no encontrado — GOBERNADOR DESACTIVADO, calidad por score (degradado).'); }
 
+// ── LEDGER de señales (etapa 2c) — captura + resolución de desenlaces. TODO FAIL-OPEN:
+// si falta un módulo o una env var, el bot emite señales EXACTAMENTE igual; el ledger nunca estorba.
+let ledgerStore = null, ledgerDriver = null, captureSignal = null, resolvePending = null, getUnderlyingBars = null;
+const LEDGER_HORIZON_BARS = +process.env.LEDGER_HORIZON_BARS_4H || 30;   // horizonte swing en barras 4H (knob de calibración)
+try {
+  const { createLedgerStore } = require('./ledger_store.js');
+  const { githubGistDriver }  = require('./ledger_store_github.js');
+  captureSignal     = require('./ledger_capture.js').captureSignal;
+  resolvePending    = require('./ledger_resolver.js').resolvePending;
+  getUnderlyingBars = require('./options_live.js').getUnderlyingBars;
+  if (process.env.LEDGER_GH_TOKEN && process.env.LEDGER_GH_GIST) {
+    ledgerDriver = githubGistDriver({
+      token: process.env.LEDGER_GH_TOKEN, gistId: process.env.LEDGER_GH_GIST,
+      filename: 'ledger_bolsa.jsonl', onError: e => console.log('📒 ledger gist: ' + e.message)
+    });
+    ledgerDriver.init().then(n => console.log(`📒 Ledger listo (${n} registros)`))
+                       .catch(e => console.log('📒 ledger init: ' + e.message));   // fail-open
+    ledgerStore = createLedgerStore(ledgerDriver);
+  } else {
+    console.log('📒 Ledger OFF — faltan env LEDGER_GH_TOKEN / LEDGER_GH_GIST.');
+  }
+} catch (e) { console.log('📒 Ledger desactivado (módulos ausentes): ' + e.message); }
+
 // Escala del Governor para el monitor: su score mostrado es min(10, round(net*1.2)),
 // o sea el full-scale del bot es net = 10/1.2. Pasando rawMax = 10/SCORE_GAIN el
 // govBaseGrade lee EXACTAMENTE el mismo 0-10 que ya muestra el mensaje.
@@ -994,6 +1017,7 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
     ? `\n📊 Volatilidad: ${result.gex.volRegime}${gexInfo}`
     : '';
   const escHTML  = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  if (result) result.signalLevels = { entry: price, sl, tp1, tp2, tp3, grade: gov ? gov.grade : null };   // LEDGER: niveles para la captura
   const confList  = result.confluences.map(c => `  • ${escHTML(c)}`).join('\n');
   const changeStr = (quote && quote.pc && quote.pc !== 0)
     ? `${((quote.c - quote.pc)/quote.pc*100) >= 0 ? '+' : ''}${((quote.c - quote.pc)/quote.pc*100).toFixed(2)}%`
@@ -1174,6 +1198,19 @@ async function scanTicker(ticker, session) {
     s.lastStructSig = structSig;   // recuerda el evento estructural ya disparado (no repetir)
     s.lastCandle4H  = candle4HId;
 
+    // ── LEDGER: captura de la señal emitida (FAIL-OPEN, jamás rompe el envío) ──
+    if (ledgerStore && captureSignal) {
+      const L = result.signalLevels || {};
+      captureSignal(ledgerStore, {
+        ts: s.lastSignalTs, sym: ticker, tf: '4H', direction: result.direction,
+        score: result.score, grade: L.grade, setup: structSig, horizon: 'swing',
+        entry: L.entry != null ? L.entry : price, sl: L.sl,
+        tp1: L.tp1, tp2: L.tp2, tp3: L.tp3,
+        horizonBars: LEDGER_HORIZON_BARS, cvdSource: null
+      }, { onError: e => console.log(`[${ticker}] ledger cap: ${e.message}`) });
+      if (ledgerDriver) ledgerDriver.flush().catch(() => {});   // asegura el write-through al gist
+    }
+
   } catch(e) {
     console.error(`[${ticker}] Error:`, e.message);
   }
@@ -1243,3 +1280,15 @@ setInterval(() => { try { if (getNYSession().shouldScan) hbBeat('bolsa'); } catc
 
 runScan();
 setInterval(runScan, SCAN_INTERVAL);
+
+// ── LEDGER: resolvedor de desenlaces cada 20 min (FAIL-OPEN) ──
+// Por cada señal ACTIVA trae las barras posteriores (getUnderlyingBars) y sella CUMPLIDA/FALLIDA/EXPIRADA.
+if (ledgerStore && resolvePending && getUnderlyingBars) {
+  setInterval(() => {
+    try {
+      resolvePending(ledgerStore, (sym, a, b, tf) => getUnderlyingBars(sym, a, b, tf), {})
+        .then(r => { if (r && r.resolved) { console.log(`📒 Ledger: ${r.resolved} resueltas · ${r.active} activas`); if (ledgerDriver) return ledgerDriver.flush(); } })
+        .catch(e => console.log('📒 ledger resolve: ' + e.message));
+    } catch (e) {}
+  }, 20 * 60 * 1000);
+}
