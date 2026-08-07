@@ -74,4 +74,30 @@ function weeklyTrigger(now){
   return { fire, which };
 }
 
-module.exports = { prevWeekKeyUTC, buildWeeklyReport, maybeSendWeekly, weeklyTrigger };
+// parseResumenCommand(update, authChatId) → bool: ¿este update es un /resumen del DUEÑO?
+// PURO (no red). Seguridad: solo responde al chat autorizado (authChatId), ignora a cualquier otro.
+function parseResumenCommand(update, authChatId){
+  try {
+    const msg = update && update.message;
+    if (!msg || typeof msg.text !== 'string') return false;
+    if (String(msg.chat && msg.chat.id) !== String(authChatId)) return false;   // solo el dueño
+    return /^\/resumen(@\w+)?\s*$/i.test(msg.text.trim());
+  } catch (e) { return false; }
+}
+
+// processRadarUpdates(updates, offset, authChatId, onResumen) → nuevoOffset. PURO.
+// Recorre los updates de getUpdates, avanza el offset (update_id+1) para ack, y llama
+// onResumen(update) por cada /resumen del dueño. El monitor le pasa el fetch y el envío.
+function processRadarUpdates(updates, offset, authChatId, onResumen){
+  let off = offset;
+  if (!Array.isArray(updates)) return off;
+  for (const upd of updates){
+    if (upd && typeof upd.update_id === 'number') off = upd.update_id + 1;
+    if (parseResumenCommand(upd, authChatId) && typeof onResumen === 'function'){
+      try { onResumen(upd); } catch (e) {}
+    }
+  }
+  return off;
+}
+
+module.exports = { prevWeekKeyUTC, buildWeeklyReport, maybeSendWeekly, weeklyTrigger, parseResumenCommand, processRadarUpdates };
