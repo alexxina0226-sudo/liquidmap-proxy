@@ -26,6 +26,29 @@ function tfToAlpacaDefault(tf){ return TF_ALPACA[String(tf)] || '1Hour'; }
 function barMsDefault(atf){ return TF_MS[atf] || 3600000; }
 function toISO(ms){ return new Date(ms).toISOString(); }
 
+// computeExcursion(rec, bars) → { mfeR, maeR } — máxima excursión FAVORABLE / ADVERSA en R.
+// R = |entry - sl|. BUY: fav = high-entry, adv = low-entry. SELL: fav = entry-low, adv = entry-high.
+// mfeR ≥ 0 (lo más lejos que fue a favor), maeR ≤ 0 (lo más lejos en contra). Ambos clampeados.
+// Mide "cuánto se movió a favor ANTES de resolverse" — clave para juzgar opciones/scalp, no solo TP/SL binario.
+// null si falta entry/sl, R=0, o no hay barras. Nunca tira (fail-open).
+function computeExcursion(rec, bars){
+  if(!rec || rec.entry == null || rec.sl == null) return { mfeR: null, maeR: null };
+  const R = Math.abs(rec.entry - rec.sl);
+  if(!(R > 0) || !Array.isArray(bars) || !bars.length) return { mfeR: null, maeR: null };
+  const isBuy = /BUY|LONG|COMPRA/i.test(String(rec.type || 'BUY'));
+  let mfe = 0, mae = 0;
+  for(const b of bars){
+    if(!b) continue;
+    const hi = Number(b.h), lo = Number(b.l);
+    if(!isFinite(hi) || !isFinite(lo)) continue;
+    const fav = isBuy ? (hi - rec.entry) : (rec.entry - lo);   // mejor a favor
+    const adv = isBuy ? (lo - rec.entry) : (rec.entry - hi);   // peor en contra (≤0)
+    if(fav > mfe) mfe = fav;
+    if(adv < mae) mae = adv;
+  }
+  return { mfeR: +(mfe / R).toFixed(3), maeR: +(mae / R).toFixed(3) };
+}
+
 // resolvePending(store, fetchBars, opts)
 //   fetchBars(sym, startISO, endISO, alpacaTf) -> Promise<[{t,o,h,l,c,v}]>  (inyectable)
 //   opts: { now?, tfToAlpaca?, barMs?, maxHorizonBars?, onError?(rec,err) }
@@ -80,9 +103,12 @@ async function resolvePending(store, fetchBars, opts){
       }
     }
 
+    const lifeBars = post.slice(0, out.barsToResolve || post.length);
+    const exc = computeExcursion(rec, lifeBars);
     store.update(rec.id, {
       status: out.status, hitTP: out.hitTP, exitPrice: out.exitPrice,
       rMultiple: out.rMultiple, barsToResolve: out.barsToResolve,
+      mfeR: exc.mfeR, maeR: exc.maeR,
       resolvedTs: now, resolveReason: out.reason
     });
     resolved++; details.push({ id: rec.id, status: out.status });
@@ -91,4 +117,4 @@ async function resolvePending(store, fetchBars, opts){
   return { resolved, active, errors, details };
 }
 
-module.exports = { resolvePending, tfToAlpacaDefault, barMsDefault, TF_ALPACA, TF_MS };
+module.exports = { resolvePending, computeExcursion, tfToAlpacaDefault, barMsDefault, TF_ALPACA, TF_MS };
