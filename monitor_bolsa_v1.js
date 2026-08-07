@@ -87,6 +87,26 @@ try {
   }
 } catch (e) { console.log('📒 Ledger desactivado (módulos ausentes): ' + e.message); }
 
+// ── RESUMEN SEMANAL → RADAR (etapa 3, mitad Telegram). Aditivo, FAIL-OPEN. ──
+// Manda el resumen del ledger al bot RADAR (hilo aparte de las señales de bolsa).
+// Requiere env LEDGER_RADAR_TOKEN (token del bot radar) + LEDGER_RADAR_CHAT_ID.
+let maybeSendWeekly = null, weeklyTrigger = null;
+try { const _w = require('./ledger_weekly.js'); maybeSendWeekly = _w.maybeSendWeekly; weeklyTrigger = _w.weeklyTrigger; } catch (e) {}
+const RADAR_TOKEN   = process.env.LEDGER_RADAR_TOKEN || '';
+const RADAR_CHAT_ID = process.env.LEDGER_RADAR_CHAT_ID || '1218461753';
+const _weeklyState  = { lastSentWeek: null };
+
+// Envía un texto al bot RADAR (usa SU token, jamás el de bolsa). FAIL-OPEN.
+async function sendRadar(text) {
+  if (!RADAR_TOKEN) return;
+  await fetch(`https://api.telegram.org/bot${RADAR_TOKEN}/sendMessage`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ chat_id: RADAR_CHAT_ID, text, parse_mode: 'HTML',
+                           disable_web_page_preview: true }),
+  });
+}
+
 // Escala del Governor para el monitor: su score mostrado es min(10, round(net*1.2)),
 // o sea el full-scale del bot es net = 10/1.2. Pasando rawMax = 10/SCORE_GAIN el
 // govBaseGrade lee EXACTAMENTE el mismo 0-10 que ya muestra el mensaje.
@@ -1291,4 +1311,25 @@ if (ledgerStore && resolvePending && getUnderlyingBars) {
         .catch(e => console.log('📒 ledger resolve: ' + e.message));
     } catch (e) {}
   }, 20 * 60 * 1000);
+}
+
+// ── LEDGER: resumen semanal → RADAR (domingo tarde ET, una vez). FAIL-OPEN ──
+// Chequea cada 30 min; weeklyTrigger decide el momento (dom ≥18:00 ET) y de qué semana;
+// el dedup interno (state.lastSentWeek) evita reenviar la misma semana dos veces.
+if (ledgerStore && maybeSendWeekly && weeklyTrigger && RADAR_TOKEN) {
+  setInterval(() => {
+    try {
+      const t = weeklyTrigger(new Date());
+      if (!t.fire) return;
+      maybeSendWeekly({
+        loadRecords: () => ledgerStore.load(),
+        send: sendRadar,
+        which: t.which,
+        state: _weeklyState,
+      }).then(r => { if (r && r.sent) console.log(`📒 Resumen semanal → radar · ${r.week}`); })
+        .catch(e => console.log('📒 ledger weekly: ' + e.message));
+    } catch (e) {}
+  }, 30 * 60 * 1000);
+} else if (ledgerStore && maybeSendWeekly && !RADAR_TOKEN) {
+  console.log('📒 Resumen semanal OFF — falta env LEDGER_RADAR_TOKEN.');
 }
