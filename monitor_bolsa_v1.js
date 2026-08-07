@@ -90,8 +90,8 @@ try {
 // ── RESUMEN SEMANAL → RADAR (etapa 3, mitad Telegram). Aditivo, FAIL-OPEN. ──
 // Manda el resumen del ledger al bot RADAR (hilo aparte de las señales de bolsa).
 // Requiere env LEDGER_RADAR_TOKEN (token del bot radar) + LEDGER_RADAR_CHAT_ID.
-let maybeSendWeekly = null, weeklyTrigger = null;
-try { const _w = require('./ledger_weekly.js'); maybeSendWeekly = _w.maybeSendWeekly; weeklyTrigger = _w.weeklyTrigger; } catch (e) {}
+let maybeSendWeekly = null, weeklyTrigger = null, processRadarUpdates = null;
+try { const _w = require('./ledger_weekly.js'); maybeSendWeekly = _w.maybeSendWeekly; weeklyTrigger = _w.weeklyTrigger; processRadarUpdates = _w.processRadarUpdates; } catch (e) {}
 const RADAR_TOKEN   = process.env.LEDGER_RADAR_TOKEN || '';
 const RADAR_CHAT_ID = process.env.LEDGER_RADAR_CHAT_ID || '1218461753';
 const _weeklyState  = { lastSentWeek: null };
@@ -105,6 +105,51 @@ async function sendRadar(text) {
     body: JSON.stringify({ chat_id: RADAR_CHAT_ID, text, parse_mode: 'HTML',
                            disable_web_page_preview: true }),
   });
+}
+
+// ── /resumen ON-DEMAND — listener del bot RADAR (getUpdates long-poll). FAIL-OPEN. ──
+// Solo responde al DUEÑO (RADAR_CHAT_ID). Sin conflicto 409 mientras el servicio radar (LiquidMap1) esté suspendido.
+let _radarOffset = 0, _radarPolling = false;
+function _onResumen() {                       // dispara el resumen de la semana EN CURSO (force = manda igual)
+  maybeSendWeekly({
+    loadRecords: () => ledgerStore.load(),
+    send: sendRadar,
+    which: 'current',
+    force: true,
+    state: _weeklyState,
+  }).then(r => { if (r && r.sent) console.log('📒 /resumen → enviado'); })
+    .catch(e => console.log('📒 /resumen: ' + e.message));
+}
+async function _pollRadar() {
+  if (_radarPolling) return;
+  _radarPolling = true;
+  let backoff = 2000;
+  try {
+    const url = `https://api.telegram.org/bot${RADAR_TOKEN}/getUpdates?timeout=30&offset=${_radarOffset}&allowed_updates=%5B%22message%22%5D`;
+    const res  = await fetch(url);
+    const data = await res.json();
+    if (data && data.ok) {
+      _radarOffset = processRadarUpdates(data.result, _radarOffset, RADAR_CHAT_ID, _onResumen);
+    } else if (data && data.error_code === 409) {
+      console.log('📒 /resumen: otro listener/webhook activo (409) — reintento lento');
+      backoff = 60000;
+    }
+  } catch (e) { backoff = 10000; }           // fail-open: red caída → reintento con espera
+  finally {
+    _radarPolling = false;
+    setTimeout(_pollRadar, backoff);
+  }
+}
+// Al arrancar drena el backlog viejo (no responde /resumen mandados mientras estaba offline).
+async function _startRadarListener() {
+  try {
+    const res  = await fetch(`https://api.telegram.org/bot${RADAR_TOKEN}/getUpdates?timeout=0&offset=-1`);
+    const data = await res.json();
+    if (data && data.ok && Array.isArray(data.result) && data.result.length) {
+      _radarOffset = data.result[data.result.length - 1].update_id + 1;
+    }
+  } catch (e) {}
+  _pollRadar();
 }
 
 // Escala del Governor para el monitor: su score mostrado es min(10, round(net*1.2)),
@@ -1332,4 +1377,10 @@ if (ledgerStore && maybeSendWeekly && weeklyTrigger && RADAR_TOKEN) {
   }, 30 * 60 * 1000);
 } else if (ledgerStore && maybeSendWeekly && !RADAR_TOKEN) {
   console.log('📒 Resumen semanal OFF — falta env LEDGER_RADAR_TOKEN.');
+}
+
+// ── /resumen on-demand: arranca el listener del bot radar (si hay token + módulo) ──
+if (ledgerStore && maybeSendWeekly && processRadarUpdates && RADAR_TOKEN) {
+  _startRadarListener();
+  console.log('📒 /resumen on-demand: listener del radar activo.');
 }
