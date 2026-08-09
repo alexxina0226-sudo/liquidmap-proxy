@@ -87,6 +87,12 @@ try {
   }
 } catch (e) { console.log('📒 Ledger desactivado (módulos ausentes): ' + e.message); }
 
+// ── CLASIFICADOR de horizonte (scalp/day/swing) para la emisión. FAIL-OPEN e INDEPENDIENTE
+// del ledger: si falta el módulo, la señal se registra como 'swing' (comportamiento previo).
+let classifyEmission = null;
+try { classifyEmission = require('./monitor_classify.js').classifyEmission; }
+catch (e) { console.log('🏷️ Clasificador OFF (módulo ausente): ' + e.message + ' — señales quedan swing'); }
+
 // ── RESUMEN SEMANAL → RADAR (etapa 3, mitad Telegram). Aditivo, FAIL-OPEN. ──
 // Manda el resumen del ledger al bot RADAR (hilo aparte de las señales de bolsa).
 // Requiere env LEDGER_RADAR_TOKEN (token del bot radar) + LEDGER_RADAR_CHAT_ID.
@@ -1266,12 +1272,18 @@ async function scanTicker(ticker, session) {
     // ── LEDGER: captura de la señal emitida (FAIL-OPEN, jamás rompe el envío) ──
     if (ledgerStore && captureSignal) {
       const L = result.signalLevels || {};
+      // Clasifica el horizonte real (scalp/day/swing) refinando desde swing. FAIL-OPEN:
+      // si el módulo falta o tira, cae a swing con el horizonte por defecto (comportamiento previo).
+      let cls = { clase: 'swing', horizonBars: null };
+      try {
+        if (classifyEmission) cls = classifyEmission(result, candles4H, buildGovSig(result).layers, { isNewStruct });
+      } catch (e) { console.log(`[${ticker}] clasificador: ${e.message} — swing por defecto`); }
       captureSignal(ledgerStore, {
         ts: s.lastSignalTs, sym: ticker, tf: '4H', direction: result.direction,
-        score: result.score, grade: L.grade, setup: structSig, horizon: 'swing',
+        score: result.score, grade: L.grade, setup: structSig, horizon: cls.clase,
         entry: L.entry != null ? L.entry : price, sl: L.sl,
         tp1: L.tp1, tp2: L.tp2, tp3: L.tp3,
-        horizonBars: LEDGER_HORIZON_BARS, cvdSource: null
+        horizonBars: cls.horizonBars != null ? cls.horizonBars : LEDGER_HORIZON_BARS, cvdSource: null
       }, { onError: e => console.log(`[${ticker}] ledger cap: ${e.message}`) });
       if (ledgerDriver) ledgerDriver.flush().catch(() => {});   // asegura el write-through al gist
     }
