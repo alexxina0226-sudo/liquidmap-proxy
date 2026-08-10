@@ -16,6 +16,11 @@
 
 const { criterioExito } = require('./signal_class.js');
 
+// Piso de excursion favorable (en R) para conceder 'parcial' cuando NO se toco ningun TP.
+// Debajo de esto, un MFE apenas positivo es RUIDO, no media victoria → 'no' honesto.
+// Perilla (Gonzalo 10/08): 0.5R = medio riesgo ganado. Tuneable con medicion.
+const PARCIAL_MIN_MFE_R = 0.5;
+
 // TP tocado → rango numérico (TP1=1, TP2=2, TP3=3, nada=0). Tolera 'tp2'/'TP2'/2.
 function tpRank(hitTP){
   if(hitTP == null) return 0;
@@ -67,9 +72,9 @@ function judgeByClass(record, clase){
     if((mfe != null && mfe >= bar) || rank >= 1)
       return Object.assign({ veredicto: 'ganó',
         motivo: (rank >= 1 ? 'tocó '+ (rec.hitTP) : 'MFE '+ mfe +'R ≥ '+ bar +'R') }, base);
-    if(mfe != null && mfe > 0)
+    if(mfe != null && mfe >= PARCIAL_MIN_MFE_R)
       return Object.assign({ veredicto: 'parcial',
-        motivo: 'se movió +'+ mfe +'R a favor pero no llegó a '+ bar +'R' }, base);
+        motivo: 'se movió +'+ mfe +'R a favor (≥'+ PARCIAL_MIN_MFE_R +'R) pero no llegó a '+ bar +'R' }, base);
     return Object.assign({ veredicto: 'no', motivo: 'no avanzó a favor (MFE '+ (mfe==null?'s/d':mfe+'R') +')' }, base);
   }
 
@@ -80,8 +85,8 @@ function judgeByClass(record, clase){
     return Object.assign({ veredicto: 'parcial', motivo: 'tocó '+ tpName(rank) +' (entró al tier, no al pleno '+ tpName(full) +')' }, base);
   if(rank >= 1)
     return Object.assign({ veredicto: 'parcial', motivo: 'tocó '+ tpName(rank) +' (por debajo del tier de la clase, pero la dirección pagó)' }, base);
-  if(mfe != null && mfe > 0)
-    return Object.assign({ veredicto: 'parcial', motivo: 'sin TP pero MFE +'+ mfe +'R (dirección a favor, no alcanzó tier)' }, base);
+  if(mfe != null && mfe >= PARCIAL_MIN_MFE_R)
+    return Object.assign({ veredicto: 'parcial', motivo: 'sin TP pero MFE +'+ mfe +'R (≥'+ PARCIAL_MIN_MFE_R +'R a favor, no alcanzó tier)' }, base);
   return Object.assign({ veredicto: 'no', motivo: 'no alcanzó ni el primer TP ni excursión favorable' }, base);
 }
 
