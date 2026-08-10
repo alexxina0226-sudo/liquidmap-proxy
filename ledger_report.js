@@ -5,6 +5,10 @@
 // estilo Telegram. Es el "resumen semanal de las señales" que pidió Gonzalo.
 'use strict';
 const { aggregate } = require('./ledger_core.js');
+// Juez por clase: require FAIL-OPEN. Si el módulo falta, el resumen sale sin la
+// línea por clase (comportamiento previo) — jamás rompe el /resumen que está vivo.
+let aggregateByClass = null;
+try { ({ aggregateByClass } = require('./ledger_class_judge.js')); } catch(_e){ aggregateByClass = null; }
 
 // Clave de semana (lunes de la semana que contiene ms, en UTC) → 'YYYY-MM-DD'.
 function weekKeyUTC(ms){
@@ -31,7 +35,8 @@ function weeklySummary(records){
       overall: aggregate(recs)['ALL'] || null,
       byGrade: aggregate(recs, r => r.grade || '—'),
       bySetup: aggregate(recs, r => r.setup || '—'),
-      byHorizon: aggregate(recs, r => r.horizon || '—')
+      byHorizon: aggregate(recs, r => r.horizon || '—'),
+      byClass: aggregateByClass ? aggregateByClass(recs.map(r => ({ record: r, clase: r.horizon }))) : null
     };
   }
   return out;
@@ -51,6 +56,21 @@ function _lineByGroup(groups){
     .join(' · ');
 }
 
+// Línea por clase con la VARA del juez: "swing 3G/5P/13N (HR 19%, MFE +0.40R, n21)".
+// G=ganó · P=parcial · N=no (cada clase con su criterio, no la binaria TP/SL).
+function _lineByClass(byClass){
+  const order = { scalp: 0, day: 1, swing: 2 };
+  const keys = Object.keys(byClass || {}).filter(k => k !== '—' && k !== 'indefinido');
+  if(!keys.length) return '—';
+  return keys
+    .sort((a, b) => (order[a] != null ? order[a] : 9) - (order[b] != null ? order[b] : 9))
+    .map(k => {
+      const g = byClass[k];
+      return `${k} ${g['ganó']}G/${g.parcial}P/${g.no}N (HR ${pct(g.hitRateClase)}, MFE ${rr(g.avgMfeR)}, n${g.n})`;
+    })
+    .join(' · ');
+}
+
 // Texto estilo Telegram de UNA semana.
 function formatWeekly(weekObj){
   if(!weekObj || !weekObj.overall) return '📊 Semana ' + (weekObj && weekObj.week || '—') + ': sin señales resueltas.';
@@ -64,6 +84,7 @@ function formatWeekly(weekObj){
   L.push('Por setup: ' + _lineByGroup(weekObj.bySetup));
   L.push('Por semáforo: ' + _lineByGroup(weekObj.byGrade));
   L.push('Por horizonte: ' + _lineByGroup(weekObj.byHorizon));
+  if(weekObj.byClass) L.push('Por clase (juez): ' + _lineByClass(weekObj.byClass));
   return L.join('\n');
 }
 
