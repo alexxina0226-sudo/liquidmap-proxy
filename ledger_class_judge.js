@@ -93,34 +93,33 @@ function judgeByClass(record, clase){
 function tpName(r){ return r >= 1 && r <= 3 ? 'TP'+r : '—'; }
 
 // aggregateByClass(items) → { [clase]: {n, ganó, parcial, no, indef, hitRateClase, avgMfeR, avgMaeR} }
-//   items: [{ record, clase }] (o [{ ...record, clase }]) — cada uno se juzga y se agrupa.
-//   hitRateClase = ganó / (ganó+parcial+no)  [pendiente/indefinido no cuentan al denominador]
+// items: [{ record, clase }] o [{...record, clase}].
 function aggregateByClass(items){
   const out = {};
-  (Array.isArray(items) ? items : []).forEach(it => {
-    if(!it) return;
-    const rec = it.record || it;
-    const clase = it.clase || rec.clase;
-    const j = judgeByClass(rec, clase);
-    const k = clase || 'indefinido';
-    const g = out[k] || (out[k] = { n:0, ganó:0, parcial:0, no:0, indef:0, pend:0, _mfe:[], _mae:[] });
+  for(const it of (items || [])){
+    const rec   = it.record || it;
+    const clase = it.clase != null ? it.clase : rec.clase;
+    const v = judgeByClass(rec, clase);
+    const k = v.clase || 'indefinido';
+    const g = out[k] || (out[k] = { n:0, 'ganó':0, parcial:0, no:0, indef:0, pend:0,
+                                    hitRateClase:null, avgMfeR:null, avgMaeR:null, _mfe:[], _mae:[] });
     g.n++;
-    if(j.veredicto === 'ganó') g.ganó++;
-    else if(j.veredicto === 'parcial') g.parcial++;
-    else if(j.veredicto === 'no') g.no++;
-    else if(j.veredicto === 'pendiente') g.pend++;
+    if(v.veredicto === 'ganó') g['ganó']++;
+    else if(v.veredicto === 'parcial') g.parcial++;
+    else if(v.veredicto === 'no') g.no++;
+    else if(v.veredicto === 'pendiente') g.pend++;
     else g.indef++;
-    if(j.mfeR != null) g._mfe.push(j.mfeR);
-    if(j.maeR != null) g._mae.push(j.maeR);
-  });
-  Object.keys(out).forEach(k => {
+    if(typeof v.mfeR === 'number' && isFinite(v.mfeR)) g._mfe.push(v.mfeR);
+    if(typeof v.maeR === 'number' && isFinite(v.maeR)) g._mae.push(v.maeR);
+  }
+  for(const k in out){
     const g = out[k];
-    const dec = g.ganó + g.parcial + g.no;               // resueltos con veredicto real
-    g.hitRateClase = dec ? +(g.ganó / dec).toFixed(3) : null;
-    g.avgMfeR = g._mfe.length ? +(avg(g._mfe)).toFixed(3) : null;
-    g.avgMaeR = g._mae.length ? +(avg(g._mae)).toFixed(3) : null;
+    const decididos = g['ganó'] + g.no;
+    g.hitRateClase = decididos > 0 ? g['ganó'] / decididos : 0;
+    g.avgMfeR = g._mfe.length ? +avg(g._mfe).toFixed(3) : null;
+    g.avgMaeR = g._mae.length ? +avg(g._mae).toFixed(3) : null;
     delete g._mfe; delete g._mae;
-  });
+  }
   return out;
 }
 
