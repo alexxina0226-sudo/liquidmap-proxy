@@ -79,9 +79,14 @@ try {
       token: process.env.LEDGER_GH_TOKEN, gistId: process.env.LEDGER_GH_GIST,
       filename: 'ledger_bolsa.jsonl', onError: e => console.log('📒 ledger gist: ' + e.message)
     });
-    ledgerDriver.init().then(n => console.log(`📒 Ledger listo (${n} registros)`))
-                       .catch(e => console.log('📒 ledger init: ' + e.message));   // fail-open
     ledgerStore = createLedgerStore(ledgerDriver);
+    ledgerDriver.init()
+      .then(n => { console.log(`📒 Ledger listo (${n} registros)`); return ledgerStore.load(); })
+      .then(recs => {
+        const t = rehydrateAntiSpam(recs);
+        if (t) console.log(`🛡️ Anti-spam rehidratado (${t} tickers) — sin re-emisión en cold-boot`);
+      })
+      .catch(e => console.log('📒 ledger init/rehidrat: ' + e.message));   // fail-open
   } else {
     console.log('📒 Ledger OFF — faltan env LEDGER_GH_TOKEN / LEDGER_GH_GIST.');
   }
@@ -301,6 +306,30 @@ function getState(ticker) {
     STATE[ticker] = { lastSignalDir: null, lastSignalTs: 0, lastStructSig: null, lastCandle4H: null };
   }
   return STATE[ticker];
+}
+
+// ── ANTI-SPAM PERSISTENTE (fix duplicados en cold-boot) ──────
+// El STATE de arriba es SOLO en memoria: en Render free la instancia hace spin-down y
+// cada cold-boot lo borra → la 1ra scan re-emitía cada setup vigente y lo re-appendeaba
+// al gist (duplicados). Esto rehidrata el STATE desde el ledger persistido al arrancar,
+// para que el cooldown ya existente silencie la re-emisión. FAIL-OPEN: records inválidos → 0.
+function rehydrateAntiSpam(records) {
+  if (!Array.isArray(records)) return 0;
+  for (const r of records) {
+    if (!r || !r.sym) continue;
+    const dir = r.type || r.direction;                 // el ledger persiste 'type' (BUY/SELL)
+    if (!dir) continue;
+    const cur = STATE[r.sym];
+    if (!cur || (r.ts || 0) > (cur.lastSignalTs || 0)) {
+      STATE[r.sym] = {
+        lastSignalDir: dir,
+        lastSignalTs:  r.ts || 0,
+        lastStructSig: r.setup != null ? r.setup : null,
+        lastCandle4H:  null                            // ledger guarda ts (emisión), no candle.t → cooldown cubre
+      };
+    }
+  }
+  return Object.keys(STATE).length;
 }
 
 // ── HELPERS ─────────────────────────────────────────────────
