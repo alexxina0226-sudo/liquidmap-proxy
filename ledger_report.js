@@ -30,9 +30,17 @@ function weeklySummary(records){
   const out = {};
   for(const wk in byWeek){
     const recs = byWeek[wk];
+    const ov = aggregate(recs)['ALL'] || null;
+    if(ov){
+      const mfe = recs.map(r => r.mfeR).filter(x => typeof x === 'number' && isFinite(x));
+      const mae = recs.map(r => r.maeR).filter(x => typeof x === 'number' && isFinite(x));
+      ov.avgMfeR = mfe.length ? +(mfe.reduce((s,x)=>s+x,0)/mfe.length).toFixed(3) : null;
+      ov.avgMaeR = mae.length ? +(mae.reduce((s,x)=>s+x,0)/mae.length).toFixed(3) : null;
+      ov.nMfe = mfe.length;
+    }
     out[wk] = {
       week: wk,
-      overall: aggregate(recs)['ALL'] || null,
+      overall: ov,
       byGrade: aggregate(recs, r => r.grade || '—'),
       bySetup: aggregate(recs, r => r.setup || '—'),
       byHorizon: aggregate(recs, r => r.horizon || '—'),
@@ -77,7 +85,10 @@ function formatWeekly(weekObj){
   const o = weekObj.overall;
   const L = [];
   L.push('📊 Resumen semanal · ' + weekObj.week);
-  L.push(`Señales resueltas: ${o.n} · Aciertos ${o.wins}/${o.wins + o.losses} (${pct(o.hitRate)}) · Expectativa ${rr(o.expectancyR)}`);
+  let head = `Señales resueltas: ${o.n} · Aciertos ${o.wins}/${o.wins + o.losses} (${pct(o.hitRate)}) · Expectativa ${rr(o.expectancyR)}`;
+  if(o.avgMfeR != null) head += ` · MFE prom ${rr(o.avgMfeR)}` + (o.nMfe < o.n ? ` (n${o.nMfe})` : '');
+  if(o.avgMaeR != null) head += ` · MAE prom ${rr(o.avgMaeR)}`;
+  L.push(head);
   if(o.expired || o.invalid || o.ambiguo){
     L.push(`(expiradas ${o.expired} · invalidadas ${o.invalid} · ambiguas ${o.ambiguo})`);
   }
