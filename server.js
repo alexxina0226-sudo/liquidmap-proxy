@@ -3,6 +3,9 @@ const fetch   = require('node-fetch');
 const path    = require('path');
 const optLive    = require('./options_live');    // capa I/O reusable (server + bot): GEX (BS) + Max Pain reales
 const cvdLive    = require('./cvd_live');         // FASE 3: CVD por agresor real (Lee-Ready sobre trades+quotes SIP)
+let printsLive;                                   // DARK POOL paso 1: prints grandes (>$1M) reusando la tubería de trades SIP
+try { printsLive = require('./prints_live'); }    // defensivo (mismo patrón que health_state): si falta el archivo, NO tumba el server
+catch (e) { console.error('⚠️  prints_live.js no cargado — /alpaca-prints degradado:', e.message); printsLive = null; }
 const app     = express();
 
 // ── LATIDO DE MONITORES (health_state) — defensivo: si falta el archivo, NO tumba el server ──
@@ -608,6 +611,34 @@ app.get('/alpaca-cvd', async (req, res) => {
     }
     const rth = String(req.query.rth) !== '0';
     const r = await cvdLive.fetchAggressorCVD(sym, start, end, { rth });
+    return res.json({ status: 'OK', ticker: sym, ...r });
+  } catch (e) {
+    res.status(500).json({ status: 'ERROR', error: e.message });
+  }
+});
+
+// ── /alpaca-prints (DARK POOL paso 1): PRINTS grandes (>$1M) de una ventana ──
+// Reusa la MISMA tubería de trades SIP que /alpaca-cvd (fetchPaged de cvd_live) para
+// filtrar los trades cuyo notional (precio×size) supera un umbral (default $1M) —
+// huella de bloques/flujo institucional. AISLADA: no toca el CVD real.
+// Params: ?sym= &start=RFC3339 &end=RFC3339 [&rth=0] [&min=1000000] [&top=20]
+app.get('/alpaca-prints', async (req, res) => {
+  try {
+    if (!printsLive) {
+      return res.status(503).json({ status: 'ERROR', error: 'prints_live.js no está en el repo todavía' });
+    }
+    if (!ALPACA_KEY_ID || !ALPACA_SECRET) {
+      return res.status(500).json({ status: 'ERROR', error: 'ALPACA keys no configuradas' });
+    }
+    const sym = String(req.query.sym || '').toUpperCase();
+    const start = req.query.start, end = req.query.end;
+    if (!sym || !start || !end) {
+      return res.status(400).json({ status: 'ERROR', error: 'faltan params (sym, start, end)' });
+    }
+    const rth = String(req.query.rth) !== '0';
+    const minNotional = Number(req.query.min) > 0 ? Number(req.query.min) : 1e6;
+    const topN = Number(req.query.top) > 0 ? Number(req.query.top) : 20;
+    const r = await printsLive.fetchLargePrints(sym, start, end, { rth, minNotional, topN });
     return res.json({ status: 'OK', ticker: sym, ...r });
   } catch (e) {
     res.status(500).json({ status: 'ERROR', error: e.message });
