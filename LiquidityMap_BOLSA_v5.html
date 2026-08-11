@@ -453,8 +453,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <h3>🐋 Flujo &amp; Ballenas</h3>
       <div class="mr"><span class="lb">RVOL (huella)</span><span class="vl y" id="fl-rvol">—</span></div>
       <div class="mr"><span class="lb">Dirección huella</span><span class="vl" id="fl-foot">—</span></div>
-      <div class="mr"><span class="lb">Prints &gt;$1M</span><span class="vl" id="fl-prints" style="color:var(--muted)">🔒 Developer $79</span></div>
-      <div class="mr"><span class="lb">Dark Pool real</span><span class="vl" id="fl-dpool" style="color:var(--muted)">🔒 Developer $79</span></div>
+      <div class="mr"><span class="lb">Prints &gt;$1M</span><span class="vl" id="fl-prints" style="color:var(--muted)">📡 …</span></div>
+      <div class="mr"><span class="lb">Dark Pool real</span><span class="vl" id="fl-dpool" style="color:var(--muted)">📡 …</span></div>
       <div class="mr"><span class="lb">CVD por agresor</span><span class="vl" id="fl-cvdagg" style="color:var(--muted)">📡 …</span></div>
       <div style="margin-top:4px;font-size:8px;color:var(--muted)">RVOL real (huella). CVD por agresor = order-flow REAL (Lee-Ready, ventana reciente). Prints/dark pool requieren condiciones de trade / venues (próxima fase).</div>
     </div>
@@ -568,6 +568,8 @@ const CONTRATO_URL = POLY_PROXY.replace('/alpaca', '/alpaca-contrato'); // Selec
 const AUDIT_URL = POLY_PROXY.replace('/alpaca', '/alpaca-audit');       // s77: auditoría de la salida contra la realidad (comando /audit)
 const CVD_URL = POLY_PROXY.replace('/alpaca', '/alpaca-cvd');           // FASE 3 s81: CVD real por agresor (Lee-Ready). Display-only en el slot fl-cvdagg; NO alimenta el score (eso es Etapa 3b).
 const CVD_AGG_WINDOW_MIN = 10;  // ventana reciente del CVD por agresor (order-flow reciente; corto = rápido y sin 'partial' aun en SPY). Tunable.
+const PRINTS_URL = POLY_PROXY.replace('/alpaca', '/alpaca-prints');     // DARK POOL: prints >$1M deduplicados + tag off-exchange 'D' (display-only, slots fl-prints/fl-dpool)
+const PRINTS_WINDOW_MIN = 120;  // ventana de prints/dark pool (últimas 2h; más larga que el CVD para acumular bloques del día). Tunable.
 const CVD_TO_SCORE = true;      // FASE 3 etapa 3b: el SCORE usa el CVD real por agresor. PRENDIDO 03/08 tras validar la 3a EN MOVIMIENTO (SPY 📡 latiendo, coherente con estimado). Fallback honesto al estimado si el real no viene limpio.
 let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si la ruta falla → degradación segura
 let ws = null;
@@ -2016,6 +2018,84 @@ function updateAggressorCVD(symArg, tfArg, cndls){
 }
 window.updateAggressorCVD = updateAggressorCVD;
 
+// ── DARK POOL (paso 3): PRINTS >$1M + % OFF-EXCHANGE en los slots fl-prints / fl-dpool ──
+//  DISPLAY-ONLY. Pide /alpaca-prints (prints grandes deduplicados + tag off-exchange 'D')
+//  para una ventana reciente y llena los dos slots. Espeja updateAggressorCVD (misma lógica
+//  de ventana). NO toca el motor ni el score. Throttle por símbolo (120s). Fail-safe: si el
+//  endpoint no responde (503 sin deploy, error), los slots muestran '—', el resto sigue igual.
+const _prints = { key:null, ts:0, err:false, data:null };
+// ventana reciente en ms (mercado abierto → ahora; cerrado → fin de última vela topado a 16:00 ET)
+function _recentWindowMs(cndls, tfArg, windowMin){
+  const lastBar = cndls[cndls.length-1];
+  const tfMin = ({'5':5,'15':15,'60':60,'240':240,'D':1440})[tfArg] || 60;
+  const open = (typeof getMktStatus==='function') && getMktStatus()==='open';
+  const barOpenMs = lastBar.t*1000;
+  let endMs;
+  if(open){ endMs = Date.now(); }
+  else {
+    const pe = _rthFmt.formatToParts(new Date(barOpenMs));
+    let bhh = parseInt(pe.find(x=>x.type==='hour').value,10); if(bhh===24) bhh=0;
+    const bmm = parseInt(pe.find(x=>x.type==='minute').value,10);
+    const rthCloseMs = barOpenMs + Math.max(0, 960-(bhh*60+bmm))*60000;   // 16:00 ET del día de la vela
+    endMs = Math.min(barOpenMs + tfMin*60000, rthCloseMs);
+  }
+  return { startMs: endMs - windowMin*60000, endMs, open };
+}
+function updatePrints(symArg, tfArg, cndls){
+  const elP = document.getElementById('fl-prints'), elD = document.getElementById('fl-dpool');
+  if((!elP && !elD) || !cndls || !cndls.length) return;
+  const key = symArg, now = Date.now();
+  if(key===_prints.key && !_prints.err && (now-_prints.ts)<120000) return;   // throttle
+  _prints.key=key; _prints.ts=now; _prints.err=false;
+  const w = _recentWindowMs(cndls, tfArg, PRINTS_WINDOW_MIN);
+  const startISO = new Date(w.startMs).toISOString(), endISO = new Date(w.endMs).toISOString();
+  if(elP){ elP.style.color='var(--muted)'; elP.textContent='📡 …'; }
+  if(elD){ elD.style.color='var(--muted)'; elD.textContent='📡 …'; }
+  fetch(`${PRINTS_URL}?sym=${encodeURIComponent(symArg)}&start=${encodeURIComponent(startISO)}&end=${encodeURIComponent(endISO)}`)
+    .then(r=>r.json())
+    .then(j=>{
+      if(_prints.key!==key) return;   // cambió de símbolo mientras cargaba
+      if(!j || j.status!=='OK'){
+        const msg=(j&&j.error)?('Prints: '+j.error):'Prints: sin respuesta';
+        if(elP){ elP.style.color='var(--muted)'; elP.textContent='—'; elP.title=msg; }
+        if(elD){ elD.style.color='var(--muted)'; elD.textContent='—'; elD.title=msg; }
+        return;
+      }
+      _prints.data = j;
+      const auc=(j.auctionCount||0), aucN=(j.auctionNotional||0);
+      const nCont = Math.max(0, (j.count||0)-auc);                       // bloques de mercado continuo (sin subasta)
+      const contNotional = Math.max(0, (j.totalNotional||0)-aucN);
+      const top = Array.isArray(j.top)?j.top:[];
+      const biggest = top.find(p=>p && !p.auction);                     // mayor no-subasta (top viene desc)
+      // fl-prints: cuántos bloques continuos + el mayor (no-subasta)
+      if(elP){
+        if(nCont>0){ elP.style.color='var(--green)'; elP.textContent = nCont+' · máx '+_fmtK(biggest?biggest.notional:0); }
+        else { elP.style.color='var(--muted)'; elP.textContent='sin bloques'; }
+        elP.title = 'PRINTS >$1M (bloques, ventana '+PRINTS_WINDOW_MIN+'m'+(w.open?' en vivo':' última sesión')+')\n'
+          + nCont+' bloques de mercado · $'+_fmtK(contNotional)+' notional'
+          + (auc>0?('\n+ '+auc+' subasta (open/close cross) $'+_fmtK(aucN)+' — aparte'):'')
+          + (j.partial?'\n· PARCIAL (tope de datos)':'');
+      }
+      // fl-dpool: % off-exchange (proxy dark pool) sobre el flujo continuo
+      if(elD){
+        const offN=(j.offExchangeNotional||0), offC=(j.offExchangeCount||0);
+        const pct = contNotional>0 ? Math.round(offN/contNotional*100) : 0;
+        if(offC>0){
+          elD.style.color = pct>=30?'var(--yellow)':(pct>=15?'var(--green)':'var(--text)');
+          elD.textContent = pct+'% · $'+_fmtK(offN);
+        } else { elD.style.color='var(--muted)'; elD.textContent='0%'; }
+        elD.title = "DARK POOL (proxy off-exchange, venue FINRA/TRF 'D')\n"
+          + offC+' prints off-exchange · $'+_fmtK(offN)+' ('+pct+'% del flujo continuo)\n'
+          + 'proxy honesto del flujo oculto (dark pools + ATS + internalizadores), NO dark-pool puro';
+      }
+    })
+    .catch(err=>{ if(_prints.key===key){ _prints.err=true;
+      if(elP){ elP.style.color='var(--muted)'; elP.textContent='—'; elP.title='Error prints: '+err.message; }
+      if(elD){ elD.style.color='var(--muted)'; elD.textContent='—'; elD.title='Error prints: '+err.message; }
+    }});
+}
+window.updatePrints = updatePrints;
+
 // ── FASE 3 (s81) etapa 3b: el SCORE usa el CVD REAL por agresor cuando viene LIMPIO ──
 //  Espejo de resolveScoreCVD (cvd_score.js, probado en banco 28/28). Pisa los globales
 //  cvd/buyV/sellV/cvdReal ANTES de que el score los lea → score Y panel quedan coherentes
@@ -2421,7 +2501,7 @@ function updateDerived(){
     const whF = detectWhale(candles, 3.0);
     if(whF){ set('fl-foot', whF.dir==='BUY'?'▲ COMPRADORA':'▼ VENDEDORA', whF.dir==='BUY'?'g':'r'); }
     else set('fl-foot','Normal','');
-    // fl-prints / fl-dpool quedan en "🔒 Developer $79" (necesitan condiciones de trade / venues — sesión Flujo & Ballenas)
+    updatePrints(sym, tf, candles);         // DARK POOL: prints >$1M + % off-exchange (display-only, NO toca el score)
     updateAggressorCVD(sym, tf, candles);   // FASE 3 s81: CVD real por agresor (display-only, NO toca el score)
   }
   // VWAP REAL (precio típico ponderado por volumen sobre la ventana de sesión)
