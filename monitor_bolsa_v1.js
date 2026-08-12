@@ -47,6 +47,15 @@ let getOptionsMetrics = null;
 try { getOptionsMetrics = require('./options_live.js').getOptionsMetrics; }
 catch (e) { console.log('⚠️ options_live.js no encontrado — GEX/Max Pain reales desactivados (muestra N/D). Subir options_live.js + options_metrics.js para activarlos.'); }
 
+// ── DARK POOL / PRINTS REALES (PASO 4A) — MISMA tubería SIP que el mapa (/alpaca-prints) ──
+// prints_live.fetchLargePrints reusa fetchPaged de cvd_live (trades SIP ya en producción).
+// Trae los bloques >$1M de la ventana + tag off-exchange ('D' = dark pool proxy). El monitor
+// lo muestra en el panel FLUJO & BALLENAS (display, NO toca score — igual que el mapa). Si el
+// módulo falta, el panel se OMITE solo (fail-open) y el bot emite idéntico a antes.
+let fetchLargePrints = null;
+try { fetchLargePrints = require('./prints_live.js').fetchLargePrints; }
+catch (e) { console.log('⚠️ prints_live.js no encontrado — panel DARK POOL/PRINTS desactivado (display-only, no afecta señales). Subir prints.js + prints_live.js al repo para activarlo.'); }
+
 // ── DETECTOR DE ESTRUCTURA CANÓNICO (s61) — MISMO módulo que certifica el mapa ──
 // Una sola fuente de verdad: detectStructure_v2.js (ya en el repo desde s59).
 // Si falta, la CAPA 4 se APAGA (honesto: mejor callar que señalar con el detector viejo).
@@ -298,6 +307,14 @@ const ATR_PCT = {
 const MIN_SCORE     = 6;
 const COOLDOWN_MS   = 4 * 60 * 60 * 1000;
 const SCAN_INTERVAL = 5 * 60 * 1000;
+
+// ── DARK POOL / PRINTS (PASO 4A) — ventana de huella institucional ──────────
+// Espejo del panel del mapa (audit: PRINTS_WINDOW_MIN=120). Se leen los bloques
+// >$1M de los últimos 120 min (RTH) para el panel FLUJO & BALLENAS del mensaje.
+// display-only: NO entra al score. Tunable por env sin tocar código.
+const PRINTS_WINDOW_MIN = +process.env.PRINTS_WINDOW_MIN || 120;
+const PRINTS_MIN_NOTIONAL = +process.env.PRINTS_MIN_NOTIONAL || 1e6;   // umbral bloque grande ($1M)
+const PRINTS_TOPN = +process.env.PRINTS_TOPN || 20;
 
 // ── ESTADO ──────────────────────────────────────────────────
 const STATE = {};
@@ -907,6 +924,104 @@ function _estimateDarkPool_disabled(candles, price) {
 }
 
 // ════════════════════════════════════════════════════════════
+//  DARK POOL / PRINTS REALES (PASO 4A) — display, NO score
+//  Reemplaza el dark pool estimado (arriba, apagado) por la huella REAL de
+//  bloques >$1M leída de la misma tubería SIP del mapa. Dos piezas:
+//   · fetchDarkPoolPrints: I/O fail-open (ventana de PRINTS_WINDOW_MIN).
+//   · interpretFlow: PURA y benchable — traduce {prints + CVD + estructura}
+//     a la lectura de la clase (acumulación/distribución/reversión/sin respaldo).
+//  Filosofía de la clase: el dark pool AMPLIFICA, no dirige. La dirección la
+//  dan CVD + estructura. Por eso esto NO vota el score — es panel/contexto,
+//  igual que en el mapa. (Graduarlo a amplificador = decisión futura con ledger.)
+// ════════════════════════════════════════════════════════════
+
+// $ humano compacto: $45.8M · $274.3M · $920k · $0. PURO (benchable).
+function fmtMoney(n) {
+  const v = (typeof n === 'number' && isFinite(n)) ? n : 0;
+  const a = Math.abs(v);
+  if (a >= 1e9) return `$${(v/1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `$${(v/1e6).toFixed(1)}M`;
+  if (a >= 1e3) return `$${Math.round(v/1e3)}k`;
+  return `$${Math.round(v)}`;
+}
+
+// Lee la huella institucional según la MATRIZ de la clase. PURA (sin I/O).
+//  prints  = salida de fetchLargePrints (o null si no hubo dato/módulo)
+//  cvd4H   = result de calcCVD (signo + buyPct)  ·  struct4H = detectStructure (dir)
+// Devuelve { panel, read } o null si no hay panel para mostrar. NUNCA toca score.
+function interpretFlow(prints, cvd4H, struct4H) {
+  if (!prints || !prints.hadData || !(prints.count > 0)) {
+    // Vacío institucional (caso MSFT): no hubo bloques grandes en la ventana.
+    if (prints && prints.nTrades > 0) {
+      return { panel: `🐋 Prints: 0 bloques >${fmtMoney(PRINTS_MIN_NOTIONAL)} · 🌑 Dark Pool: —`,
+               read:  `poco peso institucional — sin bloques grandes en la ventana` };
+    }
+    return null;  // ni datos: se omite el panel (fail-open silencioso)
+  }
+
+  const pct   = Math.round((prints.offExchangePct || 0) * 100);   // % del $ grande que fue oculto
+  const off$  = fmtMoney(prints.offExchangeNotional || 0);
+  const max$  = fmtMoney(prints.maxNotional || 0);
+  const auxA  = prints.auctionCount > 0 ? ` · incl. ${prints.auctionCount} subasta` : '';
+  const auxP  = prints.partial ? ' ·⚠ ventana parcial' : '';
+  const panel = `🐋 Prints: ${prints.count} · máx ${max$}${auxA}\n🌑 Dark Pool: ${pct}% · ${off$}${auxP}`;
+
+  // Dirección del flujo agresor (CVD) y de la estructura — la clase: dark AMPLIFICA.
+  const cvdSell = cvd4H && (cvd4H.cvd < 0 || cvd4H.buyPct < 49);
+  const cvdBuy  = cvd4H && (cvd4H.cvd > 0 && cvd4H.buyPct > 51);
+  const cvdDir  = cvdSell ? 'SELL' : cvdBuy ? 'BUY' : null;
+  const stDir   = struct4H ? (String(struct4H.type).includes('BUY') ? 'BUY' : 'SELL') : null;
+
+  let read;
+  if (pct < 15) {
+    // Dark bajo: movimiento sin respaldo oculto (mov sin peso institucional).
+    read = `poco respaldo institucional — dark pool ${pct}% bajo (mov sin peso oculto)`;
+  } else if (pct < 30) {
+    // Dark MODERADO (caso BABA 21%): NO alcanza para cantar acumulación/distribución.
+    // La clase lo dejó en "esperar" aunque CVD/estructura alinearan — es tentativo.
+    if (cvdDir && stDir && cvdDir === stDir) {
+      read = `flujo oculto moderado (${pct}%) — sesgo ${cvdDir === 'SELL' ? 'distributivo ▼' : 'acumulativo ▲'} TENTATIVO, sin peso fuerte`;
+    } else {
+      read = `flujo oculto moderado (${pct}%) — sin dirección clara (esperar)`;
+    }
+  } else {
+    // Dark ALTO / MUY ALTO (≥30%): recién acá aplica la matriz fuerte de la clase.
+    const nivel = pct >= 50 ? 'muy alto' : 'alto';
+    if (cvdDir && stDir && cvdDir === stDir) {
+      // CVD y estructura del MISMO lado (caso AAPL 91%): acumulación/distribución real.
+      read = cvdDir === 'SELL'
+        ? `DISTRIBUCIÓN — grandes descargando oculto (dark ${nivel} ${pct}% + CVD venta + estructura ▼)`
+        : `ACUMULACIÓN — grandes cargando oculto (dark ${nivel} ${pct}% + CVD compra + estructura ▲)`;
+    } else if (cvdDir && stDir && cvdDir !== stDir) {
+      // Flujo oculto CONTRA la estructura: aviso de reversión.
+      read = `⚠️ posible REVERSIÓN — flujo oculto contra la estructura (dark ${nivel} ${pct}% · CVD ${cvdDir === 'SELL' ? 'venta' : 'compra'} vs estructura ${stDir === 'BUY' ? '▲' : '▼'})`;
+    } else {
+      // Dark alto pero falta una pata (caso AMZN 71% sin estructura): sin confirmar.
+      const falta = !stDir ? 'estructura' : 'CVD claro';
+      read = `flujo oculto activo (dark ${nivel} ${pct}%) — dirección no confirmada (falta ${falta})`;
+    }
+  }
+  return { panel, read };
+}
+
+// I/O fail-open: trae los prints grandes de los últimos PRINTS_WINDOW_MIN minutos.
+// Devuelve la salida de fetchLargePrints o null (módulo ausente / sin llaves / error).
+// JAMÁS lanza: el panel es display, nunca puede romper una señal.
+async function fetchDarkPoolPrints(ticker) {
+  if (!fetchLargePrints) return null;
+  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return null;
+  try {
+    const end   = new Date();
+    const start = new Date(end.getTime() - PRINTS_WINDOW_MIN * 60000);
+    return await fetchLargePrints(ticker, start.toISOString(), end.toISOString(),
+      { rth: true, minNotional: PRINTS_MIN_NOTIONAL, topN: PRINTS_TOPN });
+  } catch (e) {
+    console.log(`[${ticker}] dark pool/prints no disponible (${e.message}) — panel omitido, señal sigue`);
+    return null;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 //  MOTOR NEURONAL — PESOS IDÉNTICOS AL MAPA v6
 // ════════════════════════════════════════════════════════════
 function evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session }) {
@@ -1104,7 +1219,11 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const stLine    = result.st4H       ? `\n${result.st4H.label}${result.st4H.crossed?' ← CRUCE RECIENTE':''}` : '';
   const structL   = result.struct4H   ? `\n🔷 ${result.struct4H.label} 4H` : '';
   const shLine    = result.sh4H       ? `\n🎯 Stop Hunt ${result.sh4H.type==='SH_BUY'?'alcista':'bajista'} 4H` : '';
-  const dpLine    = '';  // Dark Pool desactivado (FASE 4)
+  const dpLine    = '';  // (dark pool real ahora va en el bloque FLUJO & BALLENAS, abajo)
+  // ── FLUJO & BALLENAS (PASO 4A) — huella institucional REAL, display-only ──
+  const flowBlock = (result.flow && result.flow.panel)
+    ? `\n${result.flow.panel}\n🌊 Lectura: ${result.flow.read}`
+    : '';
   const om = result.optMetrics;
   const gexReal = om && om.ok && om.gex;
   const gexInfo = gexReal
@@ -1134,7 +1253,7 @@ ${arrow}
 📊 <b>Confluencias:</b>
 ${confList}${structL}${shLine}${dpLine}${gexLine}
 
-📈 CVD: ${result.cvd4H.cvd>0?'▲ Positivo':'▼ Negativo'} · ${result.cvd4H.buyPct.toFixed(0)}% Buy
+📈 CVD: ${result.cvd4H.cvd>0?'▲ Positivo':'▼ Negativo'} · ${result.cvd4H.buyPct.toFixed(0)}% Buy (estimado)${flowBlock}
 📐 POC: ${result.vp?fmt(result.vp.poc,price):'—'} · VWAP: ${result.vp?fmt(result.vp.vwap,price):'—'}
 
 🛑 SL:  ${fmt(sl,price)}${slLb}
@@ -1289,6 +1408,11 @@ async function scanTicker(ticker, session) {
       try { result.optMetrics = await getOptionsMetrics(ticker, { mode: 'monthly' }); }
       catch (e) { console.log(`[${ticker}] GEX/MaxPain no disponible (${e.message}) — señal sigue`); }
     }
+
+    // ── DARK POOL / PRINTS REALES (PASO 4A) — solo al emitir señal (no en cada scan) ──
+    // display, NO toca score ni gates. Fail-open: si no hay dato, el panel se omite.
+    result.prints = await fetchDarkPoolPrints(ticker);            // huella real o null
+    result.flow   = interpretFlow(result.prints, result.cvd4H, result.struct4H);
 
     await sendTelegram(buildMessage(ticker, price, result, session, quote, candles4H));
     hbSignal('bolsa', `${ticker} ${result.direction} ${result.score}/10`);   // señal real enviada
