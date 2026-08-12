@@ -35,10 +35,11 @@ const monSrc = fs.readFileSync(path.join(__dirname, 'monitor_bolsa_v1.js'), 'utf
 const fmtMoneySrc     = extractFn(monSrc, 'fmtMoney');
 const interpretFlowSrc = extractFn(monSrc, 'interpretFlow');
 const cvdViewSrc       = extractFn(monSrc, 'cvdView');
+const cvdSignalsSrc    = extractFn(monSrc, 'cvdSignals');
 // Scope real: PRINTS_MIN_NOTIONAL default (1e6) + fmtMoney visible a interpretFlow.
 const factory = new Function('PRINTS_MIN_NOTIONAL',
-  `${fmtMoneySrc}\n${interpretFlowSrc}\n${cvdViewSrc}\n return { fmtMoney, interpretFlow, cvdView };`);
-const { fmtMoney, interpretFlow, cvdView } = factory(1e6);
+  `${fmtMoneySrc}\n${interpretFlowSrc}\n${cvdViewSrc}\n${cvdSignalsSrc}\n return { fmtMoney, interpretFlow, cvdView, cvdSignals };`);
+const { fmtMoney, interpretFlow, cvdView, cvdSignals } = factory(1e6);
 
 // ════════════════════════════════════════════════════════════════════════════
 console.log('\n── (A) prints.js PURO — tubería dark pool ──');
@@ -340,6 +341,55 @@ ok('E1 cond [" "] (regular) → NO contingente', P.isContingent([' ']) === false
   ];
   const s = P.summarizePrints(P.filterLargePrints(trades, 1e6), 20);
   ok('E7 subasta NO excluida (sigue en el read)', s.excludedCount === 0 && s.auctionCount === 1);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+console.log('\n── (F) cvdSignals — CAPA 3 pura (4B-B: el CVD real cambia el score) ──');
+const sumW = (sigs, dir) => sigs.filter(s => s.dir === dir).reduce((a, s) => a + s.weight, 0);
+// cvd helpers con la forma que consume la capa (bullish/bearish/divergence/priceDir/buyPct)
+const CVD = (o) => Object.assign({ cvd:0, buyPct:50, bullish:false, bearish:false, divergence:false, priceDir:'up', cvdDir:'up' }, o);
+const neutral1H = CVD({});
+
+// F1 — bullish → voto BUY 1.5.
+{
+  const s = cvdSignals(CVD({ cvd:100, buyPct:60, bullish:true }), neutral1H);
+  ok('F1 bullish → BUY 1.5', sumW(s, 'BUY') === 1.5 && sumW(s, 'SELL') === 0);
+}
+// F2 — bearish → voto SELL 1.5.
+{
+  const s = cvdSignals(CVD({ cvd:-100, buyPct:40, bearish:true }), neutral1H);
+  ok('F2 bearish → SELL 1.5', sumW(s, 'SELL') === 1.5 && sumW(s, 'BUY') === 0);
+}
+// F3 — divergencia (precio↑, cvd no) → voto SELL 2.0.
+{
+  const s = cvdSignals(CVD({ divergence:true, priceDir:'up' }), neutral1H);
+  ok('F3 divergencia precio↑ → SELL 2.0', sumW(s, 'SELL') === 2.0);
+}
+// F4 — confirmación 1H suma 0.5.
+{
+  const s = cvdSignals(CVD({ cvd:100, buyPct:60, bullish:true }), CVD({ bullish:true }));
+  ok('F4 1H confirma alcista → BUY 2.0 (1.5+0.5)', sumW(s, 'BUY') === 2.0);
+}
+// F5 — neutro → sin votos.
+{
+  ok('F5 CVD neutro → 0 votos', cvdSignals(CVD({}), neutral1H).length === 0);
+}
+// F6 — EL NÚCLEO DE 4B-B: mismo precio/estructura, pero CVD real DISTINTO al estimado
+//      produce votos DISTINTOS → cambia el score. Estimado bullish vs real bearish.
+{
+  const candlesDown = [{c:108},{c:106},{c:105},{c:104},{c:103},{c:102},{c:101},{c:100}];
+  const est  = CVD({ cvd:50, buyPct:56, bullish:true });                                   // estimado dice compra
+  const real = cvdView({ cvdReal:true, buyV:44000, sellV:56000, cvd:-12000, partial:false }, est, candlesDown); // real dice venta
+  const sEst  = cvdSignals(est, neutral1H);
+  const sReal = cvdSignals(real, neutral1H);
+  ok('F6 estimado vota BUY', sumW(sEst, 'BUY') === 1.5 && sumW(sEst, 'SELL') === 0);
+  ok('F6 real (override) vota SELL — el override cambia la CAPA 3', sumW(sReal, 'SELL') >= 1.5 && sumW(sReal, 'BUY') === 0);
+  ok('F6 real es source real (confirmaría/suprimiría en el gate)', real.source === 'real' && real.bearish === true);
+}
+// F7 — REGRESIÓN: cvdSignals reproduce EXACTO los votos inline viejos (misma lógica).
+{
+  const s = cvdSignals(CVD({ cvd:100, buyPct:62, bullish:true, divergence:false }), neutral1H);
+  ok('F7 label exacto del voto BUY 1.5', s[0].label === 'CVD 4H positivo — 62% compra institucional' && s[0].weight === 1.5 && s[0].layer === 3);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
