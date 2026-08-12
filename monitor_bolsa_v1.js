@@ -245,6 +245,13 @@ const QUALITY_MIN_SCORE = 8;
 const QUALITY_REQUIRE_STRUCT = true;
 const QUALITY_GOV_SMART = true;
 
+// ── CVD REAL AL SCORE (PASO 4B-B) — flag APAGADO por defecto ──────────────────
+// Cuando está ON: los candidatos que pasan el filtro de calidad (con CVD estimado)
+// se RE-PUNTÚAN con el CVD real por agresor (smart confirmation) y se re-chequea el
+// gate — si el flujo real no confirma, se suprime. OFF = comportamiento actual exacto
+// (score con CVD estimado; el real sigue solo en el panel, 4B-A). Prender para validar
+// en vivo: env CVD_REAL_TO_SCORE=true. NO deploya cambio de señal hasta prenderlo.
+const CVD_REAL_TO_SCORE = String(process.env.CVD_REAL_TO_SCORE || '').toLowerCase() === 'true';
 // passesQualityFilter(result) -> {pass, why}. 'why' se loguea con el motivo.
 //  1) score >= QUALITY_MIN_SCORE
 //  2) estructura BOS/CHoCH del 4H A FAVOR de la direccion (el gatillo)
@@ -1087,10 +1094,26 @@ async function fetchRealCVD(ticker) {
   }
 }
 
+// ── CAPA 3 (CVD) como helper PURO — benchable y reusable con override real (4B-B) ──
+// Genera los votos de la capa CVD a partir de un cvd4H (estimado O real) + cvd1H.
+// Lógica byte-idéntica a la que estaba inline: solo cambia la FUENTE del cvd4H.
+function cvdSignals(cvd4H, cvd1H) {
+  const sig = [];
+  if (cvd4H.bullish) sig.push({ layer:3, dir:'BUY',  weight:1.5, label:`CVD 4H positivo — ${cvd4H.buyPct.toFixed(0)}% compra institucional` });
+  if (cvd4H.bearish) sig.push({ layer:3, dir:'SELL', weight:1.5, label:`CVD 4H negativo — ${(100-cvd4H.buyPct).toFixed(0)}% venta institucional` });
+  if (cvd4H.divergence) {
+    const divDir = cvd4H.priceDir === 'up' ? 'SELL' : 'BUY';
+    sig.push({ layer:3, dir:divDir, weight:2, label:`⚠️ Divergencia CVD 4H — ${divDir==='SELL'?'distribución':'acumulación'} oculta` });
+  }
+  if (cvd1H.bullish && cvd4H.bullish) sig.push({ layer:3, dir:'BUY',  weight:0.5, label:'CVD 1H confirma alcista' });
+  if (cvd1H.bearish && cvd4H.bearish) sig.push({ layer:3, dir:'SELL', weight:0.5, label:'CVD 1H confirma bajista' });
+  return sig;
+}
+
 // ════════════════════════════════════════════════════════════
 //  MOTOR NEURONAL — PESOS IDÉNTICOS AL MAPA v6
 // ════════════════════════════════════════════════════════════
-function evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session }) {
+function evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session, cvdOverride4H }) {
   const signals = [];
 
   // ── CAPA 1: SUPERTREND JUEZ (3pts) ─────────────────────
@@ -1121,19 +1144,11 @@ function evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15
   }
 
   // ── CAPA 3: CVD (1.5pts) ───────────────────────────────
-  const cvd4H = calcCVD(candles4H);
+  // cvdOverride4H = CVD REAL por agresor (4B-B, cuando el flag está ON y el candidato
+  // pasó el filtro). Si no viene, se usa el estimado 60/40 de siempre. cvd1H queda estimado.
+  const cvd4H = cvdOverride4H || calcCVD(candles4H);
   const cvd1H = calcCVD(candles1H);
-
-  if (cvd4H.bullish) signals.push({ layer:3, dir:'BUY',  weight:1.5, label:`CVD 4H positivo — ${cvd4H.buyPct.toFixed(0)}% compra institucional` });
-  if (cvd4H.bearish) signals.push({ layer:3, dir:'SELL', weight:1.5, label:`CVD 4H negativo — ${(100-cvd4H.buyPct).toFixed(0)}% venta institucional` });
-
-  if (cvd4H.divergence) {
-    const divDir = cvd4H.priceDir === 'up' ? 'SELL' : 'BUY';
-    signals.push({ layer:3, dir:divDir, weight:2, label:`⚠️ Divergencia CVD 4H — ${divDir==='SELL'?'distribución':'acumulación'} oculta` });
-  }
-
-  if (cvd1H.bullish && cvd4H.bullish) signals.push({ layer:3, dir:'BUY',  weight:0.5, label:'CVD 1H confirma alcista' });
-  if (cvd1H.bearish && cvd4H.bearish) signals.push({ layer:3, dir:'SELL', weight:0.5, label:'CVD 1H confirma bajista' });
+  for (const s of cvdSignals(cvd4H, cvd1H)) signals.push(s);
 
   // ── CAPA 4: CHoCH + BOS (2pts) ─────────────────────────
   const struct4H = detectStructure(candles4H);
@@ -1404,7 +1419,7 @@ async function scanTicker(ticker, session) {
     let vpWindow = currentSessionCandles(candles15m);
     if (vpWindow.length < 6) vpWindow = (candles15m.length ? candles15m : candles4H).slice(-26); // respaldo: ~1 sesión
     const vp     = buildVolumeProfile(vpWindow, 100);
-    const result = evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session });
+    let result = evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session });
 
     const stLabel = result.st4H ? (result.st4H.bullish ? '↑ST' : '↓ST') : 'ST?';
     console.log(`[${ticker}] Dir=${result.direction} Score=${result.score}/10 ${stLabel} BUY=${result.buyScore.toFixed(1)} SELL=${result.sellScore.toFixed(1)} Capas=${result.layersInDir.size}`);
@@ -1470,6 +1485,28 @@ async function scanTicker(ticker, session) {
       return;
     }
 
+    // ── CVD REAL AL SCORE (PASO 4B-B) — SMART CONFIRMATION, solo al emitir ──────
+    // Recién acá (pasó calidad Y anti-spam) buscamos el CVD real UNA vez — así NO se
+    // gasta llamada en tickers en cooldown. Sirve también para el panel (4A/4B-A). Si
+    // CVD_REAL_TO_SCORE está ON y el real es usable, RE-PUNTUAMOS la CAPA 3 con el real
+    // y RE-CHEQUEAMOS calidad: si el flujo real NO confirma, se suprime (más selectivo).
+    // Fail-open: real null / flag OFF → sigue con el estimado (comportamiento EXACTO).
+    const realCvdRaw = await fetchRealCVD(ticker);                 // 1 llamada, solo emisiones
+    const cvdShown   = cvdView(realCvdRaw, result.cvd4H, candles4H);
+    let cvdScoreSource = 'estimated';
+    if (CVD_REAL_TO_SCORE && cvdShown.source === 'real') {
+      const resultReal = evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session, cvdOverride4H: cvdShown });
+      const qfReal = passesQualityFilter(resultReal);
+      if (resultReal.direction === 'NEUTRAL' || !qfReal.pass) {
+        console.log(`[${ticker}] 🚫 CVD real NO confirma (${qfReal.why || 'neutral'}) — score est.${result.score} → real ${resultReal.score}. Silencio (4B-B).`);
+        return;
+      }
+      console.log(`[${ticker}] ✅ CVD real CONFIRMA — score ${result.score}→${resultReal.score} ${resultReal.direction}`);
+      result = resultReal;                 // emitimos con el CVD real en el score
+      cvdScoreSource = 'real';
+    }
+    result.cvdShown = cvdShown;            // panel: real (o estimado) — 4B-A
+
     console.log(`[${ticker}] ✅ SEÑAL BOLSA v6: ${result.direction} score=${result.score}/10`);
 
     // GEX (BS) + Max Pain REALES (mensual, cacheado 10min). NUNCA bloquea la señal:
@@ -1481,12 +1518,10 @@ async function scanTicker(ticker, session) {
     }
 
     // ── DARK POOL / PRINTS REALES (PASO 4A) — solo al emitir señal (no en cada scan) ──
-    // display, NO toca score ni gates. Fail-open: si no hay dato, el panel se omite.
+    // display, NO toca gates. Fail-open: si no hay dato, el panel se omite.
+    // (el CVD real ya se buscó arriba, en la smart-confirmation — result.cvdShown listo)
     result.prints = await fetchDarkPoolPrints(ticker);            // huella real o null
-    // ── CVD REAL (PASO 4B-A) — para el panel + la lectura (display). Fallback → estimado ──
-    const realCvdRaw = await fetchRealCVD(ticker);               // crudo real o null
-    result.cvdShown  = cvdView(realCvdRaw, result.cvd4H, candles4H);  // real usable, o estimado
-    result.flow      = interpretFlow(result.prints, result.cvdShown, result.struct4H);
+    result.flow   = interpretFlow(result.prints, result.cvdShown, result.struct4H);
 
     await sendTelegram(buildMessage(ticker, price, result, session, quote, candles4H));
     hbSignal('bolsa', `${ticker} ${result.direction} ${result.score}/10`);   // señal real enviada
@@ -1510,7 +1545,7 @@ async function scanTicker(ticker, session) {
         score: result.score, grade: L.grade, setup: structSig, horizon: cls.clase,
         entry: L.entry != null ? L.entry : price, sl: L.sl,
         tp1: L.tp1, tp2: L.tp2, tp3: L.tp3,
-        horizonBars: cls.horizonBars != null ? cls.horizonBars : LEDGER_HORIZON_BARS, cvdSource: null
+        horizonBars: cls.horizonBars != null ? cls.horizonBars : LEDGER_HORIZON_BARS, cvdSource: cvdScoreSource
       }, { onError: e => console.log(`[${ticker}] ledger cap: ${e.message}`) });
       if (ledgerDriver) ledgerDriver.flush().catch(() => {});   // asegura el write-through al gist
     }
@@ -1550,7 +1585,7 @@ console.log('📊 LiquidMap PRO Monitor BOLSA v6 — Sincronizado con Mapa v6');
 console.log(`   Tickers   : ${STOCK_TICKERS.join(', ')}`);
 console.log('   CAPA 1    : SuperTrend JUEZ (3pts)');
 console.log('   CAPA 2    : POC / VWAP (1.5pts)');
-console.log('   CAPA 3    : CVD real + divergencia (1.5pts)');
+console.log(`   CAPA 3    : CVD + divergencia (1.5pts) — score con CVD ${CVD_REAL_TO_SCORE ? 'REAL 📡 (smart confirmation, 4B-B ON)' : 'ESTIMADO (4B-B OFF · panel sí muestra real)'}`);
 console.log('   CAPA 4    : Estructura canónica v2 (BOS 3 · CHoCH+ 2 · CHoCH 1.5) — módulo compartido con el mapa' + (detectStructureV2 ? '' : ' ⚠️ DESACTIVADA (falta detectStructure_v2.js)'));
 console.log('   CAPA 5    : Stop Hunt + OB + EQH/EQL (1pt)');
 console.log('   CAPA 6    : Régimen de Volatilidad (REAL · contexto, 0pts al score)');
