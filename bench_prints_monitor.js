@@ -254,5 +254,94 @@ const estStub = { cvd: 5, buyPct: 55, bullish: false, bearish: false, divergence
 }
 
 // ════════════════════════════════════════════════════════════════════════════
+console.log('\n── (E) prints.js — CONTINGENTES (7/V) + sanidad de precio (honestidad dark pool) ──');
+
+// E1 — isContingent: 7 y V (solo o combinados) sí; subasta/blank no.
+ok('E1 cond [7] → contingente', P.isContingent(['7']) === true);
+ok('E1 cond [V] → contingente', P.isContingent([' ', 'V']) === true);
+ok('E1 cond [7,V] → contingente', P.isContingent([' ', '7', 'V']) === true);
+ok('E1 cond [O,Q] (subasta) → NO contingente', P.isContingent(['O', 'Q']) === false);
+ok('E1 cond [" "] (regular) → NO contingente', P.isContingent([' ']) === false);
+
+// E2 — el print ESPURIO real de SPY ($829, cond 7/V, off-exch D) queda EXCLUIDO del read.
+{
+  const spurio = { ts: 1, price: 829.0061, size: 330000, exchange: 'D', conditions: [' ', '7', 'V'] }; // $273.5M
+  const large = P.filterLargePrints([spurio], 1e6);
+  ok('E2 filterLargePrints taggea contingent:true', large[0].contingent === true);
+  const s = P.summarizePrints(large, 20);
+  ok('E2 excluido del dark pool (offExchangeNotional 0)', s.offExchangeNotional === 0);
+  ok('E2 no cuenta como print limpio (count 0)', s.count === 0);
+  ok('E2 reportado aparte (contingentCount 1)', s.contingentCount === 1);
+  ok('E2 contingentNotional ≈ $273.5M', Math.abs(s.contingentNotional - 273572013) < 1);
+  ok('E2 NO aparece en top limpio', s.top.length === 0);
+}
+
+// E3 — SPY-like: prints LIMPIOS a mercado + el contingente gigante → el dark pool NO se infla.
+{
+  const trades = [
+    { ts: 1, price: 773.5, size: 8947, exchange: 'D', conditions: [' '] },              // $6.92M limpio off
+    { ts: 2, price: 773.4, size: 7480, exchange: 'D', conditions: [' '] },              // $5.78M limpio off
+    { ts: 3, price: 773.3, size: 6727, exchange: 'D', conditions: [' '] },              // $5.20M limpio off
+    { ts: 4, price: 829.0061, size: 330000, exchange: 'D', conditions: [' ', '7', 'V'] }, // $273.5M CONTINGENTE
+  ];
+  const s = P.summarizePrints(P.filterLargePrints(trades, 1e6), 20);
+  ok('E3 count = 3 limpios (el contingente afuera)', s.count === 3);
+  ok('E3 offExchangePct = 1.0 sobre flujo LIMPIO (no diluido por el ruido)', near(s.offExchangePct, 1.0));
+  ok('E3 maxNotional NO es el $273.5M trucho', s.maxNotional < 10e6);
+  ok('E3 el contingente reportado aparte', near(s.contingentNotional, 273572013, 1));
+}
+
+// E4 — RED DE OUTLIER: un print NO-contingente pero con precio grosero (>10% de la mediana) sale;
+//      uno cercano (<10%) se queda. (mediana de 3+ limpios = ~$773).
+{
+  const trades = [
+    { ts: 1, price: 773, size: 7000, exchange: 'D', conditions: [' '] },   // $5.41M
+    { ts: 2, price: 774, size: 7000, exchange: 'D', conditions: [' '] },   // $5.42M
+    { ts: 3, price: 772, size: 7000, exchange: 'D', conditions: [' '] },   // $5.40M
+    { ts: 4, price: 900, size: 7000, exchange: 'D', conditions: [' '] },   // $6.30M FAT-FINGER (+16%)
+    { ts: 5, price: 800, size: 7000, exchange: 'D', conditions: [' '] },   // $5.60M cercano (+3.5%) OK
+  ];
+  const s = P.summarizePrints(P.filterLargePrints(trades, 1e6), 20);
+  ok('E4 el fat-finger $900 (>10%) excluido como outlier', s.priceOutlierCount === 1);
+  ok('E4 el $800 (<10%) NO se excluye', s.count === 4);
+  ok('E4 outlier no es contingente', s.contingentCount === 0);
+}
+
+// E5 — RED CONSERVADORA: con <3 refs limpias no hay mediana confiable → NO excluye por precio.
+{
+  const trades = [
+    { ts: 1, price: 773, size: 7000, exchange: 'D', conditions: [' '] },   // $5.41M
+    { ts: 2, price: 900, size: 7000, exchange: 'D', conditions: [' '] },   // $6.30M — sin base, no se juzga
+  ];
+  const s = P.summarizePrints(P.filterLargePrints(trades, 1e6), 20);
+  ok('E5 <3 refs → red de outlier DORMIDA (no excluye)', s.priceOutlierCount === 0 && s.count === 2);
+}
+
+// E6 — BACKWARD-COMPAT: input limpio (sin contingentes/outliers) da los MISMOS números de antes.
+{
+  const trades = [
+    { ts: 1, price: 100, size: 900000, exchange: 'D', conditions: [' '] }, // $90M off
+    { ts: 2, price: 100, size: 100000, exchange: 'N', conditions: [' '] }, // $10M on
+    { ts: 3, price: 100, size: 90000,  exchange: 'D', conditions: [' '] }, // $9M off (3ra ref p/ mediana)
+  ];
+  const s = P.summarizePrints(P.filterLargePrints(trades, 1e6), 20);
+  ok('E6 sin contingentes → excludedCount 0', s.excludedCount === 0);
+  ok('E6 offExchangePct intacto (99/109)', near(s.offExchangePct, 99/109));
+  ok('E6 count = 3 (nada excluido)', s.count === 3);
+}
+
+// E7 — la SUBASTA sigue tratada como antes (NO es contingente, NO se excluye del read).
+{
+  const trades = [
+    { ts: 1, price: 774.61, size: 112233, exchange: 'P', conditions: [' ', 'O', 'Q'] }, // $86.9M auction lit
+    { ts: 2, price: 773, size: 7000, exchange: 'D', conditions: [' '] },
+    { ts: 3, price: 773, size: 8000, exchange: 'D', conditions: [' '] },
+    { ts: 4, price: 773, size: 9000, exchange: 'D', conditions: [' '] },
+  ];
+  const s = P.summarizePrints(P.filterLargePrints(trades, 1e6), 20);
+  ok('E7 subasta NO excluida (sigue en el read)', s.excludedCount === 0 && s.auctionCount === 1);
+}
+
+// ════════════════════════════════════════════════════════════════════════════
 console.log(`\n${'═'.repeat(60)}\nRESULTADO: ${pass} ✓ · ${fail} ✗   ${fail === 0 ? '🏆 BANCO VERDE' : '❌ HAY FALLAS'}`);
 process.exit(fail === 0 ? 0 : 1);
