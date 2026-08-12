@@ -56,6 +56,15 @@ let fetchLargePrints = null;
 try { fetchLargePrints = require('./prints_live.js').fetchLargePrints; }
 catch (e) { console.log('⚠️ prints_live.js no encontrado — panel DARK POOL/PRINTS desactivado (display-only, no afecta señales). Subir prints.js + prints_live.js al repo para activarlo.'); }
 
+// ── CVD REAL POR AGRESOR (PASO 4B-A) — MISMA tubería SIP que el mapa (/alpaca-cvd) ──
+// cvd_live.fetchAggressorCVD (Lee-Ready sobre trades+quotes SIP) devuelve el NETO real de
+// la ventana {buyV,sellV,cvd,cvdReal,partial}. El monitor lo usa SOLO en el panel FLUJO &
+// BALLENAS (display + la lectura de la clase) — NO en el score (eso es 4B-B, otra sesión).
+// Fail-open: si falta el módulo o el feed no responde, se cae al CVD estimado 60/40 de siempre.
+let fetchAggressorCVD = null;
+try { fetchAggressorCVD = require('./cvd_live.js').fetchAggressorCVD; }
+catch (e) { console.log('⚠️ cvd_live.js no encontrado — panel muestra CVD estimado (60/40). Subir cvd_live.js + cvd_agresor.js al repo para el CVD real en el panel.'); }
+
 // ── DETECTOR DE ESTRUCTURA CANÓNICO (s61) — MISMO módulo que certifica el mapa ──
 // Una sola fuente de verdad: detectStructure_v2.js (ya en el repo desde s59).
 // Si falta, la CAPA 4 se APAGA (honesto: mejor callar que señalar con el detector viejo).
@@ -315,6 +324,9 @@ const SCAN_INTERVAL = 5 * 60 * 1000;
 const PRINTS_WINDOW_MIN = +process.env.PRINTS_WINDOW_MIN || 120;
 const PRINTS_MIN_NOTIONAL = +process.env.PRINTS_MIN_NOTIONAL || 1e6;   // umbral bloque grande ($1M)
 const PRINTS_TOPN = +process.env.PRINTS_TOPN || 20;
+// CVD real del panel (4B-A): misma ventana que los prints por coherencia (default 120min).
+// Solo panel/lectura — NO score. Tunable por env sin tocar código.
+const CVD_WINDOW_MIN = +process.env.CVD_WINDOW_MIN || PRINTS_WINDOW_MIN;
 
 // ── ESTADO ──────────────────────────────────────────────────
 const STATE = {};
@@ -1022,6 +1034,60 @@ async function fetchDarkPoolPrints(ticker) {
 }
 
 // ════════════════════════════════════════════════════════════
+//  CVD REAL POR AGRESOR (PASO 4B-A) — display, NO score
+//  cvdView: PURO y benchable. Toma el crudo de fetchAggressorCVD y lo lleva a la
+//  MISMA forma que calcCVD (para que el panel y la lectura lo consuman igual),
+//  pero con order-flow REAL. Si el real no sirve (módulo/feed/sin dato), CAE al
+//  estimado 60/40 de siempre — fallback honesto, idéntico al comportamiento previo.
+//  La dirección (priceDir) se saca de las velas reales; cvdDir del signo real.
+//  Misma REGLA de bullish/bearish que calcCVD → solo cambia la FUENTE del dato.
+// ════════════════════════════════════════════════════════════
+function cvdView(realRaw, estCvd, candles) {
+  // Real utilizable: hubo trades clasificados y hay volumen a ambos lados.
+  const usable = realRaw && realRaw.cvdReal === true &&
+                 (Number(realRaw.buyV) + Number(realRaw.sellV)) > 0;
+  if (!usable) {
+    // Fallback honesto: el estimado de siempre, marcado como tal.
+    return Object.assign({}, estCvd, { source: 'estimated', partial: false });
+  }
+  const buyV  = Number(realRaw.buyV), sellV = Number(realRaw.sellV);
+  const cvd   = (typeof realRaw.cvd === 'number' && isFinite(realRaw.cvd)) ? realRaw.cvd : (buyV - sellV);
+  const total = buyV + sellV || 1;
+  const buyPct = (buyV / total) * 100;
+  // priceDir REAL de las velas (mismas 8 recientes que usa calcCVD); cvdDir = signo real.
+  let priceDir = 'up';
+  if (Array.isArray(candles) && candles.length) {
+    const recent = candles.slice(-8);
+    priceDir = recent[recent.length - 1].c > recent[0].c ? 'up' : 'down';
+  }
+  const cvdDir = cvd > 0 ? 'up' : 'down';
+  return {
+    cvd, buyV, sellV, buyVol: buyV, sellVol: sellV, buyPct,
+    divergence: priceDir !== cvdDir,
+    priceDir, cvdDir,
+    bullish: cvd > 0 && buyPct > 51 && priceDir === cvdDir,   // MISMA regla que calcCVD
+    bearish: cvd < 0 && buyPct < 49 && priceDir === cvdDir,
+    source: 'real',
+    partial: !!realRaw.partial,
+  };
+}
+
+// I/O fail-open: CVD real por agresor de los últimos CVD_WINDOW_MIN minutos.
+// Devuelve el crudo de fetchAggressorCVD o null. JAMÁS lanza (display).
+async function fetchRealCVD(ticker) {
+  if (!fetchAggressorCVD) return null;
+  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return null;
+  try {
+    const end   = new Date();
+    const start = new Date(end.getTime() - CVD_WINDOW_MIN * 60000);
+    return await fetchAggressorCVD(ticker, start.toISOString(), end.toISOString(), { rth: true });
+  } catch (e) {
+    console.log(`[${ticker}] CVD real no disponible (${e.message}) — panel usa CVD estimado, señal sigue`);
+    return null;
+  }
+}
+
+// ════════════════════════════════════════════════════════════
 //  MOTOR NEURONAL — PESOS IDÉNTICOS AL MAPA v6
 // ════════════════════════════════════════════════════════════
 function evaluateAllLayers({ price, candles4H, candles4HXL, candles1H, candles15m, vp, session }) {
@@ -1224,6 +1290,11 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const flowBlock = (result.flow && result.flow.panel)
     ? `\n${result.flow.panel}\n🌊 Lectura: ${result.flow.read}`
     : '';
+  // ── CVD del panel (4B-A): real por agresor si estuvo disponible, sino estimado ──
+  const cvdV   = result.cvdShown || result.cvd4H;
+  const cvdSrc = (result.cvdShown && result.cvdShown.source === 'real')
+    ? 'real 📡' + (result.cvdShown.partial ? '·parcial' : '')
+    : 'estimado';
   const om = result.optMetrics;
   const gexReal = om && om.ok && om.gex;
   const gexInfo = gexReal
@@ -1253,7 +1324,7 @@ ${arrow}
 📊 <b>Confluencias:</b>
 ${confList}${structL}${shLine}${dpLine}${gexLine}
 
-📈 CVD: ${result.cvd4H.cvd>0?'▲ Positivo':'▼ Negativo'} · ${result.cvd4H.buyPct.toFixed(0)}% Buy (estimado)${flowBlock}
+📈 CVD: ${cvdV.cvd>0?'▲ Positivo':'▼ Negativo'} · ${cvdV.buyPct.toFixed(0)}% Buy (${cvdSrc})${flowBlock}
 📐 POC: ${result.vp?fmt(result.vp.poc,price):'—'} · VWAP: ${result.vp?fmt(result.vp.vwap,price):'—'}
 
 🛑 SL:  ${fmt(sl,price)}${slLb}
@@ -1412,7 +1483,10 @@ async function scanTicker(ticker, session) {
     // ── DARK POOL / PRINTS REALES (PASO 4A) — solo al emitir señal (no en cada scan) ──
     // display, NO toca score ni gates. Fail-open: si no hay dato, el panel se omite.
     result.prints = await fetchDarkPoolPrints(ticker);            // huella real o null
-    result.flow   = interpretFlow(result.prints, result.cvd4H, result.struct4H);
+    // ── CVD REAL (PASO 4B-A) — para el panel + la lectura (display). Fallback → estimado ──
+    const realCvdRaw = await fetchRealCVD(ticker);               // crudo real o null
+    result.cvdShown  = cvdView(realCvdRaw, result.cvd4H, candles4H);  // real usable, o estimado
+    result.flow      = interpretFlow(result.prints, result.cvdShown, result.struct4H);
 
     await sendTelegram(buildMessage(ticker, price, result, session, quote, candles4H));
     hbSignal('bolsa', `${ticker} ${result.direction} ${result.score}/10`);   // señal real enviada
