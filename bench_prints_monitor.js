@@ -34,10 +34,11 @@ function extractFn(src, name) {
 const monSrc = fs.readFileSync(path.join(__dirname, 'monitor_bolsa_v1.js'), 'utf8');
 const fmtMoneySrc     = extractFn(monSrc, 'fmtMoney');
 const interpretFlowSrc = extractFn(monSrc, 'interpretFlow');
+const cvdViewSrc       = extractFn(monSrc, 'cvdView');
 // Scope real: PRINTS_MIN_NOTIONAL default (1e6) + fmtMoney visible a interpretFlow.
 const factory = new Function('PRINTS_MIN_NOTIONAL',
-  `${fmtMoneySrc}\n${interpretFlowSrc}\n return { fmtMoney, interpretFlow };`);
-const { fmtMoney, interpretFlow } = factory(1e6);
+  `${fmtMoneySrc}\n${interpretFlowSrc}\n${cvdViewSrc}\n return { fmtMoney, interpretFlow, cvdView };`);
+const { fmtMoney, interpretFlow, cvdView } = factory(1e6);
 
 // ════════════════════════════════════════════════════════════════════════════
 console.log('\n── (A) prints.js PURO — tubería dark pool ──');
@@ -179,6 +180,77 @@ const struct = (dir) => dir ? ({ type: dir === 'BUY' ? 'BOS_BUY' : 'CHOCH_SELL' 
   const f = interpretFlow(prints({ offExchangePct: 0.9 }), cvd(-1, 46), struct('SELL'));
   const keys = Object.keys(f);
   ok('C8 solo devuelve {panel, read} (no toca score)', keys.length === 2 && keys.includes('panel') && keys.includes('read'));
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+console.log('\n── (D) cvdView — CVD REAL por agresor al panel (4B-A) ──');
+// Velas para priceDir: sube (last>first) o baja.
+const candlesUp   = [{c:100},{c:101},{c:102},{c:103},{c:104},{c:105},{c:106},{c:108}];
+const candlesDown = [{c:108},{c:106},{c:105},{c:104},{c:103},{c:102},{c:101},{c:100}];
+const estStub = { cvd: 5, buyPct: 55, bullish: false, bearish: false, divergence: false, priceDir:'up', cvdDir:'up' };
+
+// D1 — real utilizable, compra real + precio sube → source real, bullish, buyPct 60.
+{
+  const v = cvdView({ cvdReal: true, buyV: 60000, sellV: 40000, cvd: 20000, partial: false }, estStub, candlesUp);
+  ok('D1 source = real', v.source === 'real');
+  ok('D1 buyPct = 60', near(v.buyPct, 60));
+  ok('D1 bullish (cvd>0, buyPct>51, precio↑=cvd↑)', v.bullish === true && v.bearish === false);
+}
+
+// D2 — real utilizable, venta real + precio baja → bearish (caso AAPL real).
+{
+  const v = cvdView({ cvdReal: true, buyV: 40000, sellV: 60000, cvd: -20000, partial: false }, estStub, candlesDown);
+  ok('D2 bearish (cvd<0, buyPct<49, precio↓=cvd↓)', v.bearish === true && v.bullish === false);
+  ok('D2 buyPct = 40', near(v.buyPct, 40));
+}
+
+// D3 — real presente pero cvdReal=false (no hubo trades clasificados) → FALLBACK estimado.
+{
+  const v = cvdView({ cvdReal: false, buyV: 0, sellV: 0, cvd: 0 }, estStub, candlesUp);
+  ok('D3 cvdReal=false → fallback estimado', v.source === 'estimated');
+  ok('D3 fallback conserva el estimado (buyPct 55)', near(v.buyPct, 55));
+}
+
+// D4 — real null (módulo/feed caído) → FALLBACK estimado, idéntico a hoy.
+{
+  const v = cvdView(null, estStub, candlesUp);
+  ok('D4 real null → fallback estimado', v.source === 'estimated' && v.cvd === 5);
+}
+
+// D5 — real con volumen 0 total → no utilizable → fallback.
+{
+  const v = cvdView({ cvdReal: true, buyV: 0, sellV: 0, cvd: 0 }, estStub, candlesUp);
+  ok('D5 buyV+sellV=0 → fallback estimado', v.source === 'estimated');
+}
+
+// D6 — DIVERGENCIA real: precio SUBE pero CVD real NEGATIVO → divergence, no bullish.
+{
+  const v = cvdView({ cvdReal: true, buyV: 45000, sellV: 55000, cvd: -10000, partial: false }, estStub, candlesUp);
+  ok('D6 divergencia real (precio↑ vs cvd↓)', v.divergence === true);
+  ok('D6 NO bullish/bearish (priceDir≠cvdDir corta la regla)', v.bullish === false && v.bearish === false);
+}
+
+// D7 — partial (paginación cortada) pasa como flag, sigue siendo real.
+{
+  const v = cvdView({ cvdReal: true, buyV: 70000, sellV: 30000, cvd: 40000, partial: true }, estStub, candlesUp);
+  ok('D7 partial → source real + partial:true', v.source === 'real' && v.partial === true);
+}
+
+// D8 — MISMA regla que calcCVD: bullish requiere cvd>0 && buyPct>51 && priceDir===cvdDir.
+{
+  // buyPct 50.5 (≤51) → NO bullish aunque cvd>0 y precio suba.
+  const v = cvdView({ cvdReal: true, buyV: 50500, sellV: 49500, cvd: 1000, partial: false }, estStub, candlesUp);
+  ok('D8 buyPct 50.5 (≤51) → NO bullish (regla idéntica a calcCVD)', v.bullish === false);
+}
+
+// D9 — INTEGRACIÓN: el read de la clase ahora corre sobre CVD REAL.
+//      AAPL-like: dark 91% + CVD real venta + estructura ▼ → DISTRIBUCIÓN.
+{
+  const realCvd = cvdView({ cvdReal: true, buyV: 46000, sellV: 54000, cvd: -8000, partial: false }, estStub, candlesDown);
+  const f = interpretFlow(prints({ count: 76, maxNotional: 45.8e6, offExchangePct: 0.91, offExchangeNotional: 274.3e6 }),
+                          realCvd, struct('SELL'));
+  ok('D9 read sobre CVD real → DISTRIBUCIÓN', /DISTRIBUCIÓN/.test(f.read));
+  ok('D9 el CVD que alimentó el read es real', realCvd.source === 'real' && realCvd.bearish === true);
 }
 
 // ════════════════════════════════════════════════════════════════════════════
