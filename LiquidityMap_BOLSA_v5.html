@@ -126,6 +126,11 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .sig-contrato.is-put{color:var(--red);border-color:rgba(255,45,107,.45);background:rgba(255,45,107,.06);}
 .sig-contrato.loading{color:var(--muted);opacity:.75;cursor:default;}
 .sig-contrato.empty{color:var(--muted);cursor:default;}
+.sig-clase{font-size:10px;font-family:'Space Mono',monospace;padding:3px 8px;border-radius:3px;border:1px solid var(--border);white-space:nowrap;letter-spacing:.5px;}
+.sig-clase .lm-dim{opacity:.6;font-weight:400;}
+.sig-clase.lm-scalp{color:var(--orange);border-color:rgba(255,138,0,.45);background:rgba(255,138,0,.06);}
+.sig-clase.lm-day{color:var(--green);border-color:rgba(0,255,157,.45);background:rgba(0,255,157,.06);}
+.sig-clase.lm-swing{color:#4aa3ff;border-color:rgba(74,163,255,.45);background:rgba(74,163,255,.08);}
 .kill-badge{font-family:'Space Mono',monospace;font-size:9px;padding:2px 7px;border-radius:2px;font-weight:700;}
 .kill-badge.active{background:rgba(255,224,0,.15);color:var(--yellow);border:1px solid var(--yellow);animation:blink 1s infinite;}
 .kill-badge.off{color:var(--muted);border:1px solid var(--border);}
@@ -296,6 +301,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <div class="tp-item tp2" id="sig-t2">TP2 —</div>
     <div class="tp-item tp3" id="sig-t3">TP3 —</div>
   </div>
+  <div id="sig-clase" class="sig-clase" style="display:none" title="Clase de la señal (scalp/day/swing)"></div>
   <div id="sig-contrato" class="sig-contrato" style="display:none" title="Contrato sugerido para la dirección de la señal (clic = detalle completo)"></div>
   <div id="kill-zone-badge" class="kill-badge off">— KILL ZONE</div>
   <div id="struct-badge" class="struct-badge" style="display:none">—</div>
@@ -1314,6 +1320,115 @@ function computeNeuralScore(p){
 // ── GEX / MAX PAIN ────────────────────────────────────────────
 // Funciones de GEX/Max Pain ELIMINADAS: requieren cadena de opciones real
 // (add-on Polygon, FASE 4). No se calculan con aproximaciones de precio.
+
+// ── CLASIFICADOR scalp/day/swing → chip pegado a la pill del contrato ──────────
+// PORT CLIENTE de signal_class.js (ef5685bf); paridad benchada (node==cliente).
+// Toma los features que el MAPA YA computa (semáforo, régimen, RVOL, estructura,
+// MTF 4H, CVD del motor) y devuelve la CLASE + su DTE sugerido. DISPLAY puro:
+// NO toca el score ni el Governor ni la emisión.
+const LM_DIALS = {
+  SCALP_RVOL: 1.3, DAY_RVOL: 1.2, SWING_RVOL: 1.8, SCALP_MFE_R: 1.0,
+  DTE: { scalp: [0, 2], day: [2, 5], swing: [7, 14] },
+  HORIZON_BARS: { scalp: 8, day: 26, swing: 30 },
+};
+function lmCriterioExito(clase){
+  if(clase==='scalp') return { modo:'mfe_rapido', mfeR:LM_DIALS.SCALP_MFE_R, oTP:'TP1' };
+  if(clase==='day')   return { modo:'tp_sesion',    tps:['TP1','TP2'] };
+  if(clase==='swing') return { modo:'tp_horizonte', tps:['TP2','TP3'] };
+  return null;
+}
+function lmRvolRising(f){
+  if(f.rvolRising===true) return true;
+  if(f.rvolRising===false) return false;
+  if(f.rvolPrev!=null && f.rvol!=null) return f.rvol > f.rvolPrev;
+  return false;
+}
+function lmPack(clase, razon){
+  return { clase, dte:LM_DIALS.DTE[clase], horizonBars:LM_DIALS.HORIZON_BARS[clase],
+           criterioExito:lmCriterioExito(clase), razon };
+}
+function lmClassifySignal(features){
+  const f = features || {};
+  const sem = String(f.semaphore||'').toLowerCase();
+  const semOK = (sem==='alta' || sem==='media');
+  const rvol = Number(f.rvol);
+  const hasRvol = isFinite(rvol);
+  const rising = lmRvolRising(f);
+  const structChange = !!(f.chochFresh || f.bosFresh);
+  if(!hasRvol && !sem){
+    return { clase:'indefinido', dte:null, horizonBars:null, criterioExito:null, razon:'features inválidos' };
+  }
+  if(structChange && hasRvol && rvol>=LM_DIALS.SWING_RVOL && f.cvdAgrees && f.htfAligned && semOK){
+    return lmPack('swing','CHoCH/BOS fresco + RVOL elevado + CVD a favor + HTF alineado');
+  }
+  if(f.regime==='EXPANSIÓN' && f.withTrend && hasRvol && rvol>=LM_DIALS.DAY_RVOL && semOK){
+    return lmPack('day','expansión + a favor de estructura + RVOL presente');
+  }
+  if(semOK && hasRvol && rising && (f.regime==='COMPRESIÓN' || rvol>=LM_DIALS.SCALP_RVOL)){
+    return lmPack('scalp','semáforo≥media + RVOL en ascenso'+(f.regime==='COMPRESIÓN'?' + compresión cargada':''));
+  }
+  return { clase:'esperar', dte:null, horizonBars:null, criterioExito:null, razon:'no califica ninguna clase todavía' };
+}
+// RVOL de una barra atrás — MISMO cálculo que computeFlow (bars.slice(-21,-1), 20 previas).
+function _lmRvolAt(bars, back){
+  if(!bars || bars.length < 21+back) return null;
+  const end = bars.length - back;
+  const win = bars.slice(end-21, end-1);
+  const avg = win.reduce((a,b)=>a+(b.v||0),0)/20;
+  const lastV = (bars[end-1]||{}).v||0;
+  return avg>0 ? lastV/avg : 0;
+}
+function _lmSemLevel(layers){
+  try { const sm = computeSemaforoBolsa(layers); if(!sm) return null;
+    const L = String(sm.label||'').toUpperCase();
+    if(L.indexOf('ALTA')===0) return 'alta';
+    if(L.indexOf('MEDIA')===0) return 'media';
+    return 'baja';
+  } catch(e){ return null; }
+}
+function _lmStructDir(o){ return o ? (o.dir==='BULL'?1:o.dir==='BEAR'?-1:0) : 0; }
+// Ensambla los features desde lo que el mapa YA computó (sig, flow, ctx músculo, struct+candles globales).
+function buildMapClassifierFeatures(sig, flow, ctxM){
+  const dir = sig.type==='BUY' ? 1 : sig.type==='SELL' ? -1 : 0;
+  const bosDir = _lmStructDir(struct && struct.bos);
+  const chochDir = _lmStructDir(struct && struct.choch);
+  const structDir = bosDir!==0 ? bosDir : chochDir;
+  let cvdDir = 0;
+  const cL = ((sig.layers)||[]).find(L=>L && L.name==='CVD');
+  if(cL) cvdDir = cL.dir||0;
+  return {
+    semaphore : _lmSemLevel(sig.layers),
+    regime    : flow ? flow.regime : null,
+    rvol      : flow ? flow.rvol : null,
+    rvolPrev  : _lmRvolAt(candles, 1),
+    chochFresh: !!(struct && struct.choch),
+    bosFresh  : !!(struct && struct.bos),
+    withTrend : dir!==0 && structDir!==0 && dir===structDir,
+    htfAligned: (ctxM && ctxM.mtfBull!=null) ? (dir>0 ? ctxM.mtfBull===true : dir<0 ? ctxM.mtfBull===false : false) : false,
+    cvdAgrees : dir!==0 && cvdDir!==0 && dir===cvdDir,
+  };
+}
+const LM_CLASE_META = {
+  scalp: { txt:'SCALP', cls:'lm-scalp' },
+  day:   { txt:'DAY',   cls:'lm-day'   },
+  swing: { txt:'SWING', cls:'lm-swing' },
+};
+// Pinta el chip de clase pegado a la pill del contrato. Display puro, fail-open.
+function renderClaseChip(sig, flow, ctxM){
+  const el = document.getElementById('sig-clase');
+  if(!el) return;
+  if(!sig || (sig.type!=='BUY' && sig.type!=='SELL')){ el.style.display='none'; return; }
+  let cls;
+  try { cls = lmClassifySignal(buildMapClassifierFeatures(sig, flow, ctxM)); }
+  catch(e){ el.style.display='none'; return; }
+  const meta = cls && LM_CLASE_META[cls.clase];
+  if(!meta){ el.style.display='none'; return; }   // 'esperar'/'indefinido' → sin chip
+  const dte = cls.dte ? (cls.dte[0]+'-'+cls.dte[1]+' DTE') : '';
+  el.className = 'sig-clase '+meta.cls;
+  el.innerHTML = '<b>'+meta.txt+'</b> <span class="lm-dim">'+dte+'</span>';
+  el.title = 'Clase '+String(cls.clase).toUpperCase()+' — '+cls.razon+'. Sugiere DTE '+dte+'. Display, no toca el score.';
+  el.style.display='';
+}
 
 // ── SEMÁFORO DE EVIDENCIA (bolsa · sesión 54, 17-jul-2026) ─────────────────────
 // Port del Paso 1 del crypto — OPCIÓN A elegida por Gonzalo: la luz mide la
@@ -2417,6 +2532,8 @@ function updateDerived(){
   set('ctx-ict', ctx.zoneTxt, ctx.zoneDir===1?'g':(ctx.zoneDir===-1?'r':''));
   if(ctx.mtfBull===null) set('ctx-mtf','—','');
   else set('ctx-mtf', ctx.mtfBull?'▲ Alcista':'▼ Bajista', ctx.mtfBull?'g':'r');
+  // ── CLASE scalp/day/swing → chip pegado a la pill del contrato (display, no toca score) ──
+  try { renderClaseChip(sig, flow, ctx); } catch(_e){}
   // ── GOBERNADOR DE CONVICCIÓN (institucional · display, no veto) ──
   // Muestra el veredicto gobernado AL LADO del score actual, sin alterar
   // el título ni el número. Etapa de comparación: ver "lo que grita vs lo honesto".
