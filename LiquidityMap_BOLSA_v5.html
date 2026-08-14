@@ -352,6 +352,21 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div class="mr"><span class="lb">Cambio %</span><span class="vl" id="rq-dp">—</span></div>
     </div>
 
+    <!-- FLUJO & BALLENAS — RVOL huella + CVD agresor + Prints >$1M + Dark Pool (TODO real SIP, display-only, NO toca el score) -->
+    <div class="ps">
+      <h3>🐋 Flujo &amp; Ballenas <span style="font-size:7px;color:var(--gex-pos);font-weight:400">· REAL SIP</span></h3>
+      <div class="mr"><span class="lb">RVOL (huella)</span><span class="vl y" id="fl-rvol">—</span></div>
+      <div class="mr"><span class="lb">Dirección huella</span><span class="vl" id="fl-foot">—</span></div>
+      <div class="mr"><span class="lb">Prints &gt;$1M</span><span class="vl" id="fl-prints" style="color:var(--muted)">📡 …</span></div>
+      <div class="mr"><span class="lb">Dark Pool real</span><span class="vl" id="fl-dpool" style="color:var(--muted)">📡 …</span></div>
+      <div class="mr"><span class="lb">CVD por agresor</span><span class="vl" id="fl-cvdagg" style="color:var(--muted)">📡 …</span></div>
+      <div style="margin-top:4px;font-size:8px;color:var(--muted);line-height:1.6">
+        Todo <b style="color:var(--gex-pos)">REAL en vivo (SIP)</b>: CVD por agresor (Lee-Ready = order-flow real), Prints &gt;$1M y % off-exchange (proxy dark pool, venue FINRA 'D').<br>
+        <b>Intensidad</b> (RVOL · Dark Pool): <span style="color:var(--text)">blanco</span>=bajo · <span style="color:var(--yellow)">amarillo</span>=medio · <span style="color:var(--green)">verde</span>=fuerte/extremo.<br>
+        <b>Dirección</b> (Huella · CVD): <span style="color:var(--green)">verde</span>=compra · <span style="color:var(--red)">rojo</span>=venta · <span style="color:var(--muted)">gris</span>=sin flujo. Prints: <span style="color:var(--green)">verde</span>=hay bloques.
+      </div>
+    </div>
+
     <!-- SuperTrend JUEZ -->
     <div class="ps">
       <h3>⚡ SUPERTREND JUEZ</h3>
@@ -448,17 +463,6 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
       <div style="margin-top:4px;font-size:8px;color:var(--muted);line-height:1.5" id="opt-note">—</div>
     </div>
 
-    <!-- FLUJO & BALLENAS (RVOL real + capas que se activan con Developer $79) -->
-    <div class="ps">
-      <h3>🐋 Flujo &amp; Ballenas</h3>
-      <div class="mr"><span class="lb">RVOL (huella)</span><span class="vl y" id="fl-rvol">—</span></div>
-      <div class="mr"><span class="lb">Dirección huella</span><span class="vl" id="fl-foot">—</span></div>
-      <div class="mr"><span class="lb">Prints &gt;$1M</span><span class="vl" id="fl-prints" style="color:var(--muted)">📡 …</span></div>
-      <div class="mr"><span class="lb">Dark Pool real</span><span class="vl" id="fl-dpool" style="color:var(--muted)">📡 …</span></div>
-      <div class="mr"><span class="lb">CVD por agresor</span><span class="vl" id="fl-cvdagg" style="color:var(--muted)">📡 …</span></div>
-      <div style="margin-top:4px;font-size:8px;color:var(--muted)">RVOL real (huella). CVD por agresor = order-flow REAL (Lee-Ready, ventana reciente). Prints/dark pool requieren condiciones de trade / venues (próxima fase).</div>
-    </div>
-
     <!-- ZONAS LIQUIDEZ -->
     <div class="ps">
       <h3>💧 Zonas Liquidez</h3>
@@ -538,7 +542,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <div class="am-row"><label>Zona liquidez</label><div class="am-toggle on" id="al-zone" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>Régimen vol. <span style="font-size:8px;color:var(--muted)">(contexto)</span></label><div class="am-toggle" id="al-mp" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>RVOL ballena <span style="font-size:8px;color:var(--muted)">(contexto)</span></label><div class="am-toggle" id="al-gex" onclick="toggleAL(this)"></div></div>
-    <div class="am-row"><label>Dark Pool <span style="font-size:8px;color:var(--muted)">($79)</span></label><div class="am-toggle" id="al-dp" onclick="toggleAL(this)"></div></div>
+    <div class="am-row"><label>Dark Pool</label><div class="am-toggle" id="al-dp" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>Ballena detectada</label><div class="am-toggle on" id="al-whale" onclick="toggleAL(this)"></div></div>
     <div class="am-row"><label>CHoCH / BOS</label><div class="am-toggle on" id="al-struct" onclick="toggleAL(this)"></div></div>
     <button class="am-close" onclick="toggleAlertModal()">CERRAR</button>
@@ -2081,7 +2085,7 @@ function updatePrints(symArg, tfArg, cndls){
         const offN=(j.offExchangeNotional||0), offC=(j.offExchangeCount||0);
         const pct = contNotional>0 ? Math.round(offN/contNotional*100) : 0;
         if(offC>0){
-          elD.style.color = pct>=30?'var(--yellow)':(pct>=15?'var(--green)':'var(--text)');
+          elD.style.color = pct>=30?'var(--green)':(pct>=15?'var(--yellow)':'var(--text)');
           elD.textContent = pct+'% · $'+_fmtK(offN);
         } else { elD.style.color='var(--muted)'; elD.textContent='0%'; }
         elD.title = "DARK POOL (proxy off-exchange, venue FINRA/TRF 'D')\n"
@@ -2497,7 +2501,7 @@ function updateDerived(){
     else if(pools.sup){ set('fl-target','▼ Soporte','r'); }
     else set('fl-target','—','');
     // Flujo & Ballenas: RVOL real (huella de volumen)
-    set('fl-rvol', flow.rvol.toFixed(2)+'×', flow.rvol>=3?'y':(flow.rvol>=1.5?'g':''));
+    set('fl-rvol', flow.rvol.toFixed(2)+'×', flow.rvol>=3?'g':(flow.rvol>=1.5?'y':''));
     const whF = detectWhale(candles, 3.0);
     if(whF){ set('fl-foot', whF.dir==='BUY'?'▲ COMPRADORA':'▼ VENDEDORA', whF.dir==='BUY'?'g':'r'); }
     else set('fl-foot','Normal','');
