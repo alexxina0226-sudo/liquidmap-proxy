@@ -3200,7 +3200,7 @@ try{ checkPass(); }catch(e){ console.error('auto-init', e); }
 <div id="legend-modal">
   <div class="lm-box">
     <h1>📖 LIQUIDMAP PRO v7 — GUÍA NEURONAL INSTITUCIONAL</h1>
-    <div class="sub">6 Capas · SuperTrend JUEZ · CHoCH/BOS · Ballenas · Score 10pts</div>
+    <div class="sub">6 Capas · SuperTrend JUEZ · CHoCH/BOS · Flujo &amp; Ballenas (real SIP) · Score 10pts</div>
     <div class="lm-grid">
       <div class="lm-section">
         <h3>⚡ SuperTrend JUEZ (3 pts)</h3>
@@ -3215,7 +3215,14 @@ try{ checkPass(); }catch(e){ console.error('auto-init', e); }
       <div class="lm-section">
         <h3>🐋 Ballenas / Volumen</h3>
         <div class="lm-item"><div class="lm-icon">🐳</div><div class="lm-text"><strong>Ballena detectada (×3+ vol)</strong><span>Volumen >3× el promedio de 20 velas. Acumulación o distribución institucional real. Las barras moradas en el histograma son velas ballena.</span></div></div>
-        <div class="lm-item"><div class="lm-icon">🟣</div><div class="lm-text"><strong>Dark Pool prints</strong><span>Círculos morados en el gráfico. Transacciones institucionales fuera del mercado abierto (~40% del volumen real). Si el print es alcista con precio bajando = acumulación secreta.</span></div></div>
+      </div>
+      <div class="lm-section">
+        <h3>🐋 Flujo &amp; Ballenas <span style="font-size:9px;color:var(--gex-pos)">· REAL SIP</span></h3>
+        <div class="lm-item"><div class="lm-icon">📶</div><div class="lm-text"><strong>RVOL (huella)</strong><span>Volumen de la vela actual vs promedio de 20 previas. blanco &lt;1.5× (normal) · amarillo 1.5–3× (elevado) · verde ≥3× (nivel ballena). Responde: ¿ESTA vela está movida?</span></div></div>
+        <div class="lm-item"><div class="lm-icon">📡</div><div class="lm-text"><strong>CVD por agresor (REAL)</strong><span>Order-flow REAL por Lee-Ready sobre trades+quotes SIP: quién es agresivo (pega al ask = compra, al bid = venta). verde = comprador neto · rojo = vendedor neto. Es el CVD real; el panel "CVD / Delta ≈ est." de arriba es estimado por vela.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🐋</div><div class="lm-text"><strong>Prints &gt;$1M</strong><span>Cuántos bloques grandes (&gt;$1M) en la ventana reciente + el mayor. Huella institucional. verde = hay bloques. La subasta (open/close cross) se cuenta aparte, no infla el número.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🌑</div><div class="lm-text"><strong>Dark Pool (proxy off-exchange)</strong><span>% del flujo grande ejecutado fuera de bolsa (venue FINRA 'D'). blanco &lt;15% · amarillo 15–30% · verde ≥30% (fuerte). Mezcla dark pools + ATS + internalizadores; el filtro &gt;$1M lo inclina a institucional, NO es dark-pool puro. AMPLIFICA la lectura, no da dirección.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🎨</div><div class="lm-text"><strong>Lógica de colores</strong><span>INTENSIDAD (RVOL, Dark Pool): blanco = bajo · amarillo = medio · verde = fuerte. DIRECCIÓN (Huella, CVD): verde = compra · rojo = venta · gris = sin flujo.</span></div></div>
       </div>
       <div class="lm-section">
         <h3>🎯 Score Neuronal 0–10</h3>
