@@ -1413,13 +1413,24 @@ const LM_CLASE_META = {
   day:   { txt:'DAY',   cls:'lm-day'   },
   swing: { txt:'SWING', cls:'lm-swing' },
 };
+// PISO por TF: el scalp (0-2 DTE) sólo tiene sentido en 5m/15m; en TFs mayores la
+// misma lectura de anticipación se juega con más tiempo (theta-honesto). Sube la clase
+// al piso del TF: 1H→day mínimo, 4H/1D→swing mínimo. Display, revertible.
+const LM_TF_FLOOR = { '5':'scalp','15':'scalp','60':'day','240':'swing','D':'swing' };
+const LM_ORDER = { scalp:0, day:1, swing:2 };
+function applyTfFloor(cls, tf){
+  if(!cls || !LM_ORDER.hasOwnProperty(cls.clase)) return cls;   // esperar/indefinido pasan
+  const floor = LM_TF_FLOOR[String(tf)] || 'scalp';
+  if(LM_ORDER[cls.clase] >= LM_ORDER[floor]) return cls;        // ya cumple el piso del TF
+  return lmPack(floor, cls.razon + ' · piso TF ' + tf + '→' + floor);
+}
 // Pinta el chip de clase pegado a la pill del contrato. Display puro, fail-open.
 function renderClaseChip(sig, flow, ctxM){
   const el = document.getElementById('sig-clase');
   if(!el) return;
   if(!sig || (sig.type!=='BUY' && sig.type!=='SELL')){ el.style.display='none'; return; }
   let cls;
-  try { cls = lmClassifySignal(buildMapClassifierFeatures(sig, flow, ctxM)); }
+  try { cls = applyTfFloor(lmClassifySignal(buildMapClassifierFeatures(sig, flow, ctxM)), tf); }
   catch(e){ el.style.display='none'; return; }
   const meta = cls && LM_CLASE_META[cls.clase];
   if(!meta){ el.style.display='none'; return; }   // 'esperar'/'indefinido' → sin chip
