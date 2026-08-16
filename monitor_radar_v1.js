@@ -63,6 +63,12 @@ const MIN_FRAC      = 0.05;                // < 5% de sesión transcurrida → R
 const PRE_ATR_MULT    = 1.2;               // movimiento mínimo para el pre-aviso (más bajo que el confirmado)
 const PRE_RVOL_MIN    = 1.3;               // RVOL parcial mínimo (SIP, normalizado por hora) — filtra velas flojas
 const PRE_COOLDOWN_MS = 60 * 60 * 1000;    // 1 pre-aviso por ticker por hora
+
+// ── CAPA 3: EN COCCIÓN (anticipación — volumen acelerando con precio aún quieto) ──
+const COOK_COOLDOWN_MS = 60 * 60 * 1000;   // 1 cocción por ticker por hora
+let scoreCooking = null;
+try { ({ scoreCooking } = require('./cooking_detector.js')); }
+catch (_) { console.log('[RADAR] cooking_detector.js no cargado — capa EN COCCIÓN desactivada'); }
 // NOTA: el pre-aviso solo dispara en RTH (candado de hora, reloj real) → mata el ruido de after-hours.
 
 // ── SESIÓN NY (para normalizar el RVOL por hora del día) ────────────────────
@@ -276,6 +282,14 @@ function buildPreAlert(sym, last, prevC, moveATR, rvol) {
          `⏱ EN VIVO sin delay · ⚠ sin confirmar — vigilar (no es señal).`;
 }
 
+function buildCookAlert(h, cook) {
+  const arrow = h.dir === 'up' ? '🟢 ▲' : '🔴 ▼';
+  return `🍳 <b>EN COCCIÓN — ${h.sym}</b>\n` +
+         `🔥 Volumen acelerando ${cook.rvol.toFixed(1)}× (Δ+${cook.accel.toFixed(1)}) con precio aún quieto (${Math.abs(cook.moveATR).toFixed(1)}×ATR)\n` +
+         `Precio $${h.last.toFixed(2)} · sesgo ${arrow} · score ${cook.score}/100\n` +
+         `⚠ Anticipación (más temprano que el pre-aviso) — se está cargando un movimiento. Vigilar, no es señal.`;
+}
+
 // ── BARRIDO ──────────────────────────────────────────────────────────────────
 async function runScan() {
   const now = new Date().toLocaleString('es', { timeZone: 'America/New_York' });
@@ -288,16 +302,18 @@ async function runScan() {
     frac = sessionFraction(new Date(Date.now() - DELAY_MS));
 
     const evals = [];
-    let hits = 0, fired = 0, preFired = 0;
+    let hits = 0, fired = 0, preFired = 0, cookFired = 0;
     for (const sym of UNIVERSE) {
       const base = BASELINE[sym];
       if (!base) continue;
-      const s = STATE[sym] || (STATE[sym] = { lastAlertTs: 0, lastDir: null, lastPreTs: 0, confirmedTs: 0 });
+      const s = STATE[sym] || (STATE[sym] = { lastAlertTs: 0, lastDir: null, lastPreTs: 0, confirmedTs: 0, lastRvol: null, lastCookTs: 0 });
 
       // ── CONFIRMACIÓN (SIP retrasado: RVOL ≥ umbral Y mov ≥ N×ATR) ──
       const ev = evaluate(sym, barsBySym[sym], frac, today);
       if (ev) {
         evals.push(ev);
+        const prevRvol = s.lastRvol;        // rvol del barrido anterior (para ver la aceleración)
+        s.lastRvol = ev.rvol;               // guardar SIEMPRE para el próximo barrido
         if (ev.passed) {
           hits++;
           const fresh = (Date.now() - s.lastAlertTs) >= COOLDOWN_MS;
@@ -308,6 +324,18 @@ async function runScan() {
             fired++;
           }
           continue;   // ya confirmó → no mandamos pre-aviso del mismo ticker
+        }
+        // ── CAPA 3 · EN COCCIÓN (anticipación: volumen acelerando + precio aún quieto) ──
+        if (scoreCooking && isRTH(new Date())) {
+          const cook = scoreCooking({ rvol: ev.rvol, rvolPrev: prevRvol, moveATR: ev.moveATR, frac: ev.frac });
+          const recentlyConfirmed = (Date.now() - s.confirmedTs) < COOLDOWN_MS;
+          const cookFresh = (Date.now() - (s.lastCookTs || 0)) >= COOK_COOLDOWN_MS;
+          if (cook && cook.cooking && !recentlyConfirmed && cookFresh) {
+            await sendTelegram(buildCookAlert(ev, cook));
+            s.lastCookTs = Date.now();
+            cookFired++;
+            continue;   // ya avisamos cocción → no duplicar con pre-aviso este barrido
+          }
         }
       }
 
@@ -338,8 +366,8 @@ async function runScan() {
     const top = evals.slice().sort((a, b) => b.rvol - a.rvol).slice(0, 8)
       .map(e => ({ sym: e.sym, rvol: e.rvol, moveATR: e.moveATR, pct: e.pct, dir: e.dir, passed: e.passed }));
 
-    console.log(`[RADAR SCAN] ${now} · evaluados:${evals.length} · candidatos:${hits} · alertas:${fired} · pre-avisos:${preFired} · sesión:${(frac * 100).toFixed(0)}%`);
-    LAST = { at: now, hits, fired, preFired, evaluated: evals.length, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top, error: null };
+    console.log(`[RADAR SCAN] ${now} · evaluados:${evals.length} · candidatos:${hits} · alertas:${fired} · pre-avisos:${preFired} · cocción:${cookFired} · sesión:${(frac * 100).toFixed(0)}%`);
+    LAST = { at: now, hits, fired, preFired, cookFired, evaluated: evals.length, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top, error: null };
   } catch (e) {
     console.error(`[RADAR SCAN] ${now} · ERROR:`, e.message);
     LAST = { at: now, hits: 0, fired: 0, preFired: 0, evaluated: 0, universe: UNIVERSE.length, baseline: Object.keys(BASELINE).length, frac, top: [], error: e.message };
