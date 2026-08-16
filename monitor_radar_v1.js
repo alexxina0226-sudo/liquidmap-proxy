@@ -69,6 +69,42 @@ const COOK_COOLDOWN_MS = 60 * 60 * 1000;   // 1 cocción por ticker por hora
 let scoreCooking = null;
 try { ({ scoreCooking } = require('./cooking_detector.js')); }
 catch (_) { console.log('[RADAR] cooking_detector.js no cargado — capa EN COCCIÓN desactivada'); }
+
+// ── CAPA 2 (cara): DIRECCIÓN del finalista (CVD real + dark pool + GEX) — fail-open ──
+const CAPA_CARA_WINDOW_MIN = +process.env.CAPA_CARA_WINDOW_MIN || 60;  // ventana de flujo (min)
+let characterizeFinalist = null, fetchAggressorCVD = null, fetchLargePrints = null, getOptionsMetrics = null;
+try { ({ characterizeFinalist } = require('./finalist_direction.js')); }
+catch (_) { console.log('[RADAR] finalist_direction.js no cargado — dirección off'); }
+try { ({ fetchAggressorCVD } = require('./cvd_live.js')); } catch (_) {}
+try { ({ fetchLargePrints } = require('./prints_live.js')); } catch (_) {}
+try { ({ getOptionsMetrics } = require('./options_live.js')); } catch (_) {}
+
+// Corre la capa CARA SOLO sobre un finalista que ya cocina. Fail-open total:
+// cualquier fetch que falle → null y la dirección queda "undetermined" (el aviso igual sale).
+async function characterizeCooking(sym, price){
+  if(!characterizeFinalist || !fetchAggressorCVD) return null;
+  const end = new Date().toISOString();
+  const start = new Date(Date.now() - CAPA_CARA_WINDOW_MIN*60000).toISOString();
+  const [cvdR, darkR, gexR] = await Promise.allSettled([
+    fetchAggressorCVD(sym, start, end, { rth:true }),
+    fetchLargePrints ? fetchLargePrints(sym, start, end, { rth:true }) : Promise.resolve(null),
+    getOptionsMetrics ? getOptionsMetrics(sym) : Promise.resolve(null),
+  ]);
+  const cvd  = cvdR.status  === 'fulfilled' ? cvdR.value  : null;
+  const dark = darkR.status === 'fulfilled' ? darkR.value : null;
+  const gexM = gexR.status  === 'fulfilled' ? gexR.value  : null;
+  let buyPct = null;
+  if(cvd && isFinite(cvd.buyV) && isFinite(cvd.sellV)){
+    const tot = cvd.buyV + cvd.sellV;
+    if(tot > 0) buyPct = cvd.buyV / tot * 100;
+  }
+  return characterizeFinalist({
+    cvd:  cvd  ? { buyPct, cvd: cvd.cvd, cvdReal: cvd.cvdReal, partial: cvd.partial } : {},
+    dark: dark ? { offExchangePct: dark.offExchangePct, offExchangeNotional: dark.offExchangeNotional, count: dark.count } : {},
+    gex:  (gexM && gexM.ok && gexM.gex) ? { callWall: gexM.gex.callWall, putWall: gexM.gex.putWall, gammaFlip: gexM.gex.gammaFlip } : null,
+    price: (gexM && gexM.spot) ? gexM.spot : price,
+  });
+}
 // NOTA: el pre-aviso solo dispara en RTH (candado de hora, reloj real) → mata el ruido de after-hours.
 
 // ── SESIÓN NY (para normalizar el RVOL por hora del día) ────────────────────
@@ -282,12 +318,16 @@ function buildPreAlert(sym, last, prevC, moveATR, rvol) {
          `⏱ EN VIVO sin delay · ⚠ sin confirmar — vigilar (no es señal).`;
 }
 
-function buildCookAlert(h, cook) {
+function buildCookAlert(h, cook, dir) {
   const arrow = h.dir === 'up' ? '🟢 ▲' : '🔴 ▼';
-  return `🍳 <b>EN COCCIÓN — ${h.sym}</b>\n` +
-         `🔥 Volumen acelerando ${cook.rvol.toFixed(1)}× (Δ+${cook.accel.toFixed(1)}) con precio aún quieto (${Math.abs(cook.moveATR).toFixed(1)}×ATR)\n` +
-         `Precio $${h.last.toFixed(2)} · sesgo ${arrow} · score ${cook.score}/100\n` +
-         `⚠ Anticipación (más temprano que el pre-aviso) — se está cargando un movimiento. Vigilar, no es señal.`;
+  const lines = [
+    `🍳 <b>EN COCCIÓN — ${h.sym}</b>`,
+    `🔥 Volumen acelerando ${cook.rvol.toFixed(1)}× (Δ+${cook.accel.toFixed(1)}) con precio aún quieto (${Math.abs(cook.moveATR).toFixed(1)}×ATR)`,
+    `Precio $${h.last.toFixed(2)} · sesgo ${arrow} · score ${cook.score}/100`,
+  ];
+  if (dir && dir.read) lines.push(`📡 ${dir.read}`);
+  lines.push(`⚠ Anticipación (más temprano que el pre-aviso) — se está cargando un movimiento. Vigilar, no es señal.`);
+  return lines.join('\n');
 }
 
 // ── BARRIDO ──────────────────────────────────────────────────────────────────
@@ -331,7 +371,9 @@ async function runScan() {
           const recentlyConfirmed = (Date.now() - s.confirmedTs) < COOLDOWN_MS;
           const cookFresh = (Date.now() - (s.lastCookTs || 0)) >= COOK_COOLDOWN_MS;
           if (cook && cook.cooking && !recentlyConfirmed && cookFresh) {
-            await sendTelegram(buildCookAlert(ev, cook));
+            let dirRead = null;
+            try { dirRead = await characterizeCooking(sym, ev.last); } catch (_) {}
+            await sendTelegram(buildCookAlert(ev, cook, dirRead));
             s.lastCookTs = Date.now();
             cookFired++;
             continue;   // ya avisamos cocción → no duplicar con pre-aviso este barrido
