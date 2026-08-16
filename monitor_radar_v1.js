@@ -53,7 +53,9 @@ const ATR_PERIOD   = 14;                   // días para ATR
 const AVGVOL_DAYS  = 20;                   // días para volumen promedio
 const HIST_DAYS    = 45;                   // ventana de diarias para el baseline
 const TODAY_DAYS   = 6;                    // ventana corta para hoy + cierre previo (cubre finde/feriado)
-const DELAY_MS     = 16 * 60 * 1000;       // SIP free exige end > 15 min → pedimos a 16 min
+const DELAY_MS     = (process.env.RADAR_DELAY_MS != null && process.env.RADAR_DELAY_MS !== '')
+  ? +process.env.RADAR_DELAY_MS              // Algo Trader Plus (real-time): bajar via env, ej. 30000 (30s) o 0
+  : 16 * 60 * 1000;                          // default: SIP free exige end > 15 min → pedimos a 16 min
 const SCAN_INTERVAL = 5 * 60 * 1000;       // barrido cada 5 min
 const COOLDOWN_MS   = 2 * 60 * 60 * 1000;  // anti-spam: 1 alerta por ticker cada 2h
 const SNAP_BATCH    = 50;                  // símbolos por llamada
@@ -424,7 +426,7 @@ console.log(`   Universo  : ${UNIVERSE.length} tickers`);
 console.log(`   Umbrales  : RVOL ≥ ${RVOL_MIN}× (normalizado por hora) · movimiento ≥ ${ATR_MULT}×ATR(${ATR_PERIOD})`);
 console.log(`   Pre-aviso : solo RTH 09:30–16:00 ET · mov ≥ ${PRE_ATR_MULT}×ATR · RVOL parcial ≥ ${PRE_RVOL_MIN}× (o momentum en primeros ~16 min)`);
 console.log(`   Barrido   : cada ${SCAN_INTERVAL / 60000} min · cooldown ${COOLDOWN_MS / 3600000}h por ticker`);
-console.log(`   Feed      : SIP retrasado ${DELAY_MS / 60000} min (100% volumen, free)`);
+console.log(`   Feed      : SIP · ${DELAY_MS >= 15*60*1000 ? 'retrasado ' + (DELAY_MS/60000).toFixed(0) + ' min (free)' : (DELAY_MS/1000).toFixed(0) + 's ≈ TIEMPO REAL (Algo Trader Plus)'} · 100% volumen`);
 console.log(`   Alpaca key: ${ALPACA_KEY ? 'OK' : 'FALTA (ALPACA_KEY_ID)'}`);
 console.log(`   TG radar  : ${TG_TOKEN ? 'OK' : 'FALTA (TELEGRAM_TOKEN_RADAR)'}`);
 console.log('   FLAGGER de candidatos — no es gatillo de ejecución.');
