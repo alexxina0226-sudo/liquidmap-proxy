@@ -216,6 +216,19 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .lm-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;}
 .lm-section{background:#0c1220;border:1px solid #1a2340;border-radius:6px;padding:12px 14px;}
 .lm-section h3{font-size:11px;font-weight:700;color:#00e5ff;letter-spacing:1px;text-transform:uppercase;margin-bottom:8px;border-bottom:1px solid #1a2340;padding-bottom:5px;}
+#coccion-panel{position:fixed;top:64px;right:14px;width:330px;max-height:72vh;overflow-y:auto;z-index:9999;background:#0c1220;border:1px solid #3a2410;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6);font-family:'Space Mono',monospace;}
+.cook-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #3a2410;color:#ff8a00;font-weight:700;font-size:12px;letter-spacing:.5px;position:sticky;top:0;background:#0c1220;}
+.cook-x{background:none;border:none;color:#8aa;cursor:pointer;font-size:13px;}
+.cook-row{padding:9px 14px;border-bottom:1px solid #141a28;cursor:pointer;}
+.cook-row:hover{background:#141c2e;}
+.cook-r1{display:flex;justify-content:space-between;align-items:center;}
+.cook-sym{font-weight:700;color:#cdd6e4;font-size:13px;}
+.cook-score{color:#ff8a00;font-size:10px;white-space:nowrap;}
+.cook-read{color:#8aa;font-size:10px;line-height:1.4;margin-top:2px;}
+.cook-empty{padding:18px 14px;color:#8aa;font-size:11px;text-align:center;}
+.cook-foot{padding:8px 14px;color:#667;font-size:9px;border-top:1px solid #3a2410;position:sticky;bottom:0;background:#0c1220;}
+#coccion-badge{background:#ff8a00;color:#000;border-radius:10px;padding:0 5px;font-size:9px;font-weight:700;margin-left:4px;}
+#coccion-badge:empty{display:none;}
 .lm-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}
 .lm-icon{font-size:14px;flex-shrink:0;margin-top:1px;}
 .lm-text strong{display:block;font-size:10px;color:#e8f4ff;font-weight:600;}
@@ -308,6 +321,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
   <div id="whale-badge" class="whale-badge" style="display:none">🐋 —</div>
   <div style="margin-left:auto;display:flex;gap:6px;align-items:center;">
     <span id="alert-bell" class="on" onclick="toggleAlertModal()">🔔</span>
+    <button onclick="toggleCoccion()" id="coccion-btn" style="background:rgba(255,138,0,.10);border:1px solid rgba(255,138,0,.4);color:#ff8a00;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">🔥 EN COCCIÓN<span id="coccion-badge"></span></button>
     <button onclick="toggleLegend()" style="background:rgba(0,229,255,.08);border:1px solid var(--border);color:var(--accent);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">📖 GUÍA</button>
   </div>
 </div>
@@ -3317,12 +3331,51 @@ function updateMktStatus(){ const s=getMktStatus(),el=document.getElementById('m
 function updateClock(){ const ny=new Date(new Date().toLocaleString('en-US',{timeZone:'America/New_York'})); document.getElementById('clock-el').textContent=`${String(ny.getHours()).padStart(2,'0')}:${String(ny.getMinutes()).padStart(2,'0')}:${String(ny.getSeconds()).padStart(2,'0')} ET`; }
 
 function toggleLegend(){ document.getElementById('legend-modal').classList.toggle('show'); }
+// ── PESTAÑA 🔥 EN COCCIÓN — consume /coccion del radar (liquidmap-proxy-1) ──
+const COCCION_URL = 'https://liquidmap-proxy-1.onrender.com/coccion';
+let coccionOpen = false, coccionLast = null;
+function cookArrow(d){ return d==='up' ? '🟢▲' : d==='down' ? '🔴▼' : '◆'; }
+async function fetchCoccion(){
+  try { const r = await fetch(COCCION_URL, { cache:'no-store' }); coccionLast = await r.json(); }
+  catch(e){ coccionLast = { error:true }; }
+  const badge = document.getElementById('coccion-badge');
+  if(badge) badge.textContent = (coccionLast && coccionLast.count) ? coccionLast.count : '';
+  if(coccionOpen) renderCoccion(coccionLast);
+}
+function renderCoccion(d){
+  const list = document.getElementById('coccion-list'), sub = document.getElementById('cook-sub');
+  if(!list) return;
+  if(!d || d.error){ list.innerHTML = '<div class="cook-empty">Sin conexión al radar. Reintentando…</div>'; if(sub) sub.textContent=''; return; }
+  if(sub) sub.textContent = d.rth ? '· mercado abierto' : '· mercado cerrado';
+  const arr = d.cooking || [];
+  if(!arr.length){ list.innerHTML = '<div class="cook-empty">Nada cocinando ahora.'+(d.rth?'':'<br>(Mercado cerrado — vuelve con NY abierto.)')+'</div>'; return; }
+  list.innerHTML = arr.map(function(c){
+    const conv = (c.conviction!=null) ? ' · conv '+c.conviction : '';
+    const read = c.read ? '<div class="cook-read">'+c.read+'</div>' : (c.dir ? '' : '<div class="cook-read">esperando dirección…</div>');
+    return '<div class="cook-row" onclick="pickCoccion(\''+c.sym+'\')"><div class="cook-r1"><span class="cook-sym">'+cookArrow(c.dir)+' '+c.sym+'</span><span class="cook-score">🔥 '+c.score+'/100'+conv+'</span></div>'+read+'</div>';
+  }).join('');
+}
+function toggleCoccion(){
+  const pnl = document.getElementById('coccion-panel'); if(!pnl) return;
+  coccionOpen = (pnl.style.display==='none' || !pnl.style.display);
+  pnl.style.display = coccionOpen ? 'block' : 'none';
+  if(coccionOpen){ renderCoccion(coccionLast || {cooking:[]}); fetchCoccion(); }
+}
+function pickCoccion(sy){ toggleCoccion(); try{ selectSym(sy); }catch(e){} }
+setTimeout(fetchCoccion, 3000); setInterval(fetchCoccion, 60000);
 
 // ── LOCK KEY LISTENER ──
 document.getElementById('lock-input').addEventListener('keydown',e=>{ if(e.key==='Enter') checkPass(); });
 // s78: el server ya autorizó la sesión (si no, ni sirve este HTML) → auto-desbloqueo al cargar
 try{ checkPass(); }catch(e){ console.error('auto-init', e); }
 </script>
+
+<!-- PANEL 🔥 EN COCCIÓN (consume /coccion del radar liquidmap-proxy-1) -->
+<div id="coccion-panel" style="display:none;">
+  <div class="cook-head"><span>🔥 EN COCCIÓN <span id="cook-sub" style="font-weight:400;color:#8aa;font-size:10px;"></span></span><button class="cook-x" onclick="toggleCoccion()">✕</button></div>
+  <div id="coccion-list"><div class="cook-empty">Cargando…</div></div>
+  <div class="cook-foot">Anticipación · el radar barre ~113 tickers · clic = cargar en el mapa</div>
+</div>
 
 <!-- LEGEND MODAL -->
 <div id="legend-modal">
