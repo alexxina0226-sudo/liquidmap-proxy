@@ -21,6 +21,10 @@
 const http = require('http');   // mini-servidor para calificar como Web Service (tier Free de Render)
 let LAST = { at: null, hits: 0, fired: 0, preFired: 0, evaluated: 0, universe: 0, baseline: 0, frac: 0, top: [], error: 'aún no corrió' };
 
+// Estado VIVO de qué está cocinando ahora (para la pestaña 🔥 EN COCCIÓN del mapa vía /coccion).
+const COOKING_NOW = {};                     // { sym: { sym, score, rvol, moveATR, last, dir, conviction, read, ts } }
+const COOKING_TTL_MS = 12 * 60 * 1000;      // una cocción "vigente" ~2 barridos
+
 // ── CREDENCIALES (env vars en Render — NUNCA hardcodear) ────────────────────
 const ALPACA_KEY    = process.env.ALPACA_KEY_ID     || '';
 const ALPACA_SECRET = process.env.ALPACA_SECRET_KEY || '';
@@ -370,15 +374,22 @@ async function runScan() {
         // ── CAPA 3 · EN COCCIÓN (anticipación: volumen acelerando + precio aún quieto) ──
         if (scoreCooking && isRTH(new Date())) {
           const cook = scoreCooking({ rvol: ev.rvol, rvolPrev: prevRvol, moveATR: ev.moveATR, frac: ev.frac });
-          const recentlyConfirmed = (Date.now() - s.confirmedTs) < COOLDOWN_MS;
-          const cookFresh = (Date.now() - (s.lastCookTs || 0)) >= COOK_COOLDOWN_MS;
-          if (cook && cook.cooking && !recentlyConfirmed && cookFresh) {
-            let dirRead = null;
-            try { dirRead = await characterizeCooking(sym, ev.last); } catch (_) {}
-            await sendTelegram(buildCookAlert(ev, cook, dirRead));
-            s.lastCookTs = Date.now();
-            cookFired++;
-            continue;   // ya avisamos cocción → no duplicar con pre-aviso este barrido
+          if (cook && cook.cooking) {
+            // estado vivo para la pestaña 🔥 (SIEMPRE que cocina, barato — sin capa cara)
+            const prevC = COOKING_NOW[sym] || {};
+            COOKING_NOW[sym] = { sym, score: cook.score, rvol: cook.rvol, moveATR: cook.moveATR, last: ev.last,
+                                 dir: prevC.dir || null, conviction: prevC.conviction != null ? prevC.conviction : null, read: prevC.read || null, ts: Date.now() };
+            const recentlyConfirmed = (Date.now() - s.confirmedTs) < COOLDOWN_MS;
+            const cookFresh = (Date.now() - (s.lastCookTs || 0)) >= COOK_COOLDOWN_MS;
+            if (!recentlyConfirmed && cookFresh) {
+              let dirRead = null;
+              try { dirRead = await characterizeCooking(sym, ev.last); } catch (_) {}
+              if (dirRead) { COOKING_NOW[sym].dir = dirRead.direction; COOKING_NOW[sym].conviction = dirRead.conviction; COOKING_NOW[sym].read = dirRead.read; }
+              await sendTelegram(buildCookAlert(ev, cook, dirRead));
+              s.lastCookTs = Date.now();
+              cookFired++;
+              continue;   // ya avisamos cocción → no duplicar con pre-aviso este barrido
+            }
           }
         }
       }
@@ -436,6 +447,18 @@ console.log('══════════════════════�
 const PORT = process.env.PORT || 10000;
 http.createServer((req, res) => {
   if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
+  // ── /coccion : lista viva de finalistas cocinando (JSON) para la pestaña 🔥 del mapa ──
+  if (req.url === '/coccion' || req.url.startsWith('/coccion?')) {
+    const now = Date.now();
+    const cooking = Object.values(COOKING_NOW)
+      .filter(c => now - c.ts < COOKING_TTL_MS)
+      .sort((a, b) => b.score - a.score)
+      .map(c => ({ sym: c.sym, score: c.score, rvol: +(+c.rvol).toFixed(2), moveATR: +Math.abs(c.moveATR).toFixed(2),
+                   last: c.last, dir: c.dir, conviction: c.conviction, read: c.read, ageSec: Math.round((now - c.ts) / 1000) }));
+    res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ ok: true, at: LAST.at, rth: isRTH(new Date()), count: cooking.length, cooking }));
+    return;
+  }
   const l = LAST;
   const rows = (l.top || []).map(t => {
     const arrow = t.dir === 'up' ? '🟢▲' : '🔴▼';
