@@ -461,6 +461,7 @@ const BT_TFMAP    = { '5m':'5Min','15m':'15Min','1H':'1Hour','4H':'4Hour','1D':'
 const BT_TFMS     = { '5m':3e5,'15m':9e5,'1H':36e5,'4H':1.44e7,'1D':8.64e7 };
 const BT_ATR_LEN  = 14, BT_ATR_LOOKBACK = 40, BT_REGIME_LOOKBACK = 60;
 // Régimen tunables:
+const BT_GAP_FACTOR = 6;     // velas intradía solo existen en horario mercado → agrandar la ventana de fetch en calendario
 const BT_EMA_SLOW = 50;      // EMA de tendencia de fondo (en la TF de la señal)
 const BT_SLOPE_BARS = 6;     // pendiente: EMA ahora vs hace N barras (~1 día en 4H)
 const BT_ER_WIN = 20;        // ventana del ratio de eficiencia (chop vs tendencia)
@@ -597,8 +598,8 @@ async function runBacktest(req, res) {
     const [sym, tf] = key.split('|'); const g = groups[key];
     const tfms = BT_TFMS[tf] || 1.44e7;
     const preBars = Math.max(BT_ATR_LOOKBACK, BT_REGIME_LOOKBACK) + 2;
-    const minTs = Math.min(...g.map(s => s.ts)) - preBars * tfms;
-    const maxTs = Math.max(...g.map(s => s.ts)) + 35 * tfms;
+    const minTs = Math.min(...g.map(s => s.ts)) - preBars * tfms * BT_GAP_FACTOR;
+    const maxTs = Math.max(...g.map(s => s.ts)) + 40 * tfms * BT_GAP_FACTOR;
     let bars = [];
     try { bars = await btFetchTfBars(sym, tf, new Date(minTs).toISOString(), new Date(Math.min(maxTs, Date.now())).toISOString()); }
     catch (e) { skipped += g.length; continue; }
