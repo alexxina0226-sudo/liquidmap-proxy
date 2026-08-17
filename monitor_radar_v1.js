@@ -446,10 +446,12 @@ console.log('══════════════════════�
 // ── MINI-SERVIDOR HTTP (para calificar como Web Service free de Render) ──────
 
 // ════════════════════════════════════════════════════════════════════════════
-// /backtest — AUDITORÍA de geometría de salida (aditivo, display puro)
-//   Re-resuelve el ledger del gist contra los BARES REALES (Alpaca SIP, misma
-//   plomería del radar) probando geometrías alternativas. Ordering intrabar
-//   PESIMISTA (stop-first) para no autoengañarnos. Abrí /backtest en el navegador.
+// /backtest — AUDITORÍA de geometría + SELECTIVIDAD (aditivo, display puro)
+//   Re-resuelve el ledger del gist contra BARES REALES (Alpaca SIP) probando
+//   geometrías, y desglosa por atributo para cazar el SUBSET rentable.
+//   Ordering intrabar PESIMISTA (stop-first). Abrí /backtest en el navegador.
+//   Filtros por query: ?setup=BOS_BUY ?grade=FUERTE ?side=BUY ?minscore=9 ?cvd=real
+//                      ?geom=G1_estructural ?order=optimistic ?limit=60
 // ════════════════════════════════════════════════════════════════════════════
 const BT_GIST_ID  = process.env.BACKTEST_GIST_ID || 'd92ed46ade54195d8164f7e58d010866';
 const BT_TFMAP    = { '5m':'5Min','15m':'15Min','1H':'1Hour','4H':'4Hour','1D':'1Day' };
@@ -535,61 +537,89 @@ function btResolve(sig, geom, bars, order) {
   return BT_ROUND(realizedR);
 }
 
+const BT_mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+const BT_median = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m-1]+s[m])/2; };
+
+// desglose de expectativa por atributo (para cazar el subset rentable)
+function btBucketTable(rowsForGeom, keyFn, label) {
+  const b = {};
+  for (const r of rowsForGeom) { const k = String(keyFn(r.sig) ?? '—'); (b[k] ??= []).push(r.R); }
+  const entries = Object.entries(b).map(([k, arr]) => ({ k, exp: BT_mean(arr), win: 100*arr.filter(x=>x>0).length/arr.length, n: arr.length, sum: arr.reduce((a,c)=>a+c,0) }))
+    .sort((a, c) => c.exp - a.exp);
+  return `<h4 style="color:#8aa;margin:18px 0 4px">por ${label}</h4><table><tr><th>${label}</th><th>exp</th><th>win%</th><th>n</th><th>suma</th></tr>` +
+    entries.map(e => `<tr><td><b>${e.k}</b></td><td class="${e.exp>0?'ok':'err'}">${e.exp>=0?'+':''}${e.exp.toFixed(2)}R</td><td class="k">${e.win.toFixed(0)}%</td><td>${e.n}</td><td>${e.sum.toFixed(1)}R</td></tr>`).join('') + `</table>`;
+}
+
 async function runBacktest(req, res) {
   const q = new URL(req.url, 'http://x').searchParams;
   const order = q.get('order') === 'optimistic' ? 'optimistic' : 'pessimistic';
   const limit = +q.get('limit') || 0;
+  const gName = q.get('geom') || 'G1_estructural';
+  const fSetup = q.get('setup'), fGrade = q.get('grade'), fSide = q.get('side'), fCvd = q.get('cvd'), fMin = +q.get('minscore') || 0;
   let sigs = await btFetchLedger();
-  sigs = sigs.filter(s => BT_TFMAP[s.tf]);            // TF soportadas
+  sigs = sigs.filter(s => BT_TFMAP[s.tf]);
+  // ── FILTROS de selectividad ──
+  sigs = sigs.filter(s =>
+    (!fSetup || s.setup === fSetup) &&
+    (!fGrade || s.grade === fGrade) &&
+    (!fSide  || s.type  === fSide)  &&
+    (!fCvd   || String(s.cvdSource || 'null') === fCvd) &&
+    (!fMin   || (s.score || 0) >= fMin));
   if (limit > 0) sigs = sigs.slice(-limit);
-  // agrupar por sym|tf y traer bares una vez por grupo (dedup de llamadas)
+
   const groups = {};
   for (const s of sigs) (groups[`${s.sym}|${s.tf}`] ??= []).push(s);
-  const rows = [];           // {geom, R, horizon}
+  const rows = [];                    // {geom, R, sig}
   let usable = 0, skipped = 0;
   for (const key in groups) {
     const [sym, tf] = key.split('|'); const g = groups[key];
     const tfms = BT_TFMS[tf] || 1.44e7;
     const minTs = Math.min(...g.map(s => s.ts)) - (BT_ATR_LOOKBACK + 2) * tfms;
-    const maxTs = Math.max(...g.map(s => s.ts)) + (35) * tfms;
+    const maxTs = Math.max(...g.map(s => s.ts)) + 35 * tfms;
     let bars = [];
     try { bars = await btFetchTfBars(sym, tf, new Date(minTs).toISOString(), new Date(Math.min(maxTs, Date.now())).toISOString()); }
     catch (e) { skipped += g.length; continue; }
     for (const sig of g) {
       let any = false;
-      for (const geom of BT_GEOMS) { const R = btResolve(sig, geom, bars, order); if (R != null) { rows.push({ geom: geom.name, R, horizon: sig.horizon || 'swing' }); any = true; } }
+      for (const geom of BT_GEOMS) { const R = btResolve(sig, geom, bars, order); if (R != null) { rows.push({ geom: geom.name, R, sig }); any = true; } }
       if (any) usable++; else skipped++;
     }
   }
-  // agregados
-  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
-  const median = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m-1]+s[m])/2; };
+
   const byGeom = {}; for (const r of rows) (byGeom[r.geom] ??= []).push(r);
-  const tr = BT_GEOMS.map(G => {
+  const abTable = BT_GEOMS.map(G => {
     const rs = (byGeom[G.name] || []).map(x => x.R);
     if (!rs.length) return '';
-    const exp = mean(rs), win = 100 * rs.filter(x => x > 0).length / rs.length, best = exp;
-    return `<tr><td><b>${G.name}</b></td><td class="${exp>0?'ok':'err'}">${exp>=0?'+':''}${exp.toFixed(2)}R</td>` +
-           `<td class="k">${win.toFixed(0)}%</td><td>${median(rs)>=0?'+':''}${median(rs).toFixed(2)}R</td>` +
-           `<td>${rs.reduce((a,b)=>a+b,0).toFixed(1)}R</td><td>${rs.length}</td></tr>`;
+    const exp = BT_mean(rs), win = 100 * rs.filter(x => x > 0).length / rs.length;
+    return `<tr${G.name===gName?' style="background:#101828"':''}><td><b>${G.name}</b></td><td class="${exp>0?'ok':'err'}">${exp>=0?'+':''}${exp.toFixed(2)}R</td>` +
+           `<td class="k">${win.toFixed(0)}%</td><td>${BT_median(rs)>=0?'+':''}${BT_median(rs).toFixed(2)}R</td><td>${rs.reduce((a,b)=>a+b,0).toFixed(1)}R</td><td>${rs.length}</td></tr>`;
   }).join('');
-  const clsRows = BT_GEOMS.map(G => ['scalp','swing'].map(h => {
-    const rs = (byGeom[G.name] || []).filter(x => x.horizon === h).map(x => x.R);
-    return rs.length ? `<tr><td>${G.name}</td><td>${h}</td><td class="${mean(rs)>0?'ok':'err'}">${mean(rs)>=0?'+':''}${mean(rs).toFixed(2)}R</td><td>${rs.length}</td></tr>` : '';
-  }).join('')).join('');
+
+  const gRows = byGeom[gName] || [];
+  const sel = gRows.length ? (
+    btBucketTable(gRows, s => s.setup, 'setup') +
+    btBucketTable(gRows, s => s.grade, 'grade') +
+    btBucketTable(gRows, s => s.type, 'lado') +
+    btBucketTable(gRows, s => s.score, 'score') +
+    btBucketTable(gRows, s => s.cvdSource || 'null', 'fuente CVD')
+  ) : '<p style="opacity:.6">sin filas para esa geometría</p>';
+
+  const activeFilters = [fSetup && `setup=${fSetup}`, fGrade && `grade=${fGrade}`, fSide && `side=${fSide}`, fCvd && `cvd=${fCvd}`, fMin && `minscore=${fMin}`].filter(Boolean).join(' · ') || 'ninguno';
+
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(`<!doctype html><meta charset="utf-8"><title>Backtest geometría</title>
+  res.end(`<!doctype html><meta charset="utf-8"><title>Backtest geometría + selectividad</title>
     <style>body{font-family:system-ui,sans-serif;background:#0b0e14;color:#cdd6e4;padding:32px;line-height:1.6}
     b{color:#7fd1ff}.ok{color:#5fd38a}.err{color:#ff6b6b}.k{color:#ffd66b}
-    table{border-collapse:collapse;margin:8px 0 24px}td,th{padding:6px 18px 6px 0;border-bottom:1px solid #1c2230;text-align:left}
-    th{color:#8aa;font-weight:600;font-size:.85em}h2{color:#7fd1ff}small{opacity:.65}</style>
-    <h2>🔬 Backtest de geometría de salida</h2>
-    <p>Señales usables: <b>${usable}</b> · descartadas (sin bares/ATR): <b>${skipped}</b> ·
-       ordering intrabar: <b>${order}</b> ${order==='pessimistic'?'(stop-first, vara dura)':'(tp-first, cota alta)'}</p>
-    <p><small>Re-resuelto contra bares SIP reales — esto SÍ mide el SL ancho (a diferencia del ledger, que censuraba). Editá las geometrías en <b>BT_GEOMS</b> arriba del código. Probá <b>?order=optimistic</b> o <b>?limit=60</b>.</small></p>
-    <table><tr><th>Geometría</th><th>Expectativa</th><th>win%</th><th>mediana</th><th>suma</th><th>n</th></tr>${tr||'<tr><td colspan=6>sin datos</td></tr>'}</table>
-    <h3 style="color:#8aa">Por clase</h3>
-    <table><tr><th>Geometría</th><th>clase</th><th>exp</th><th>n</th></tr>${clsRows}</table>
+    table{border-collapse:collapse;margin:6px 0 18px}td,th{padding:6px 18px 6px 0;border-bottom:1px solid #1c2230;text-align:left}
+    th{color:#8aa;font-weight:600;font-size:.85em}h2,h3{color:#7fd1ff}small{opacity:.65}</style>
+    <h2>🔬 Backtest de geometría + selectividad</h2>
+    <p>Señales usables: <b>${usable}</b> · descartadas: <b>${skipped}</b> · ordering: <b>${order}</b> ·
+       filtros activos: <b class="k">${activeFilters}</b></p>
+    <p><small>Re-resuelto contra bares SIP reales. Filtros por query: <b>?setup= ?grade= ?side= ?minscore= ?cvd=</b> · geometría del desglose: <b>?geom=${gName}</b> · <b>?order=optimistic</b>. Editá geometrías en BT_GEOMS.</small></p>
+    <h3>A/B de geometrías${activeFilters!=='ninguno'?' (subset filtrado)':''}</h3>
+    <table><tr><th>Geometría</th><th>Expectativa</th><th>win%</th><th>mediana</th><th>suma</th><th>n</th></tr>${abTable||'<tr><td colspan=6>sin datos</td></tr>'}</table>
+    <h3>Selectividad — desglose de <b>${gName}</b> <small>(buscá los verdes: subset con expectativa &gt; 0)</small></h3>
+    ${sel}
     <p><small>Aditivo · no toca el generador de señales · flagger de calibración, no gatillo de ejecución.</small></p>`);
 }
 
@@ -608,7 +638,7 @@ http.createServer((req, res) => {
     res.end(JSON.stringify({ ok: true, at: LAST.at, rth: isRTH(new Date()), count: cooking.length, cooking }));
     return;
   }
-  // ── /backtest : re-resuelve el ledger con geometrías alternativas (HTML) ──
+  // ── /backtest : geometría + selectividad (HTML) ──
   if (req.url === '/backtest' || req.url.startsWith('/backtest?')) {
     runBacktest(req, res).catch(e => {
       res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
