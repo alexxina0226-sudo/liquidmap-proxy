@@ -444,6 +444,155 @@ console.log('   FLAGGER de candidatos — no es gatillo de ejecución.');
 console.log('════════════════════════════════════════════\n');
 
 // ── MINI-SERVIDOR HTTP (para calificar como Web Service free de Render) ──────
+
+// ════════════════════════════════════════════════════════════════════════════
+// /backtest — AUDITORÍA de geometría de salida (aditivo, display puro)
+//   Re-resuelve el ledger del gist contra los BARES REALES (Alpaca SIP, misma
+//   plomería del radar) probando geometrías alternativas. Ordering intrabar
+//   PESIMISTA (stop-first) para no autoengañarnos. Abrí /backtest en el navegador.
+// ════════════════════════════════════════════════════════════════════════════
+const BT_GIST_ID  = process.env.BACKTEST_GIST_ID || 'd92ed46ade54195d8164f7e58d010866';
+const BT_TFMAP    = { '5m':'5Min','15m':'15Min','1H':'1Hour','4H':'4Hour','1D':'1Day' };
+const BT_TFMS     = { '5m':3e5,'15m':9e5,'1H':36e5,'4H':1.44e7,'1D':8.64e7 };
+const BT_ATR_LEN  = 14, BT_ATR_LOOKBACK = 40;
+// ↓↓↓ EDITÁ ACÁ las geometrías. slAtr=stop en múltiplos de ATR; tps=[{r,size}]; beAfter=BE tras ese R; trail={afterR,atrMult}
+const BT_GEOMS = [
+  { name:'BASE_actual',    slAtr:0.5,  tps:[{r:6.0,size:1.0}],                                  beAfter:null, trail:null },
+  { name:'G1_estructural', slAtr:1.25, tps:[{r:1.0,size:0.34},{r:2.0,size:0.33},{r:3.5,size:0.33}], beAfter:1.0, trail:{afterR:2.0,atrMult:1.0} },
+  { name:'G2_2step',       slAtr:1.5,  tps:[{r:1.0,size:0.5},{r:2.5,size:0.5}],                  beAfter:1.0, trail:null },
+  { name:'G3_runner',      slAtr:1.5,  tps:[{r:1.0,size:0.34},{r:2.5,size:0.33}],                beAfter:1.0, trail:{afterR:1.5,atrMult:1.2} },
+];
+const BT_ROUND = x => Math.round(x*1000)/1000;
+
+async function btFetchLedger() {
+  const r = await fetch(`https://api.github.com/gists/${BT_GIST_ID}`,
+    { headers: { 'accept':'application/vnd.github+json', 'user-agent':'liquidmap-backtest' } });
+  if (!r.ok) throw new Error(`gist ${r.status} (¿id/privacidad?)`);
+  const j = await r.json();
+  let text = '';
+  for (const f of Object.values(j.files || {})) {
+    let c = f.content || '';
+    if (f.truncated && f.raw_url) { const rr = await fetch(f.raw_url, { headers:{ 'user-agent':'liquidmap-backtest' } }); c = await rr.text(); }
+    text += c + '\n';
+  }
+  const sigs = [];
+  for (let line of text.split('\n')) {
+    line = line.trim(); if (!line) continue;
+    if (line[0] !== '{') { if (line.includes('"id"')) line = '{' + line.replace(/^[^{]*/, ''); else continue; }
+    try { const o = JSON.parse(line); if (o.sym && o.entry && o.type) sigs.push(o); } catch {}
+  }
+  return sigs;
+}
+
+async function btFetchTfBars(sym, tf, startISO, endISO) {
+  const timeframe = BT_TFMAP[tf] || tf;
+  let pageToken = null; const out = [];
+  do {
+    const qs = `symbols=${sym}&timeframe=${timeframe}&start=${startISO}&end=${encodeURIComponent(endISO)}` +
+               `&adjustment=raw&feed=sip&limit=10000` + (pageToken ? `&page_token=${pageToken}` : '');
+    const d = await alpacaGet(`/v2/stocks/bars?${qs}`);
+    for (const b of ((d.bars && d.bars[sym]) || [])) out.push({ t: Date.parse(b.t), o: b.o, h: b.h, l: b.l, c: b.c });
+    pageToken = d.next_page_token || null;
+  } while (pageToken);
+  out.sort((a, b) => a.t - b.t);
+  return out;
+}
+
+// Resuelve UNA señal bajo UNA geometría contra bares reales. long = BUY.
+function btResolve(sig, geom, bars, order) {
+  const entryIdx = bars.findIndex(b => b.t >= sig.ts);
+  if (entryIdx < BT_ATR_LEN + 1) return null;
+  const atr = computeATR(bars.slice(Math.max(0, entryIdx - BT_ATR_LOOKBACK), entryIdx), BT_ATR_LEN);
+  if (!atr || atr <= 0) return null;
+  const long = sig.type === 'BUY', entry = sig.entry, dir = long ? 1 : -1;
+  const Rprice = geom.slAtr * atr; if (Rprice <= 0) return null;
+  let stop = entry - dir * Rprice, remaining = 1.0, realizedR = 0, beMoved = false;
+  const tps = geom.tps.map(t => ({ px: entry + dir * t.r * Rprice, size: t.size, r: t.r, hit: false }));
+  const favR = px => dir * (px - entry) / Rprice;
+  const win = sig.horizonBars || 30, last = Math.min(bars.length - 1, entryIdx + win);
+  for (let i = entryIdx + 1; i <= last; i++) {
+    const bar = bars[i], hiFav = long ? bar.h : bar.l;
+    const stopHit = long ? bar.l <= stop : bar.h >= stop;
+    const nextTP = tps.find(t => !t.hit);
+    const tpHit = nextTP && (long ? bar.h >= nextTP.px : bar.l <= nextTP.px);
+    const seq = order === 'optimistic' ? ['tp','stop'] : ['stop','tp'];
+    let closed = false;
+    for (const ev of seq) {
+      if (ev === 'stop' && stopHit) { realizedR += remaining * (dir * (stop - entry) / Rprice); remaining = 0; closed = true; break; }
+      if (ev === 'tp' && tpHit) {
+        realizedR += nextTP.size * nextTP.r; remaining = Math.max(0, remaining - nextTP.size); nextTP.hit = true;
+        if (geom.beAfter != null && !beMoved && favR(hiFav) >= geom.beAfter) { stop = entry; beMoved = true; }
+        if (remaining <= 1e-9) closed = true;
+      }
+    }
+    if (closed) return BT_ROUND(realizedR);
+    if (geom.beAfter != null && !beMoved && favR(hiFav) >= geom.beAfter) { stop = entry; beMoved = true; }
+    if (geom.trail && favR(hiFav) >= geom.trail.afterR) {
+      const t = hiFav - dir * geom.trail.atrMult * atr; stop = long ? Math.max(stop, t) : Math.min(stop, t);
+    }
+  }
+  if (remaining > 1e-9) realizedR += remaining * (dir * (bars[last].c - entry) / Rprice);
+  return BT_ROUND(realizedR);
+}
+
+async function runBacktest(req, res) {
+  const q = new URL(req.url, 'http://x').searchParams;
+  const order = q.get('order') === 'optimistic' ? 'optimistic' : 'pessimistic';
+  const limit = +q.get('limit') || 0;
+  let sigs = await btFetchLedger();
+  sigs = sigs.filter(s => BT_TFMAP[s.tf]);            // TF soportadas
+  if (limit > 0) sigs = sigs.slice(-limit);
+  // agrupar por sym|tf y traer bares una vez por grupo (dedup de llamadas)
+  const groups = {};
+  for (const s of sigs) (groups[`${s.sym}|${s.tf}`] ??= []).push(s);
+  const rows = [];           // {geom, R, horizon}
+  let usable = 0, skipped = 0;
+  for (const key in groups) {
+    const [sym, tf] = key.split('|'); const g = groups[key];
+    const tfms = BT_TFMS[tf] || 1.44e7;
+    const minTs = Math.min(...g.map(s => s.ts)) - (BT_ATR_LOOKBACK + 2) * tfms;
+    const maxTs = Math.max(...g.map(s => s.ts)) + (35) * tfms;
+    let bars = [];
+    try { bars = await btFetchTfBars(sym, tf, new Date(minTs).toISOString(), new Date(Math.min(maxTs, Date.now())).toISOString()); }
+    catch (e) { skipped += g.length; continue; }
+    for (const sig of g) {
+      let any = false;
+      for (const geom of BT_GEOMS) { const R = btResolve(sig, geom, bars, order); if (R != null) { rows.push({ geom: geom.name, R, horizon: sig.horizon || 'swing' }); any = true; } }
+      if (any) usable++; else skipped++;
+    }
+  }
+  // agregados
+  const mean = a => a.length ? a.reduce((x, y) => x + y, 0) / a.length : 0;
+  const median = a => { if (!a.length) return 0; const s = [...a].sort((x, y) => x - y), m = s.length >> 1; return s.length % 2 ? s[m] : (s[m-1]+s[m])/2; };
+  const byGeom = {}; for (const r of rows) (byGeom[r.geom] ??= []).push(r);
+  const tr = BT_GEOMS.map(G => {
+    const rs = (byGeom[G.name] || []).map(x => x.R);
+    if (!rs.length) return '';
+    const exp = mean(rs), win = 100 * rs.filter(x => x > 0).length / rs.length, best = exp;
+    return `<tr><td><b>${G.name}</b></td><td class="${exp>0?'ok':'err'}">${exp>=0?'+':''}${exp.toFixed(2)}R</td>` +
+           `<td class="k">${win.toFixed(0)}%</td><td>${median(rs)>=0?'+':''}${median(rs).toFixed(2)}R</td>` +
+           `<td>${rs.reduce((a,b)=>a+b,0).toFixed(1)}R</td><td>${rs.length}</td></tr>`;
+  }).join('');
+  const clsRows = BT_GEOMS.map(G => ['scalp','swing'].map(h => {
+    const rs = (byGeom[G.name] || []).filter(x => x.horizon === h).map(x => x.R);
+    return rs.length ? `<tr><td>${G.name}</td><td>${h}</td><td class="${mean(rs)>0?'ok':'err'}">${mean(rs)>=0?'+':''}${mean(rs).toFixed(2)}R</td><td>${rs.length}</td></tr>` : '';
+  }).join('')).join('');
+  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.end(`<!doctype html><meta charset="utf-8"><title>Backtest geometría</title>
+    <style>body{font-family:system-ui,sans-serif;background:#0b0e14;color:#cdd6e4;padding:32px;line-height:1.6}
+    b{color:#7fd1ff}.ok{color:#5fd38a}.err{color:#ff6b6b}.k{color:#ffd66b}
+    table{border-collapse:collapse;margin:8px 0 24px}td,th{padding:6px 18px 6px 0;border-bottom:1px solid #1c2230;text-align:left}
+    th{color:#8aa;font-weight:600;font-size:.85em}h2{color:#7fd1ff}small{opacity:.65}</style>
+    <h2>🔬 Backtest de geometría de salida</h2>
+    <p>Señales usables: <b>${usable}</b> · descartadas (sin bares/ATR): <b>${skipped}</b> ·
+       ordering intrabar: <b>${order}</b> ${order==='pessimistic'?'(stop-first, vara dura)':'(tp-first, cota alta)'}</p>
+    <p><small>Re-resuelto contra bares SIP reales — esto SÍ mide el SL ancho (a diferencia del ledger, que censuraba). Editá las geometrías en <b>BT_GEOMS</b> arriba del código. Probá <b>?order=optimistic</b> o <b>?limit=60</b>.</small></p>
+    <table><tr><th>Geometría</th><th>Expectativa</th><th>win%</th><th>mediana</th><th>suma</th><th>n</th></tr>${tr||'<tr><td colspan=6>sin datos</td></tr>'}</table>
+    <h3 style="color:#8aa">Por clase</h3>
+    <table><tr><th>Geometría</th><th>clase</th><th>exp</th><th>n</th></tr>${clsRows}</table>
+    <p><small>Aditivo · no toca el generador de señales · flagger de calibración, no gatillo de ejecución.</small></p>`);
+}
+
 const PORT = process.env.PORT || 10000;
 http.createServer((req, res) => {
   if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
@@ -457,6 +606,14 @@ http.createServer((req, res) => {
                    last: c.last, dir: c.dir, conviction: c.conviction, read: c.read, ageSec: Math.round((now - c.ts) / 1000) }));
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
     res.end(JSON.stringify({ ok: true, at: LAST.at, rth: isRTH(new Date()), count: cooking.length, cooking }));
+    return;
+  }
+  // ── /backtest : re-resuelve el ledger con geometrías alternativas (HTML) ──
+  if (req.url === '/backtest' || req.url.startsWith('/backtest?')) {
+    runBacktest(req, res).catch(e => {
+      res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(`<pre style="color:#ff6b6b;background:#0b0e14;padding:24px;font-family:system-ui;white-space:pre-wrap">Error /backtest: ${String(e && e.message || e).replace(/</g,'&lt;')}</pre>`);
+    });
     return;
   }
   const l = LAST;
