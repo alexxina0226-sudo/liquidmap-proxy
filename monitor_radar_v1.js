@@ -466,6 +466,9 @@ const BT_EMA_SLOW = 50;      // EMA de tendencia de fondo (en la TF de la señal
 const BT_SLOPE_BARS = 6;     // pendiente: EMA ahora vs hace N barras (~1 día en 4H)
 const BT_ER_WIN = 20;        // ventana del ratio de eficiencia (chop vs tendencia)
 const BT_ER_TREND = 0.5, BT_ER_MIX = 0.3;   // umbrales eficiencia
+// EXPANSIÓN del mapa (paridad EXACTA con computeFlow L963-970): atrFast(7)/atrSlow(21) sobre TR.
+// Solo para el CROSS-TAB vs eficiencia — NO cambia el régimen que decide (ese es EMA50 + ER).
+const BT_EXP_FAST = 7, BT_EXP_SLOW = 21, BT_EXP_HI = 1.15, BT_EXP_LO = 0.85;
 // ↓↓↓ EDITÁ las geometrías. slAtr=stop en ATR; tps=[{r,size}]; beAfter=BE tras R; trail={afterR,atrMult}
 const BT_GEOMS = [
   { name:'BASE_actual',    slAtr:0.5,  tps:[{r:6.0,size:1.0}],                                  beAfter:null, trail:null },
@@ -526,6 +529,22 @@ function btRegime(bars, idx) {
   return { dir, eff };
 }
 
+// EXPANSIÓN del mapa AS-OF la señal — espejo BYTE-A-BYTE de computeFlow (mapa L957-970).
+// atrN = media de los últimos min(n,len) TR; expRatio = atrFast(7)/atrSlow(21).
+function btExpRegime(bars, idx) {
+  const w = bars.slice(0, idx + 1);
+  if (w.length < BT_EXP_SLOW + 1) return null;
+  const tr = [];
+  for (let i = 1; i < w.length; i++) {
+    const pc = w[i - 1].c;
+    tr.push(Math.max(w[i].h - w[i].l, Math.abs(w[i].h - pc), Math.abs(w[i].l - pc)));
+  }
+  const atrN = (arr, n) => arr.length ? arr.slice(-Math.min(n, arr.length)).reduce((a, v) => a + v, 0) / Math.min(n, arr.length) : 0;
+  const fast = atrN(tr, BT_EXP_FAST), slow = atrN(tr, BT_EXP_SLOW);
+  const ratio = slow > 0 ? fast / slow : 1;
+  return ratio >= BT_EXP_HI ? 'EXPANSIÓN' : ratio <= BT_EXP_LO ? 'COMPRESIÓN' : 'NEUTRAL';
+}
+
 // Resuelve UNA señal bajo UNA geometría contra bares reales. long = BUY.
 function btResolve(sig, geom, bars, order) {
   const entryIdx = bars.findIndex(b => b.t >= sig.ts);
@@ -582,6 +601,8 @@ async function runBacktest(req, res) {
   const gName = q.get('geom') || 'G1_estructural';
   const fSetup = q.get('setup'), fGrade = q.get('grade'), fSide = q.get('side'), fCvd = q.get('cvd'), fMin = +q.get('minscore') || 0;
   const fRegime = q.get('regime'), fAlign = q.get('align'), fEff = q.get('eff');
+  const EXP_MAP = { expansion: 'EXPANSIÓN', compresion: 'COMPRESIÓN', neutral: 'NEUTRAL' };
+  const fExpQ = q.get('exp'); const fExp = fExpQ ? (EXP_MAP[fExpQ.toLowerCase()] || fExpQ) : null;
   let sigs = await btFetchLedger();
   sigs = sigs.filter(s => BT_TFMAP[s.tf]);
   sigs = sigs.filter(s =>
@@ -609,6 +630,7 @@ async function runBacktest(req, res) {
       const rgm = eIdx >= 0 ? btRegime(bars, eIdx) : null;
       sig._dir = rgm ? rgm.dir : '?';
       sig._eff = rgm ? rgm.eff : '?';
+      sig._exp = eIdx >= 0 ? (btExpRegime(bars, eIdx) || '?') : '?';   // EXPANSIÓN del mapa (para el cross-tab)
       sig._align = !rgm ? '?' : (rgm.dir === 'neutral' ? 'neutral' :
         ((sig.type === 'BUY' && rgm.dir === 'up') || (sig.type === 'SELL' && rgm.dir === 'down')) ? 'alineada' : 'contra');
       let any = false;
@@ -619,7 +641,8 @@ async function runBacktest(req, res) {
 
   // filtros de régimen a nivel row (necesitan bares ya computados)
   const rowsF = rows.filter(r =>
-    (!fRegime || r.sig._dir === fRegime) && (!fAlign || r.sig._align === fAlign) && (!fEff || r.sig._eff === fEff));
+    (!fRegime || r.sig._dir === fRegime) && (!fAlign || r.sig._align === fAlign) && (!fEff || r.sig._eff === fEff) &&
+    (!fExp || r.sig._exp === fExp));
 
   const byGeom = {}; for (const r of rowsF) (byGeom[r.geom] ??= []).push(r);
   const abTable = BT_GEOMS.map(G => {
@@ -637,7 +660,10 @@ async function runBacktest(req, res) {
     btBucketTable(gRows, s => s._align, 'alineación (con/contra la tendencia)') +
     btBucketTable(gRows, s => `${s._align} · ${s._eff}`, 'alineación × eficiencia') +
     btBucketTable(gRows, s => s._dir, 'régimen de fondo') +
-    btBucketTable(gRows, s => s._eff, 'eficiencia (tendencia/chop)') +
+    btBucketTable(gRows, s => s._eff, 'eficiencia (tendencia/chop) — NUESTRO corte, define el edge') +
+    `<h4 style="color:#ffb066;margin:18px 0 0">🔬 CROSS-TAB — ¿la EXPANSIÓN del mapa mide lo mismo que la eficiencia?</h4>` +
+    btBucketTable(gRows, s => s._exp, 'EXPANSIÓN del mapa (volatilidad ATR7/ATR21) — el gate candidato') +
+    btBucketTable(gRows, s => `${s._eff} · ${s._exp}`, 'eficiencia × EXPANSIÓN (si coincidieran: tendencia↔EXPANSIÓN, chop↔COMPRESIÓN)') +
     `</div>` +
     btBucketTable(gRows, s => s.setup, 'setup') +
     btBucketTable(gRows, s => s.grade, 'grade') +
@@ -646,7 +672,7 @@ async function runBacktest(req, res) {
     btBucketTable(gRows, s => s.cvdSource || 'null', 'fuente CVD')
   ) : '<p style="opacity:.6">sin filas para esa geometría/filtros</p>';
 
-  const activeFilters = [fSetup&&`setup=${fSetup}`, fGrade&&`grade=${fGrade}`, fSide&&`side=${fSide}`, fCvd&&`cvd=${fCvd}`, fMin&&`minscore=${fMin}`, fRegime&&`regime=${fRegime}`, fAlign&&`align=${fAlign}`, fEff&&`eff=${fEff}`].filter(Boolean).join(' · ') || 'ninguno';
+  const activeFilters = [fSetup&&`setup=${fSetup}`, fGrade&&`grade=${fGrade}`, fSide&&`side=${fSide}`, fCvd&&`cvd=${fCvd}`, fMin&&`minscore=${fMin}`, fRegime&&`regime=${fRegime}`, fAlign&&`align=${fAlign}`, fEff&&`eff=${fEff}`, fExpQ&&`exp=${fExpQ}`].filter(Boolean).join(' · ') || 'ninguno';
 
   res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
   res.end(`<!doctype html><meta charset="utf-8"><title>Backtest geometría + selectividad + régimen</title>
@@ -656,7 +682,7 @@ async function runBacktest(req, res) {
     th{color:#8aa;font-weight:600;font-size:.85em}h2,h3{color:#7fd1ff}small{opacity:.65}</style>
     <h2>🔬 Backtest · geometría + selectividad + <span style="color:#5fd38a">régimen</span></h2>
     <p>Señales usables: <b>${usable}</b> · descartadas: <b>${skipped}</b> · en el corte: <b>${rowsF.length/BT_GEOMS.length|0}</b> · ordering: <b>${order}</b> · filtros: <b class="k">${activeFilters}</b></p>
-    <p><small>Régimen = EMA${BT_EMA_SLOW} en la TF de la señal (dirección + pendiente ${BT_SLOPE_BARS} barras) · eficiencia = |mov neto|/|recorrido| en ${BT_ER_WIN} barras (≥${BT_ER_TREND}=tendencia, ≥${BT_ER_MIX}=mixto, si no chop). "alineada" = la señal va CON la tendencia de fondo. Filtros: ?regime= ?align= ?eff= + ?setup= ?grade= ?side= ?minscore= ?cvd= ?geom= ?order=optimistic. Editá en BT_* / BT_GEOMS.</small></p>
+    <p><small>Régimen = EMA${BT_EMA_SLOW} en la TF de la señal (dirección + pendiente ${BT_SLOPE_BARS} barras) · eficiencia = |mov neto|/|recorrido| en ${BT_ER_WIN} barras (≥${BT_ER_TREND}=tendencia, ≥${BT_ER_MIX}=mixto, si no chop). "alineada" = la señal va CON la tendencia de fondo. EXPANSIÓN del mapa = atrFast(7)/atrSlow(21) (≥1.15=EXPANSIÓN, ≤0.85=COMPRESIÓN) — es VOLATILIDAD, distinto eje que la eficiencia; el cross-tab lo prueba. Filtros: ?regime= ?align= ?eff= ?exp=expansion|compresion|neutral + ?setup= ?grade= ?side= ?minscore= ?cvd= ?geom= ?order=optimistic. Editá en BT_* / BT_GEOMS.</small></p>
     <h3>A/B de geometrías${activeFilters!=='ninguno'?' (subset filtrado)':''}</h3>
     <table><tr><th>Geometría</th><th>Expectativa</th><th>win%</th><th>mediana</th><th>suma</th><th>n</th></tr>${abTable||'<tr><td colspan=6>sin datos</td></tr>'}</table>
     <h3>Desglose de <b>${gName}</b> <small>(verdes = subset con expectativa &gt; 0)</small></h3>
