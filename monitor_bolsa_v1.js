@@ -449,6 +449,55 @@ function computeStructuralTargets(price, dir, vp, zones, quote, struct, atr, atr
   return { tps, sl: { price: slPrice, label: slLabel } };
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// AUDITORÍA 18/08 — GEOMETRÍA G2_2step + GATE DE RÉGIMEN (el único toque al emisor)
+// El /backtest sobre bares SIP reales probó: gateado a tendencia+up+largo con geometría
+// G2_2step = +0.11R/67% (cruza cero). El SL estructural viejo (~0.5×ATR) vivía adentro del
+// ruido (66/92 stopeadas). Y el cross-tab probó que la EXPANSIÓN del mapa NO sirve de gate
+// (mide volatilidad, anti-correlada) → acá se porta la EFICIENCIA exacta del backtest.
+// Todo tuneable por env. Reversible: GEOM_MODE=structural / REGIME_GATE_ON=off = comportamiento viejo.
+// ═══════════════════════════════════════════════════════════════════════════
+const GEOM_MODE = process.env.GEOM_MODE || 'G2_2step';        // 'G2_2step' (auditado) | 'structural' (viejo)
+const G2_SL_ATR = +process.env.G2_SL_ATR || 1.5;              // stop = 1.5×ATR(14)
+const G2_TP1_R  = +process.env.G2_TP1_R  || 1.0;             // TP1 = 1R  (cerrar 50%)
+const G2_TP2_R  = +process.env.G2_TP2_R  || 2.5;            // TP2 = 2.5R (cerrar 50% resto) — SIN runner
+
+// G2_2step: SL 1.5×ATR fijo, TP1 1R (50%), TP2 2.5R (50%), BE@1R, sin runner. a14 = ATR(14) real 4H.
+function computeG2Targets(price, dir, a14) {
+  if ((dir !== 'BUY' && dir !== 'SELL') || !price || !a14 || a14 <= 0) return null;
+  const sgn = dir === 'BUY' ? 1 : -1;
+  const R = G2_SL_ATR * a14;
+  return {
+    tps: [
+      { price: price + sgn * G2_TP1_R * R, label: `${G2_TP1_R}R` },
+      { price: price + sgn * G2_TP2_R * R, label: `${G2_TP2_R}R` },
+    ],
+    sl: { price: price - sgn * R, label: `${G2_SL_ATR}×ATR` },
+  };
+}
+
+// GATE DE RÉGIMEN — port BYTE-A-BYTE de btRegime del /backtest (EMA50 dir + Kaufman ER sobre closes).
+// NO usa la EXPANSIÓN del mapa (el cross-tab la mató: mide vol, no dirección). bars = candles 4H.
+const REGIME_GATE_ON = (process.env.REGIME_GATE_ON || 'on') !== 'off';
+const RG_EMA = +process.env.RG_EMA || 50, RG_SLOPE = +process.env.RG_SLOPE || 6;
+const RG_ER_WIN = +process.env.RG_ER_WIN || 20, RG_ER_TREND = +process.env.RG_ER_TREND || 0.5;
+function rgEmaSeries(vals, p) { const k = 2/(p+1); let e = vals[0]; const out = [e]; for (let i=1;i<vals.length;i++){ e = vals[i]*k + e*(1-k); out.push(e);} return out; }
+function regimeGate(bars, side) {
+  const closes = (bars || []).map(b => b.c).filter(v => v != null && isFinite(v));
+  if (closes.length < RG_EMA + 5) return { dir:'?', eff:'?', er:null, pass:false, why:'sin historia (<'+(RG_EMA+5)+' velas)' };
+  const idx = closes.length - 1;
+  const ema = rgEmaSeries(closes, RG_EMA);
+  const px = closes[idx], es = ema[idx], esPrev = ema[Math.max(0, idx - RG_SLOPE)];
+  let dir = 'neutral';
+  if (px > es && es > esPrev) dir = 'up'; else if (px < es && es < esPrev) dir = 'down';
+  const n = Math.min(RG_ER_WIN, idx);
+  let net = Math.abs(closes[idx] - closes[idx - n]), path = 0;
+  for (let i = idx - n + 1; i <= idx; i++) path += Math.abs(closes[i] - closes[i - 1]);
+  const er = path > 0 ? net / path : 0;
+  const eff = er >= RG_ER_TREND ? 'tendencia' : 'no-tendencia';
+  const pass = dir === 'up' && eff === 'tendencia' && side === 'BUY';   // largo-preferido: SELL/down sin probar (n1-3)
+  return { dir, eff, er, pass };
+}
 
 function isDST(date) {
   const jan = new Date(date.getFullYear(), 0, 1).getTimezoneOffset();
@@ -1272,7 +1321,9 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
   const atrTV  = calcRealATR(candles4H, 14) || atr;   // ATR(14) real del 4H = ta.atr(14) del Pine → TP a lo TV
   // TP/SL ESTRUCTURALES (niveles reales: POC/VWAP/VAH-VAL/pools/máx-mín día/proy). ATR solo relleno.
   const zones4H = detectLiquidityZones(candles4H, price);
-  const tgt = computeStructuralTargets(price, result.direction, result.vp, zones4H, quote, result.struct4H, atr, atrTV);
+  const tgt = GEOM_MODE === 'G2_2step'
+    ? computeG2Targets(price, result.direction, atrTV)
+    : computeStructuralTargets(price, result.direction, result.vp, zones4H, quote, result.struct4H, atr, atrTV);
   const sl  = tgt ? tgt.sl.price : (isBuy ? price - atr*1.5 : price + atr*1.5);
   const slLb  = tgt ? ' · ' + tgt.sl.label : '';
   const tp1 = tgt && tgt.tps[0] ? tgt.tps[0].price : null;
@@ -1323,6 +1374,17 @@ function buildMessage(ticker, price, result, session, quote, candles4H) {
     : '';
   const escHTML  = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   if (result) result.signalLevels = { entry: price, sl, tp1, tp2, tp3, grade: gov ? gov.grade : null };   // LEDGER: niveles para la captura
+  // Bloque TP/SL — G2_2step (2 pasos mitad-mitad, BE@1R, sin runner) vs structural (viejo, 3 TP + runner)
+  const tpBlock = (GEOM_MODE === 'G2_2step')
+    ? `🛑 SL:  ${fmt(sl,price)}${slLb}
+✅ TP1: ${tp1!=null?fmt(tp1,price)+t1Lb:'—'} · cerrar 50%
+✅ TP2: ${tp2!=null?fmt(tp2,price)+t2Lb:'—'} · cerrar 50% (resto)
+📌 Al llegar a TP1 → mover SL a breakeven · sin runner`
+    : `🛑 SL:  ${fmt(sl,price)}${slLb}
+✅ TP1: ${tp1!=null?fmt(tp1,price)+t1Lb:'—'} · cerrar 50%
+✅ TP2: ${tp2!=null?fmt(tp2,price)+t2Lb:'—'} · cerrar 30%
+🔶 TP3: ${tp3!=null?fmt(tp3,price)+t3Lb:'—'} · dejar 20%
+📌 Al llegar a TP1 → mover SL a breakeven`;
   const confList  = result.confluences.map(c => `  • ${escHTML(c)}`).join('\n');
   const changeStr = (quote && quote.pc && quote.pc !== 0)
     ? `${((quote.c - quote.pc)/quote.pc*100) >= 0 ? '+' : ''}${((quote.c - quote.pc)/quote.pc*100).toFixed(2)}%`
@@ -1342,11 +1404,7 @@ ${confList}${structL}${shLine}${dpLine}${gexLine}
 📈 CVD: ${cvdV.cvd>0?'▲ Positivo':'▼ Negativo'} · ${cvdV.buyPct.toFixed(0)}% Buy (${cvdSrc})${flowBlock}
 📐 POC: ${result.vp?fmt(result.vp.poc,price):'—'} · VWAP: ${result.vp?fmt(result.vp.vwap,price):'—'}
 
-🛑 SL:  ${fmt(sl,price)}${slLb}
-✅ TP1: ${tp1!=null?fmt(tp1,price)+t1Lb:'—'} · cerrar 50%
-✅ TP2: ${tp2!=null?fmt(tp2,price)+t2Lb:'—'} · cerrar 30%
-🔶 TP3: ${tp3!=null?fmt(tp3,price)+t3Lb:'—'} · dejar 20%
-📌 Al llegar a TP1 → mover SL a breakeven
+${tpBlock}
 
 ⚡ LiquidMap PRO · Bolsa v6`;
 }
@@ -1523,8 +1581,20 @@ async function scanTicker(ticker, session) {
     result.prints = await fetchDarkPoolPrints(ticker);            // huella real o null
     result.flow   = interpretFlow(result.prints, result.cvdShown, result.struct4H);
 
-    await sendTelegram(buildMessage(ticker, price, result, session, quote, candles4H));
-    hbSignal('bolsa', `${ticker} ${result.direction} ${result.score}/10`);   // señal real enviada
+    // ── GATE DE RÉGIMEN (auditoría 18/08) — a Telegram SOLO el sniper (up+tendencia+largo). ──
+    // El ledger CAPTURA IGUAL todas las candidatas (medimos todo + el gate) → seguimos validando
+    // con data fresca, no quedamos ciegos a lo silenciado. buildMessage corre SIEMPRE (setea
+    // signalLevels para la captura). REGIME_GATE_ON=off → comportamiento viejo (emite todo).
+    const rg = REGIME_GATE_ON ? regimeGate(candles4HXL, result.direction) : { dir:'off', eff:'off', pass:true };
+    result.regimeGate = rg;
+    const msg = buildMessage(ticker, price, result, session, quote, candles4H);
+    if (rg.pass) {
+      await sendTelegram(msg);
+      hbSignal('bolsa', `${ticker} ${result.direction} ${result.score}/10`);   // señal real enviada
+      console.log(`[${ticker}] 🎯 EMITIDO a Telegram (gate: ${rg.dir}·${rg.eff}${rg.er!=null?' ER'+rg.er.toFixed(2):''})`);
+    } else {
+      console.log(`[${ticker}] 🔇 gate régimen SILENCIA Telegram (${result.direction} · dir=${rg.dir} eff=${rg.eff}${rg.er!=null?' ER'+rg.er.toFixed(2):''}${rg.why?' · '+rg.why:''}) — se registra en el ledger igual`);
+    }
 
     s.lastSignalDir = result.direction;
     s.lastSignalTs  = Date.now();
