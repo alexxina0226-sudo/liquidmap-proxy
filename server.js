@@ -645,6 +645,78 @@ app.get('/alpaca-prints', async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// ASISTENTE-JUEZ · /asistente — Claude viviendo en el mapa (JUEZ/INTÉRPRETE)
+// Recibe el ESTADO del mapa (lo arma el cliente), inyecta la CONSTITUCIÓN v0.3
+// + la ANTHROPIC_API_KEY (env, nunca al cliente, nunca logueada), llama a la
+// Anthropic Messages API y devuelve el veredicto. FAIL-OPEN: si falta la key o
+// la API tarda/falla → ok:false + HTTP 200, el mapa sigue igual. Aditivo: NO
+// toca emisor, ledger ni backtest.
+//   ENV: ANTHROPIC_API_KEY=sk-ant-...  (obligatoria)
+//        ASISTENTE_MODEL=claude-sonnet-5  (opcional; opus-4-8 para revisiones)
+// ══════════════════════════════════════════════════════════════════════════
+const fs = require('fs');
+let CONSTITUCION_JUEZ = '';
+try {
+  CONSTITUCION_JUEZ = fs.readFileSync(path.join(__dirname, 'CONSTITUCION_ASISTENTE_v0.3.md'), 'utf8');
+} catch(_e) {
+  CONSTITUCION_JUEZ = 'Sos el JUEZ e INTÉRPRETE de LiquidMap PRO. Leés el estado que el mapa ya computó y das un veredicto claro. NO sos caja negra ni gatillo (no es consejo de inversión; el gatillo lo aprieta Gonzalo). Pesás 3 EJES: estructura (SuperTrend + semáforo + CHoCH/BOS), flujo (¿el CVD confirma o diverge?), contexto/HTF (el capó del Governor: discount/premium, MTF, EMA200). FRENO CALIBRADO: cuando los 3 ejes alinean, decí el tiro CON convicción; "esperá" SOLO cuando la evidencia está partida de verdad. Cerrás con "qué lo cambiaría". Hablás en rioplatense, claro. (Fallback — falta CONSTITUCION_ASISTENTE_v0.3.md en el repo)';
+}
+const HAS_ANTHROPIC_KEY = !!process.env.ANTHROPIC_API_KEY;
+if (!HAS_ANTHROPIC_KEY) console.warn('[asistente] ANTHROPIC_API_KEY ausente → /asistente responde fail-open hasta que la setees en Render.');
+const ASISTENTE_MODEL = process.env.ASISTENTE_MODEL || 'claude-sonnet-5';
+const TAREA_JUEZ = 'Te paso el ESTADO del mapa en JSON (organizado por los 3 ejes) y, si hay, la pregunta de Gonzalo. Dá el veredicto leyendo SOLO ese estado — grounded, sin inventar números que no estén. Formato: (1) una línea de veredicto (andá / esperá / no — y el grado), (2) 2-4 frases con el porqué apoyado en los 3 ejes y el capó del Governor, (3) "qué lo cambiaría". Si el estado dice sinDatos o el titular es NEUTRAL por conflicto, sé honesto: "esperá, y por qué". Si preguntan por el mejor tiro, cruzá seleccionRadar con el ticker actual.';
+
+app.post('/asistente', async (req, res) => {
+  try {
+    const body = req.body || {};
+    const state = body.state;
+    const question = (typeof body.question === 'string') ? body.question.slice(0, 500) : null;
+    if (!state || typeof state !== 'object') return res.json({ ok:false, error:'Falta el estado del mapa.' });
+    if (!HAS_ANTHROPIC_KEY) return res.json({ ok:false, error:'El juez no está configurado (falta la API key en el server).' });
+
+    // HOOK memoria del juez (próximo paso, read-only del ledger): state.memoriaJuez = ...
+
+    const userContent = TAREA_JUEZ + '\n\n'
+      + (question ? ('PREGUNTA DE GONZALO: ' + question + '\n\n') : '')
+      + 'ESTADO DEL MAPA:\n' + JSON.stringify(state, null, 0);
+
+    const ctrl = new AbortController();
+    const to = setTimeout(() => ctrl.abort(), 25000);
+    let apiResp;
+    try {
+      apiResp = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST',
+        signal: ctrl.signal,
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': process.env.ANTHROPIC_API_KEY,
+          'anthropic-version': '2023-06-01',
+        },
+        body: JSON.stringify({
+          model: ASISTENTE_MODEL,
+          max_tokens: 700,
+          system: CONSTITUCION_JUEZ,
+          messages: [{ role: 'user', content: userContent }],
+        }),
+      });
+    } finally { clearTimeout(to); }
+
+    if (!apiResp.ok) {
+      let detail = '';
+      try { const ej = await apiResp.json(); detail = (ej && ej.error && ej.error.message) || ''; } catch(_e){}
+      return res.json({ ok:false, error:'La API del juez respondió ' + apiResp.status + (detail ? (' — ' + detail) : '') });
+    }
+    const data = await apiResp.json();
+    const verdict = Array.isArray(data.content)
+      ? data.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim() : '';
+    return res.json({ ok:true, verdict: verdict || '(el juez no devolvió texto)', model: data.model || ASISTENTE_MODEL, usage: data.usage || null });
+  } catch(e) {
+    const msg = (e && e.name === 'AbortError') ? 'El juez tardó demasiado (timeout).' : ((e && e.message) || 'error');
+    return res.json({ ok:false, error:'Juez no disponible: ' + msg });
+  }
+});
+
 // ── HEALTH CHECK ─────────────────────────────────
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', time: new Date().toISOString(), service: 'LiquidMap PRO v2' });
