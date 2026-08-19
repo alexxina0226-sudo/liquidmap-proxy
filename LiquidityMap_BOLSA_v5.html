@@ -236,6 +236,22 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .lm-close{width:100%;margin-top:16px;padding:10px;background:#00e5ff;color:#03050d;border:none;border-radius:5px;cursor:pointer;font-family:'Bebas Neue',sans-serif;font-size:16px;letter-spacing:2px;}
 .lm-warn{background:rgba(255,224,0,.08);border:1px solid rgba(255,224,0,.3);border-radius:5px;padding:8px 12px;margin-top:12px;font-size:9px;color:#ffe000;text-align:center;}
 @media(max-width:600px){.lm-grid{grid-template-columns:1fr;}}
+/* ── ⚖ JUEZ (asistente Claude viviendo en el mapa) ── */
+#juez-panel{position:fixed;top:64px;right:14px;width:360px;max-height:78vh;overflow-y:auto;z-index:9999;background:#0a1220;border:1px solid #14402c;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6);font-family:'Space Mono',monospace;}
+.juez-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #14402c;color:var(--green);font-weight:700;font-size:12px;letter-spacing:.5px;position:sticky;top:0;background:#0a1220;}
+.juez-x{background:none;border:none;color:#8aa;cursor:pointer;font-size:13px;}
+#juez-sub{font-weight:400;color:#5a7;font-size:10px;}
+#juez-body{padding:12px 14px;color:#cdd6e4;font-size:11px;line-height:1.6;white-space:pre-wrap;min-height:40px;}
+.juez-empty{color:#8aa;font-size:11px;text-align:center;padding:14px 0;}
+.juez-loading{color:var(--green);font-size:11px;text-align:center;padding:14px 0;}
+.juez-err{color:var(--yellow);font-size:11px;}
+.juez-input-row{display:flex;gap:6px;padding:8px 12px;border-top:1px solid #141a28;position:sticky;bottom:28px;background:#0a1220;}
+.juez-q{flex:1;background:#0a1020;border:1px solid var(--border);border-radius:5px;padding:7px 10px;color:var(--white);font-family:'Space Mono',monospace;font-size:10px;outline:none;}
+.juez-q::placeholder{color:var(--muted);}
+.juez-ask{background:rgba(0,255,157,.12);border:1px solid rgba(0,255,157,.4);color:var(--green);border-radius:5px;padding:7px 12px;cursor:pointer;font-size:10px;font-family:'Space Mono',monospace;white-space:nowrap;}
+.juez-ask:disabled{opacity:.5;cursor:default;}
+.juez-foot{padding:8px 14px;color:#667;font-size:9px;border-top:1px solid #14402c;position:sticky;bottom:0;background:#0a1220;}
+.juez-meta{color:#556;font-size:8px;margin-top:8px;}
 </style>
 </head>
 <body>
@@ -323,6 +339,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <span id="alert-bell" class="on" onclick="toggleAlertModal()">🔔</span>
     <button onclick="toggleCoccion()" id="coccion-btn" style="background:rgba(255,138,0,.10);border:1px solid rgba(255,138,0,.4);color:#ff8a00;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">🔥 EN COCCIÓN<span id="coccion-badge"></span></button>
     <button onclick="toggleLegend()" style="background:rgba(0,229,255,.08);border:1px solid var(--border);color:var(--accent);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">📖 GUÍA</button>
+    <button onclick="toggleJuez()" id="juez-btn" title="El juez lee el estado del mapa y da su veredicto" style="background:rgba(0,255,157,.10);border:1px solid rgba(0,255,157,.4);color:var(--green);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">⚖ JUEZ</button>
   </div>
 </div>
 
@@ -596,6 +613,7 @@ const PRINTS_URL = POLY_PROXY.replace('/alpaca', '/alpaca-prints');     // DARK 
 const PRINTS_WINDOW_MIN = 120;  // ventana de prints/dark pool (últimas 2h; más larga que el CVD para acumular bloques del día). Tunable.
 const CVD_TO_SCORE = true;      // FASE 3 etapa 3b: el SCORE usa el CVD real por agresor. PRENDIDO 03/08 tras validar la 3a EN MOVIMIENTO (SPY 📡 latiendo, coherente con estimado). Fallback honesto al estimado si el real no viene limpio.
 let optMetrics = null;   // último resultado de GEX/Max Pain (mensual); null si la ruta falla → degradación segura
+let lastContrato = null; // último contrato elegido (cache para el estado del juez · lo llena updateContractReadout)
 let ws = null;
 let quote = {}, candles = [], zones = [], vp = null;
 let vpBars = [];   // ROOT #5: fuente de VWAP/POC. En 4H = velas de 1H (sesión); en el resto = candles.
@@ -2092,12 +2110,14 @@ function updateContractReadout(sig){
     .then(j=>{
       if(_ctr.key!==key) return;   // el usuario cambió de símbolo/TF mientras cargaba
       if(!j || j.ok!==true){
+        lastContrato = null;
         el.className='sig-contrato empty';
         el.innerHTML='🎯 sin contrato líquido <span class="ctr-dim">('+side+' · '+horizon+')</span>';
         el.title='El selector no encontró un contrato que pase los filtros de liquidez para '+side+'/'+horizon+'. Con mercado cerrado el spread se ensancha; probá /contrato para ver los descartes.';
         return;
       }
       const e = j.elegido, f = (v,d=2)=> (v==null||!isFinite(v)) ? '—' : (+v).toFixed(d);
+      lastContrato = { type:e.type, strike:e.strike, expiration:e.expiration, dte:e.dte, delta:e.delta, thetaPctDia:e.thetaPctDia, breakevenMov:e.breakevenMov, mid:e.mid, spreadPct:e.spreadPct, oi:e.oi, iv:e.iv, side:side };  // cache para el estado del juez
       el.className='sig-contrato '+(side==='call'?'is-call':'is-put');
       el.innerHTML = '🎯 <b>'+e.type.toUpperCase()+' '+e.strike+' · '+fmtExpShort(e.expiration)+'</b> · '+f(e.dte,1)+'DTE · Δ'+f(e.delta)
         + ' · θ'+f(e.thetaPctDia)+'%/d · BE '+f(e.breakevenMov);
@@ -3368,7 +3388,139 @@ setTimeout(fetchCoccion, 3000); setInterval(fetchCoccion, 60000);
 document.getElementById('lock-input').addEventListener('keydown',e=>{ if(e.key==='Enter') checkPass(); });
 // s78: el server ya autorizó la sesión (si no, ni sirve este HTML) → auto-desbloqueo al cargar
 try{ checkPass(); }catch(e){ console.error('auto-init', e); }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   ASISTENTE-JUEZ · Claude viviendo en el mapa (JUEZ/INTÉRPRETE) — lado cliente
+   Arma el ESTADO del mapa (3 ejes), lo POSTea a /asistente del server principal
+   (la key vive SOLO en el server), y muestra el veredicto. On-demand, fail-open.
+   Lectura pura: NO toca score/Governor/emisor/ledger/backtest.
+   ══════════════════════════════════════════════════════════════════════════ */
+const ASISTENTE_URL = POLY_PROXY.replace('/alpaca', '/asistente');
+
+function buildAssistantState(userQuestion){
+  const p = quote && quote.c;
+  const out = {
+    meta: {
+      sym: sym, tf: tf, price: (p!=null ? +p : null),
+      ts: new Date().toISOString(),
+      marketOpen: (typeof getMktStatus === 'function') ? (getMktStatus() === 'open') : null,
+      dataStale: (typeof DATA_STALE !== 'undefined') ? !!DATA_STALE : null,
+    },
+    pregunta: userQuestion || null,
+  };
+  if(!p || !candles || candles.length < 20){ out.sinDatos = true; return out; }
+
+  let sig=null, flow=null, ctx=null, gov=null, features=null, cls=null, divg=null, sweep=null;
+  try { sig  = computeNeuralScore(p); } catch(e){}
+  try { flow = computeFlow(candles, vp, p, tf); } catch(e){}
+  try { ctx  = computeContext(candles, vpBars, p); } catch(e){}
+  try { gov  = governConviction(sig, { trendStr: ctx&&ctx.trendStr, zoneDir: ctx&&ctx.zoneDir, mtfBull: ctx&&ctx.mtfBull },
+      { stale: (typeof DATA_STALE!=='undefined') ? DATA_STALE : false, staleMsg: 'DATA VIEJA — no confiable' }); } catch(e){}
+  try { features = buildMapClassifierFeatures(sig, flow, ctx); } catch(e){}
+  try { cls = applyTfFloor(lmClassifySignal(features), tf); } catch(e){}
+  try { divg = detectMomentumDivergence(candles, struct.swings); } catch(e){}
+  try { const swPools = findLiquidityPools(struct.swings, p);
+        sweep = detectLiquiditySweep(candles[candles.length-1], swPools, getATR(sym, p, tf)); } catch(e){}
+  const cvdAgg = (_cvdAgg && _cvdAgg.data && _cvdAgg.data.sym === sym) ? _cvdAgg.data : null;
+
+  out.titular = sig ? {
+    signal: sig.type, score: sig.score + '/10', rawScore: sig.rawScore,
+    conflictoJuezEstructura: sig.conflictNote || null, regimenDebil: !!sig.regimeWeak,
+  } : null;
+  out.gobernador = gov ? {
+    grado: gov.grade, motivoCapo: gov.reason || 'confluencia limpia',
+    capasVivas: gov.liveLayers + '/' + gov.totalLayers, pilares: gov.pillars,
+    nPilares: gov.nPillars + '/4', dataParcial: !!gov.partial,
+  } : null;
+  out.ejes = {
+    estructura: {
+      superTrend: sig ? (sig.superTrendDir===1?'ALCISTA':sig.superTrendDir===-1?'BAJISTA':'—') : null,
+      choch: (struct && struct.choch) ? struct.choch.label : null,
+      bos:   (struct && struct.bos)   ? struct.bos.label   : null,
+      semaforo: features ? features.semaphore : null,
+      alineadaConTitular: features ? features.withTrend : null,
+      capas: sig ? sig.layers.map(L => ({ capa:L.name, dir:L.dir, ausente:!!L.abs })) : null,
+    },
+    flujo: {
+      cvdReal: cvdAgg ? { cvd:cvdAgg.cvd, buyV:cvdAgg.buyV, sellV:cvdAgg.sellV, esReal:cvdAgg.cvdReal, parcial:cvdAgg.partial, nTrades:cvdAgg.nTrades } : null,
+      cvdConfirmaTitular: features ? features.cvdAgrees : null,
+      rvol: flow ? flow.rvol : null, rvolSubiendo: features ? lmRvolRising(features) : null,
+      regimen: flow ? flow.regime : null,
+      divergencia: divg ? divg.label : null, barrido: sweep ? sweep.label : null,
+    },
+    contexto: {
+      ema200: ctx ? (ctx.trendStr===null?null:(ctx.trendStr?'sobre EMA200':'bajo EMA200')) : null,
+      zonaICT: ctx ? ctx.zoneTxt : null, zonaDir: ctx ? ctx.zoneDir : null,
+      mtf4h: ctx ? (ctx.mtfBull===null?null:(ctx.mtfBull?'alcista':'bajista')) : null,
+      htfAlineado: features ? features.htfAligned : null,
+    },
+  };
+  out.opciones = (optMetrics && optMetrics.ok && optMetrics.gex) ? {
+    regimenGEX: optMetrics.gex.regimeCode, callWall: optMetrics.gex.callWall, putWall: optMetrics.gex.putWall,
+    gammaFlip: optMetrics.gex.gammaFlip, maxPain: optMetrics.maxPain, exp: optMetrics.expiration, diasAExp: optMetrics.dias_a_exp,
+  } : null;
+  out.clase = (cls && cls.clase) ? { clase: cls.clase, dte: cls.dte, razon: cls.razon } : null;
+  out.contrato = lastContrato || null;
+  out.seleccionRadar = (coccionLast && Array.isArray(coccionLast.cooking))
+    ? coccionLast.cooking.slice(0, 8).map(c => ({ sym:c.sym, dir:c.dir, score:c.score, conviction:c.conviction, read:c.read||null }))
+    : [];
+  return out;
+}
+
+async function askAssistant(userQuestion){
+  let state;
+  try { state = buildAssistantState(userQuestion); }
+  catch(e){ return { ok:false, error:'No pude armar el estado del mapa: '+e.message }; }
+  try {
+    const r = await fetch(ASISTENTE_URL, { method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ state, question: userQuestion || null }), cache:'no-store' });
+    const j = await r.json();
+    if(!j || j.ok !== true) return { ok:false, error:(j && j.error) || 'El juez no respondió.' };
+    return { ok:true, verdict:j.verdict, model:j.model, usage:j.usage };
+  } catch(e){ return { ok:false, error:'Juez no disponible ahora (la API no respondió). El mapa sigue igual.' }; }
+}
+
+// ── UI del panel ──
+let juezOpen = false;
+function toggleJuez(){
+  const pnl = document.getElementById('juez-panel'); if(!pnl) return;
+  juezOpen = (pnl.style.display==='none' || !pnl.style.display);
+  pnl.style.display = juezOpen ? 'block' : 'none';
+  const sub = document.getElementById('juez-sub'); if(sub) sub.textContent = juezOpen ? ('· '+sym+' '+tf) : '';
+}
+async function consultarJuez(){
+  const body = document.getElementById('juez-body');
+  const btn  = document.getElementById('juez-ask');
+  const inp  = document.getElementById('juez-q');
+  const sub  = document.getElementById('juez-sub');
+  if(!body) return;
+  const q = inp ? inp.value.trim() : '';
+  if(sub) sub.textContent = '· '+sym+' '+tf;
+  body.innerHTML = '<div class="juez-loading">⚖ el juez está leyendo el mapa…</div>';
+  if(btn) btn.disabled = true;
+  const res = await askAssistant(q || null);
+  if(btn) btn.disabled = false;
+  if(!res.ok){ body.innerHTML = '<div class="juez-err">⚠ '+(res.error||'sin respuesta')+'</div>'; return; }
+  const meta = res.model ? ('<div class="juez-meta">'+res.model+(res.usage?(' · '+ (res.usage.input_tokens||0) +'→'+ (res.usage.output_tokens||0) +' tok'):'')+'</div>') : '';
+  body.textContent = res.verdict;          // texto plano, respeta saltos de línea (white-space:pre-wrap)
+  body.insertAdjacentHTML('beforeend', meta);
+}
+window.buildAssistantState = buildAssistantState;
+window.askAssistant = askAssistant;
+window.toggleJuez = toggleJuez;
+window.consultarJuez = consultarJuez;
 </script>
+
+<!-- PANEL ⚖ JUEZ (asistente Claude · consume /asistente del server principal) -->
+<div id="juez-panel" style="display:none;">
+  <div class="juez-head"><span>⚖ JUEZ <span id="juez-sub"></span></span><button class="juez-x" onclick="toggleJuez()">✕</button></div>
+  <div id="juez-body"><div class="juez-empty">Tocá "Consultar" para el veredicto del ticker actual — o preguntá algo puntual.</div></div>
+  <div class="juez-input-row">
+    <input id="juez-q" class="juez-q" placeholder="Preguntá (o vacío = veredicto del ticker)…">
+    <button class="juez-ask" id="juez-ask" onclick="consultarJuez()">Consultar</button>
+  </div>
+  <div class="juez-foot">Veredicto del juez · no es orden de compra · el gatillo es tuyo</div>
+</div>
 
 <!-- PANEL 🔥 EN COCCIÓN (consume /coccion del radar liquidmap-proxy-1) -->
 <div id="coccion-panel" style="display:none;">
