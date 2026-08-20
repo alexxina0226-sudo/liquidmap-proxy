@@ -238,6 +238,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 @media(max-width:600px){.lm-grid{grid-template-columns:1fr;}}
 /* ── ⚖ JUEZ (asistente Claude viviendo en el mapa) ── */
 #juez-panel{position:fixed;top:64px;left:14px;width:min(360px,calc(100vw - 28px));max-height:78vh;overflow-y:auto;z-index:9999;background:#0a1220;border:1px solid #14402c;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6);font-family:'Space Mono',monospace;}
+@media(max-width:600px){#juez-panel{left:50%;transform:translateX(-50%);width:calc(100vw - 20px);}}
 .juez-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #14402c;color:var(--green);font-weight:700;font-size:12px;letter-spacing:.5px;position:sticky;top:0;background:#0a1220;}
 .juez-x{background:none;border:none;color:#8aa;cursor:pointer;font-size:13px;}
 #juez-sub{font-weight:400;color:#5a7;font-size:10px;}
