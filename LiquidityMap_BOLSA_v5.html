@@ -155,6 +155,8 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 #chart-wrap{flex:1;display:flex;flex-direction:column;overflow:hidden;position:relative;}
 #chart-canvas{flex:1;display:block;width:100%;min-height:300px;}
 #alert-popup{position:absolute;top:10px;left:50%;transform:translateX(-50%);background:rgba(255,224,0,.12);border:1px solid var(--yellow);border-radius:6px;padding:8px 16px;font-family:'Space Mono',monospace;font-size:11px;color:var(--yellow);display:none;z-index:100;text-align:center;white-space:nowrap;}
+#alert-popup.whale{background:rgba(255,45,107,.16);border-color:#ff2d6b;color:#ff9ab8;font-size:12px;font-weight:700;box-shadow:0 0 18px rgba(255,45,107,.55);animation:whalePulse 1s ease-in-out infinite;}
+@keyframes whalePulse{0%,100%{box-shadow:0 0 10px rgba(255,45,107,.4);}50%{box-shadow:0 0 26px rgba(255,45,107,.85);}}
 #rp{width:210px;background:var(--panel);border-left:1px solid var(--border);display:flex;flex-direction:column;overflow-y:auto;flex-shrink:0;}
 .ps{border-bottom:1px solid var(--border);padding:6px 8px;}
 .ps h3{font-family:'Bebas Neue',sans-serif;font-size:11px;color:var(--accent);letter-spacing:2px;margin-bottom:5px;}
@@ -2448,7 +2450,7 @@ function checkAlerts(p){
   // GEX flip alert: DESACTIVADO — GEX real requiere opciones (FASE 4).
   // Whale
   const wh = detectWhale(candles, 3.0);
-  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(440,0.3,'square',0.2); showAlertPopup('🐋 BALLENA '+wh.dir+' ×'+wh.ratio+' vol promedio'); /* VIEW-ONLY: no a Telegram */ lastWhaleAlert=Date.now(); }
+  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(520,0.18,'square',0.35); setTimeout(()=>playTone(700,0.22,'square',0.35),200); showWhaleAlert('🐋 BALLENA '+(wh.dir==='BUY'?'COMPRADORA 🟢':'VENDEDORA 🔴')+' — '+sym+' ×'+wh.ratio+' vol'); sendWhaleTelegram(wh, p, sym, (candles.length?candles[candles.length-1].t:Date.now())); lastWhaleAlert=Date.now(); }
   // CHoCH/BOS
   if(struct.choch && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.3,'triangle'); showAlertPopup('🏗 '+struct.choch.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
   else if(struct.bos && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.2,'triangle'); showAlertPopup('🏗 '+struct.bos.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
@@ -2456,6 +2458,41 @@ function checkAlerts(p){
 }
 
 function showAlertPopup(msg){ const el=document.getElementById('alert-popup'); el.textContent=msg; el.style.display='block'; setTimeout(()=>{ el.style.display='none'; },4000); }
+
+// ── ALERTA DE BALLENA — roja/fuerte en el mapa + push a Telegram (reusa la infra sendTelegram) ──
+// Activa lo que estaba VIEW-ONLY. Display + notificación; NO toca score/emisor/ledger.
+const WHALE_TG_MIN = 4;            // umbral para MANDAR a Telegram (×4), más alto que el popup en pantalla (×3) → menos ruido al bot
+const WHALE_TG_COOL = 480000;     // 8 min de cooldown por ticker
+let _whaleTgSent = {}, _whaleTgCool = {};   // sym → ts de la vela-ballena ya avisada / último envío
+function showWhaleAlert(msg){
+  const el=document.getElementById('alert-popup'); if(!el) return;
+  el.textContent=msg; el.classList.add('whale'); el.style.display='block';
+  clearTimeout(el._whaleT); el._whaleT=setTimeout(()=>{ el.style.display='none'; el.classList.remove('whale'); },6000);
+}
+async function sendWhaleTelegram(wh, priceVal, symX, candleTs){
+  try{
+    if(!wh || !alertCfg.whale) return;
+    const ratio = parseFloat(wh.ratio);
+    if(!(ratio >= WHALE_TG_MIN)) return;                 // solo las grandes al bot
+    const t = String(symX || sym || '?').toUpperCase();
+    const p = parseFloat(priceVal);
+    if(!p || isNaN(p) || p<=0) return;
+    const now = Date.now();
+    if(_whaleTgSent[t] === candleTs) return;             // dedupe: 1 por vela-ballena por ticker
+    if(_whaleTgCool[t] && now-_whaleTgCool[t] < WHALE_TG_COOL) return;   // cooldown por ticker
+    _whaleTgSent[t] = candleTs; _whaleTgCool[t] = now;
+    const tfLabel = {'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'}[tf] || tf;
+    const dir = wh.dir==='BUY' ? '🟢 COMPRADORA (posible acumulación)' : '🔴 VENDEDORA (posible distribución)';
+    const fmtP = v => v>=100 ? '$'+v.toFixed(2) : v>=1 ? '$'+v.toFixed(3) : '$'+v.toFixed(5);
+    const text = `🐋🔴 <b>ALERTA BALLENA — LIQUIDMAP</b>\n\n🎯 <b>${t}</b> · ${tfLabel}\n${dir}\n📊 Volumen: <b>×${wh.ratio}</b> el promedio (20 velas)\n💰 Precio: <b>${fmtP(p)}</b>\n\n⚠️ Volumen institucional real. No es consejo de inversión — el gatillo es tuyo.\n⚡ LiquidMap PRO · Bolsa v7`;
+    await Promise.all(TG_CHAT_IDS.map(id =>
+      fetch(`https://api.telegram.org/bot${TG_TOKEN_BOLSA}/sendMessage`, {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ chat_id:id, text, parse_mode:'HTML', disable_web_page_preview:true })
+      })
+    ));
+  }catch(e){}
+}
 function toggleAlertModal(){ const m=document.getElementById('alert-modal'); m.classList.toggle('show'); if(m.classList.contains('show')) initAudio(); }
 function toggleAL(el){ el.classList.toggle('on'); const id=el.id.replace('al-',''); alertCfg[id]=el.classList.contains('on'); }
 
@@ -3534,6 +3571,7 @@ async function scanNextStickers(){
         if(bars && bars.length>=30){
           const crit = computeStickerCriterion(bars, curTf);
           stickerV2[s] = { dir:crit.dir, conviction:crit.conviction, cls:crit.cls, tf:curTf, ts:Date.now() };
+          try{ const whx = detectWhale(bars, WHALE_TG_MIN); if(whx) sendWhaleTelegram(whx, bars[bars.length-1].c, s, bars[bars.length-1].t); }catch(e){}
         }
       }catch(e){}
       done++;
