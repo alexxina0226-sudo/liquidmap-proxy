@@ -78,6 +78,8 @@ app.get('/logout', (req, res) => { res.setHeader('Set-Cookie', AUTH.clearCookie(
 // ── MAPAS HTML ───────────────────────────────────
 app.get('/', (req, res) => res.redirect('/bolsa'));
 app.get('/bolsa', requirePage, (req, res) => {
+  res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  res.set('Pragma', 'no-cache');
   res.sendFile(path.join(__dirname, 'LiquidityMap_BOLSA_v5.html'));
 });
 app.get('/crypto', requirePage, (req, res) => {
