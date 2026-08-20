@@ -237,7 +237,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .lm-warn{background:rgba(255,224,0,.08);border:1px solid rgba(255,224,0,.3);border-radius:5px;padding:8px 12px;margin-top:12px;font-size:9px;color:#ffe000;text-align:center;}
 @media(max-width:600px){.lm-grid{grid-template-columns:1fr;}}
 /* ── ⚖ JUEZ (asistente Claude viviendo en el mapa) ── */
-#juez-panel{position:fixed;top:64px;right:14px;width:360px;max-height:78vh;overflow-y:auto;z-index:9999;background:#0a1220;border:1px solid #14402c;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6);font-family:'Space Mono',monospace;}
+#juez-panel{position:fixed;top:64px;left:14px;width:min(360px,calc(100vw - 28px));max-height:78vh;overflow-y:auto;z-index:9999;background:#0a1220;border:1px solid #14402c;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6);font-family:'Space Mono',monospace;}
 .juez-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #14402c;color:var(--green);font-weight:700;font-size:12px;letter-spacing:.5px;position:sticky;top:0;background:#0a1220;}
 .juez-x{background:none;border:none;color:#8aa;cursor:pointer;font-size:13px;}
 #juez-sub{font-weight:400;color:#5a7;font-size:10px;}
@@ -252,6 +252,11 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .juez-ask:disabled{opacity:.5;cursor:default;}
 .juez-foot{padding:8px 14px;color:#667;font-size:9px;border-top:1px solid #14402c;position:sticky;bottom:0;background:#0a1220;}
 .juez-meta{color:#556;font-size:8px;margin-top:8px;}
+/* ── STICKER-COLORES (v1) — el veredicto del radar pintado en los chips de la watchlist ── */
+.sym-btn.sym-call{border-left:3px solid #00ff9d !important;background:rgba(0,255,157,.10);color:#5affc0;}
+.sym-btn.sym-put{border-left:3px solid #ff2d6b !important;background:rgba(255,45,107,.10);color:#ff789e;}
+.sym-btn.sym-call.hot{box-shadow:0 0 7px rgba(0,255,157,.55);}
+.sym-btn.sym-put.hot{box-shadow:0 0 7px rgba(255,45,107,.55);}
 </style>
 </head>
 <body>
@@ -3361,6 +3366,33 @@ async function fetchCoccion(){
   const badge = document.getElementById('coccion-badge');
   if(badge) badge.textContent = (coccionLast && coccionLast.count) ? coccionLast.count : '';
   if(coccionOpen) renderCoccion(coccionLast);
+  paintStickers();
+}
+// ── STICKER-COLORES: pinta los chips de la watchlist según lo que ve el radar ──
+// Verde = criterio call (dir up) · Rojo = criterio put (dir down) · apagado = sin dirección clara (DEFAULT).
+// Fuente: el feed de cocción (cross-ticker, ya en mano; recolorea cada refresh, puede flipear).
+// Display-only, fail-open: NO toca score/Governor/emisor. El veredicto PROFUNDO sigue al clic (⚖ JUEZ).
+function paintStickers(){
+  try{
+    const cooking = (coccionLast && Array.isArray(coccionLast.cooking)) ? coccionLast.cooking : [];
+    const bySym = {};
+    cooking.forEach(function(c){ if(c && c.sym) bySym[c.sym] = c; });
+    document.querySelectorAll('.sym-btn[data-sym]').forEach(function(btn){
+      const s = btn.getAttribute('data-sym');
+      btn.classList.remove('sym-call','sym-put','hot');
+      const c = bySym[s];
+      if(!c || !c.dir){ btn.removeAttribute('title'); return; }   // sin dirección = apagado (default)
+      if(c.dir === 'up') btn.classList.add('sym-call');
+      else if(c.dir === 'down') btn.classList.add('sym-put');
+      else { btn.removeAttribute('title'); return; }
+      const hot = (c.conviction != null && c.conviction >= 3) || (c.score != null && c.score >= 70);
+      if(hot) btn.classList.add('hot');
+      btn.title = (c.dir==='up' ? 'Criterio de CALL' : 'Criterio de PUT')
+        + (c.score!=null ? ' · fuego '+c.score+'/100' : '')
+        + (c.conviction!=null ? ' · conv '+c.conviction : '')
+        + ' — tocá para el veredicto del juez';
+    });
+  }catch(e){}
 }
 function renderCoccion(d){
   const list = document.getElementById('coccion-list'), sub = document.getElementById('cook-sub');
