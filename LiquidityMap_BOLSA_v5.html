@@ -3377,9 +3377,24 @@ function paintStickers(){
     const cooking = (coccionLast && Array.isArray(coccionLast.cooking)) ? coccionLast.cooking : [];
     const bySym = {};
     cooking.forEach(function(c){ if(c && c.sym) bySym[c.sym] = c; });
+    const nowMs = Date.now();
+    const curTf = (typeof tf!=='undefined') ? String(tf) : '';
     document.querySelectorAll('.sym-btn[data-sym]').forEach(function(btn){
       const s = btn.getAttribute('data-sym');
       btn.classList.remove('sym-call','sym-put','hot');
+      // ── v2: criterio LOCAL del juez (3 ejes lite) tiene PRIORIDAD ──
+      const v = (typeof stickerV2!=='undefined') ? stickerV2[s] : null;
+      if(v && v.tf===curTf && (nowMs - v.ts) < STICKER_V2_TTL && v.dir && v.dir!=='neutral'){
+        if(v.dir==='call') btn.classList.add('sym-call');
+        else if(v.dir==='put') btn.classList.add('sym-put');
+        if(v.conviction>=3) btn.classList.add('hot');
+        btn.title = (v.dir==='call'?'Criterio de CALL':'Criterio de PUT')
+          + ' · ' + (v.cls?v.cls.toUpperCase():'—') + ' (' + curTf + ')'
+          + ' · conv ' + v.conviction + '/3'
+          + ' — juez (local) · tocá ⚖ para el veredicto a fondo';
+        return;
+      }
+      // ── fallback v1: feed de cocción del radar (mientras el juez aún no escaneó este ticker) ──
       const c = bySym[s];
       if(!c || !c.dir){ btn.removeAttribute('title'); return; }   // sin dirección = apagado (default)
       if(c.dir === 'up') btn.classList.add('sym-call');
@@ -3389,8 +3404,7 @@ function paintStickers(){
       if(hot) btn.classList.add('hot');
       btn.title = (c.dir==='up' ? 'Criterio de CALL' : 'Criterio de PUT')
         + (c.score!=null ? ' · fuego '+c.score+'/100' : '')
-        + (c.conviction!=null ? ' · conv '+c.conviction : '')
-        + ' — tocá para el veredicto del juez';
+        + ' — radar (juez calentando…) · tocá ⚖ para el veredicto';
     });
   }catch(e){}
 }
@@ -3415,6 +3429,119 @@ function toggleCoccion(){
 }
 function pickCoccion(sy){ toggleCoccion(); try{ selectSym(sy); }catch(e){} }
 setTimeout(fetchCoccion, 3000); setInterval(fetchCoccion, 60000);
+
+/* ══════════════════════════════════════════════════════════════════════════
+   STICKER v2 — el criterio del JUEZ (3 ejes LITE) pintado en la watchlist.
+   Compute LOCAL, CERO API: baja pocas barras por ticker vía /alpaca (escalonado,
+   rate-limited), destila estructura+régimen+flujo en SCOPE AISLADO (vars locales;
+   reusa las funciones PURAS del motor: detectStructure/emaLast/detectMomentumDivergence)
+   → NO pisa candles/vp/struct del ticker activo. Cachea el color por sym y pinta.
+   Verde=CALL, Rojo=PUT, apagado=sin criterio (DEFAULT, la mayoría). El veredicto
+   PROFUNDO sigue al clic (⚖ JUEZ). Display-only, fail-open: no toca score/emisor/ledger.
+   Mismo discriminador que validó la auditoría: EMA dir + pendiente + ER de tendencia,
+   con confirmación de estructura y un proxy de flujo por vela (honesto: NO es CVD real). */
+let stickerV2 = {};                 // sym → { dir:'call'|'put'|'neutral', conviction, cls, tf, ts }
+const STICKER_V2_TTL = 210000;      // 3.5 min — recolorea cada ciclo sin martillar el proxy
+let _v2Cursor = 0, _v2Busy = false;
+const V2_DAYS = { '5':3, '15':6, '60':20, '240':90, 'D':250 };
+
+// Efficiency Ratio de Kaufman (tendencia vs chop) — mismo eje que el gate auditado.
+function _v2ER(closes, win){
+  if(!closes || closes.length < win+1) return 0;
+  const seg = closes.slice(-(win+1));
+  const net = Math.abs(seg[seg.length-1] - seg[0]);
+  let path = 0; for(let i=1;i<seg.length;i++) path += Math.abs(seg[i]-seg[i-1]);
+  return path>0 ? net/path : 0;
+}
+
+// Destilación LITE de los 3 ejes sobre barras AISLADAS. Puro: sólo usa sus argumentos
+// + funciones puras del motor. NO lee ni escribe ningún global del ticker activo.
+function computeStickerCriterion(bars, tfLocal){
+  if(!bars || bars.length < 30) return { dir:'neutral', conviction:0, cls:null };
+  const closes = bars.map(b=>b.c);
+  const price = closes[closes.length-1];
+  // EJE RÉGIMEN/TENDENCIA (el edge validado por la auditoría)
+  const emaP = Math.min(50, Math.max(20, Math.floor(bars.length/3)));
+  const emaNow  = emaLast(closes, emaP);
+  const emaPrev = emaLast(closes.slice(0, -6), emaP);
+  let regDir = 0;
+  if(emaNow!=null && emaPrev!=null){
+    if(price>emaNow && emaNow>emaPrev) regDir = 1;
+    else if(price<emaNow && emaNow<emaPrev) regDir = -1;
+  }
+  const er = _v2ER(closes, 20);
+  const tendencia = er >= 0.5;
+  // EJE ESTRUCTURA (reusa el detector PURO del motor sobre barras aisladas)
+  let st = { trend:0, bos:null, choch:null, swings:[] };
+  try { st = detectStructure(bars) || st; } catch(e){}
+  const structDir = st.bos ? (st.bos.dir==='BULL'?1:-1)
+                  : st.choch ? (st.choch.dir==='BULL'?1:-1)
+                  : (st.trend||0);
+  // EJE FLUJO (proxy por vela — honesto: NO es CVD por agresor real, es presión de velas)
+  const fw = bars.slice(-14);
+  let flowNet = 0; fw.forEach(function(b){ const d=(b.c>b.o)?1:(b.c<b.o)?-1:0; flowNet += d*(b.v||0); });
+  const flowDir = flowNet>0 ? 1 : flowNet<0 ? -1 : 0;
+  // Divergencia de momentum (aviso temprano de agotamiento) — puro, opcional
+  let divgOpp = false;
+  try { const dv = detectMomentumDivergence(bars, st.swings);
+        if(dv && dv.dir){ divgOpp = (regDir>0 && dv.dir==='BEAR') || (regDir<0 && dv.dir==='BULL'); } } catch(e){}
+  // VEREDICTO lite: régimen firme (dir+tendencia) y estructura NO en contra
+  let dir = 'neutral', conviction = 0;
+  if(regDir!==0 && tendencia && structDir!==-regDir){
+    conviction = 1 + (structDir===regDir?1:0) + (flowDir===regDir?1:0);
+    if(divgOpp) conviction = Math.max(0, conviction-1);
+    if(conviction>=1) dir = (regDir>0)?'call':'put';
+  }
+  const cls = LM_TF_FLOOR[String(tfLocal)] || 'day';
+  return { dir, conviction, cls, er:+er.toFixed(2) };
+}
+
+// Baja barras de OTRO ticker sin tocar globals. Local, fail-open.
+async function _v2FetchBars(symX, tfLocal){
+  const cfg = tfToPolygon(tfLocal);
+  const days = V2_DAYS[String(tfLocal)] || 20;
+  const fmt = d => new Date(d).toISOString().slice(0,10);
+  const to = fmt(Date.now()), from = fmt(Date.now() - days*86400000);
+  const url = `${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${symX}/range/${cfg.mult}/${cfg.span}/${from}/${to}`)}&adjusted=true&sort=asc&limit=5000`;
+  const r = await fetch(url, { cache:'no-store' });
+  const d = await r.json();
+  if(!d || !d.results || !d.results.length) return null;
+  let raw = d.results.map(b=>({ t:Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 }));
+  raw.sort((a,b)=>a.t-b.t);
+  const intraday = (cfg.span==='minute' || (cfg.span==='hour' && cfg.mult<4));
+  if(intraday){ const f = filterRTH(raw); if(f && f.length>=30) raw = f; }
+  return raw;
+}
+
+// Pase ESCALONADO: escanea unos pocos tickers por vuelta (rate-limited), cachea, pinta.
+async function scanNextStickers(){
+  if(_v2Busy) return; _v2Busy = true;
+  try{
+    const syms = Array.from(document.querySelectorAll('.sym-btn[data-sym]'))
+                      .map(b=>b.getAttribute('data-sym')).filter(Boolean);
+    if(!syms.length){ _v2Busy=false; return; }
+    const curTf = (typeof tf!=='undefined') ? String(tf) : '60';
+    const nowMs = Date.now();
+    const BATCH = 2;
+    let done = 0, tries = 0;
+    while(done < BATCH && tries < syms.length){
+      const s = syms[_v2Cursor % syms.length]; _v2Cursor++; tries++;
+      const cached = stickerV2[s];
+      if(cached && cached.tf===curTf && (nowMs - cached.ts) < STICKER_V2_TTL*0.85) continue;  // aún fresco
+      try{
+        const bars = await _v2FetchBars(s, curTf);
+        if(bars && bars.length>=30){
+          const crit = computeStickerCriterion(bars, curTf);
+          stickerV2[s] = { dir:crit.dir, conviction:crit.conviction, cls:crit.cls, tf:curTf, ts:Date.now() };
+        }
+      }catch(e){}
+      done++;
+    }
+    paintStickers();
+  }catch(e){}
+  _v2Busy = false;
+}
+setTimeout(scanNextStickers, 5000); setInterval(scanNextStickers, 9000);
 
 // ── LOCK KEY LISTENER ──
 document.getElementById('lock-input').addEventListener('keydown',e=>{ if(e.key==='Enter') checkPass(); });
