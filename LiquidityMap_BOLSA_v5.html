@@ -260,6 +260,9 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .sym-btn.sym-put{border-left:3px solid #ff2d6b !important;background:rgba(255,45,107,.10);color:#ff789e;}
 .sym-btn.sym-call.hot{box-shadow:0 0 7px rgba(0,255,157,.55);}
 .sym-btn.sym-put.hot{box-shadow:0 0 7px rgba(255,45,107,.55);}
+.sym-btn.sym-whale{position:relative;}
+.sym-btn.sym-whale::after{content:'🐋';position:absolute;top:-7px;right:-5px;font-size:9px;line-height:1;pointer-events:none;filter:drop-shadow(0 0 3px #ff2d6b);animation:whaleMark 1.1s ease-in-out infinite;}
+@keyframes whaleMark{0%,100%{opacity:.6;}50%{opacity:1;}}
 </style>
 </head>
 <body>
@@ -2450,7 +2453,7 @@ function checkAlerts(p){
   // GEX flip alert: DESACTIVADO — GEX real requiere opciones (FASE 4).
   // Whale
   const wh = detectWhale(candles, 3.0);
-  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(520,0.18,'square',0.35); setTimeout(()=>playTone(700,0.22,'square',0.35),200); showWhaleAlert('🐋 BALLENA '+(wh.dir==='BUY'?'COMPRADORA 🟢':'VENDEDORA 🔴')+' — '+sym+' ×'+wh.ratio+' vol'); sendWhaleTelegram(wh, p, sym, (candles.length?candles[candles.length-1].t:Date.now())); lastWhaleAlert=Date.now(); }
+  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(520,0.18,'square',0.35); setTimeout(()=>playTone(700,0.22,'square',0.35),200); showWhaleAlert('🐋 BALLENA '+(wh.dir==='BUY'?'COMPRADORA 🟢':'VENDEDORA 🔴')+' — '+sym+' ×'+wh.ratio+' vol'); whaleV2[sym]={dir:wh.dir,ratio:wh.ratio,ts:Date.now()}; sendWhaleTelegram(wh, p, sym, (candles.length?candles[candles.length-1].t:Date.now())); lastWhaleAlert=Date.now(); }
   // CHoCH/BOS
   if(struct.choch && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.3,'triangle'); showAlertPopup('🏗 '+struct.choch.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
   else if(struct.bos && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.2,'triangle'); showAlertPopup('🏗 '+struct.bos.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
@@ -2464,6 +2467,8 @@ function showAlertPopup(msg){ const el=document.getElementById('alert-popup'); e
 const WHALE_TG_MIN = 4;            // umbral para MANDAR a Telegram (×4), más alto que el popup en pantalla (×3) → menos ruido al bot
 const WHALE_TG_COOL = 480000;     // 8 min de cooldown por ticker
 let _whaleTgSent = {}, _whaleTgCool = {};   // sym → ts de la vela-ballena ya avisada / último envío
+let whaleV2 = {};                 // sym → { dir, ratio, ts } — para el marcador 🐋 en el chip
+const WHALE_MARK_TTL = 600000;    // 10 min visible el marcador
 function showWhaleAlert(msg){
   const el=document.getElementById('alert-popup'); if(!el) return;
   el.textContent=msg; el.classList.add('whale'); el.style.display='block';
@@ -2484,7 +2489,7 @@ async function sendWhaleTelegram(wh, priceVal, symX, candleTs){
     const tfLabel = {'5':'5M','15':'15M','60':'1H','240':'4H','D':'1D'}[tf] || tf;
     const dir = wh.dir==='BUY' ? '🟢 COMPRADORA (posible acumulación)' : '🔴 VENDEDORA (posible distribución)';
     const fmtP = v => v>=100 ? '$'+v.toFixed(2) : v>=1 ? '$'+v.toFixed(3) : '$'+v.toFixed(5);
-    const text = `🐋🔴 <b>ALERTA BALLENA — LIQUIDMAP</b>\n\n🎯 <b>${t}</b> · ${tfLabel}\n${dir}\n📊 Volumen: <b>×${wh.ratio}</b> el promedio (20 velas)\n💰 Precio: <b>${fmtP(p)}</b>\n\n⚠️ Volumen institucional real. No es consejo de inversión — el gatillo es tuyo.\n⚡ LiquidMap PRO · Bolsa v7`;
+    const text = `🐋🔴 <b>ALERTA BALLENA — LIQUIDMAP</b>\n\n🎯 <b>${t}</b> · ${tfLabel}\n${dir}\n📊 Volumen: <b>×${wh.ratio}</b> el promedio (20 velas)\n💰 Precio: <b>${fmtP(p)}</b>\n\n⚠️ Volumen institucional real detectado.\n⚡ LiquidMap PRO · Bolsa v7`;
     await Promise.all(TG_CHAT_IDS.map(id =>
       fetch(`https://api.telegram.org/bot${TG_TOKEN_BOLSA}/sendMessage`, {
         method:'POST', headers:{'Content-Type':'application/json'},
@@ -3420,6 +3425,8 @@ function paintStickers(){
     document.querySelectorAll('.sym-btn[data-sym]').forEach(function(btn){
       const s = btn.getAttribute('data-sym');
       btn.classList.remove('sym-call','sym-put','hot');
+      const wv = (typeof whaleV2!=='undefined') ? whaleV2[s] : null;
+      if(wv && (nowMs - wv.ts) < WHALE_MARK_TTL) btn.classList.add('sym-whale'); else btn.classList.remove('sym-whale');
       // ── v2: criterio LOCAL del juez (3 ejes lite) tiene PRIORIDAD ──
       const v = (typeof stickerV2!=='undefined') ? stickerV2[s] : null;
       if(v && v.tf===curTf && (nowMs - v.ts) < STICKER_V2_TTL && v.dir && v.dir!=='neutral'){
@@ -3571,7 +3578,7 @@ async function scanNextStickers(){
         if(bars && bars.length>=30){
           const crit = computeStickerCriterion(bars, curTf);
           stickerV2[s] = { dir:crit.dir, conviction:crit.conviction, cls:crit.cls, tf:curTf, ts:Date.now() };
-          try{ const whx = detectWhale(bars, WHALE_TG_MIN); if(whx) sendWhaleTelegram(whx, bars[bars.length-1].c, s, bars[bars.length-1].t); }catch(e){}
+          try{ const whx = detectWhale(bars, WHALE_TG_MIN); if(whx){ whaleV2[s]={dir:whx.dir,ratio:whx.ratio,ts:Date.now()}; sendWhaleTelegram(whx, bars[bars.length-1].c, s, bars[bars.length-1].t); } }catch(e){}
         }
       }catch(e){}
       done++;
@@ -3717,7 +3724,7 @@ window.consultarJuez = consultarJuez;
     <input id="juez-q" class="juez-q" placeholder="Preguntá (o vacío = veredicto del ticker)…">
     <button class="juez-ask" id="juez-ask" onclick="consultarJuez()">Consultar</button>
   </div>
-  <div class="juez-foot">Veredicto del juez · no es orden de compra · el gatillo es tuyo</div>
+  <div class="juez-foot">Veredicto del juez ⚖</div>
 </div>
 
 <!-- PANEL 🔥 EN COCCIÓN (consume /coccion del radar liquidmap-proxy-1) -->
