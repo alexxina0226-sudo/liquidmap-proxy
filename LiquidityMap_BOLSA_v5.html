@@ -3672,10 +3672,32 @@ function buildAssistantState(userQuestion){
   return out;
 }
 
+// ── Lectura MULTI-TF: snapshot lite de 4H/1H/15m/5m para que el juez lea
+//    CONTEXTO (HTF) + GATILLO (LTF), no solo el TF activo. Reusa la infra PURA
+//    del sticker v2 (computeStickerCriterion sobre barras aisladas). Fail-open,
+//    no toca globals del ticker activo. UNA sola consulta al juez igual.
+async function buildMultiTF(symX){
+  const TFS = [['240','4H'],['60','1H'],['15','15m'],['5','5m']];
+  const mtf = {};
+  for(const pair of TFS){
+    const tfx = pair[0], label = pair[1];
+    try{
+      const bars = await _v2FetchBars(symX, tfx);
+      if(bars && bars.length>=30){
+        const c = computeStickerCriterion(bars, tfx);
+        mtf[label] = { dir:c.dir, conviccion:c.conviction, er:c.er, clase:c.cls };
+      } else { mtf[label] = { sinDatos:true }; }
+    }catch(e){ mtf[label] = { error:true }; }
+  }
+  mtf.tfActivo = (typeof tf!=='undefined') ? String(tf) : null;
+  return mtf;
+}
+
 async function askAssistant(userQuestion){
   let state;
   try { state = buildAssistantState(userQuestion); }
   catch(e){ return { ok:false, error:'No pude armar el estado del mapa: '+e.message }; }
+  try { if(state && !state.sinDatos) state.multiTF = await buildMultiTF(sym); } catch(e){}   // lectura multi-TF (HTF contexto + LTF gatillo), fail-open
   try {
     const r = await fetch(ASISTENTE_URL, { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ state, question: userQuestion || null }), cache:'no-store' });
