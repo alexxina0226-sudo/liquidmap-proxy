@@ -682,7 +682,7 @@ app.get('/darkpool-log', async (req, res) => {
 
   const dias = lastWeekdays(days);
   res.setHeader('Content-Type', 'text/csv; charset=utf-8');
-  res.setHeader('Content-Disposition', `attachment; filename="darkpool_samples_${new Date().toISOString().slice(0,10)}.csv"`);
+  res.setHeader('Content-Disposition', `attachment; filename="darkpool_${tickers.join('-').slice(0,40)}_${new Date().toISOString().slice(0,10)}.csv"`);
   res.setHeader('Cache-Control', 'no-store');
   res.write('sym,date,slot,startISO,endISO,offExchPct,offExchNotional,offExchCount,contCount,contNotional,biggestContNotional,partial\n');
   const bySym = {};
@@ -706,12 +706,14 @@ app.get('/darkpool-log', async (req, res) => {
       }
     }
   }
-  res.write('\n# RESUMEN,% off-exchange del flujo continuo (una fila por ticker)\n');
-  res.write('# sym,n,mediana,p80,p95,max\n');
+  res.write('\n# RESUMEN — baseline por ticker. Umbral z-score (fundamentado): amarillo=media+1sigma, verde=media+2sigma\n');
+  res.write('# sym,n,media,sigma,mediana,p90,amarillo,verde\n');
   for (const sym of tickers) {
     const a = bySym[sym] || [];
-    if (!a.length) { res.write(`# ${sym},0,,,,\n`); continue; }
-    res.write(`# ${sym},${a.length},${pctile(a,50)},${pctile(a,80)},${pctile(a,95)},${Math.max(...a)}\n`);
+    if (!a.length) { res.write(`# ${sym},0,,,,,,\n`); continue; }
+    const m = a.reduce((x,y)=>x+y,0)/a.length;
+    const sd = Math.sqrt(a.reduce((x,y)=>x+(y-m)*(y-m),0)/a.length);
+    res.write(`# ${sym},${a.length},${m.toFixed(1)},${sd.toFixed(1)},${pctile(a,50)},${pctile(a,90)},${Math.round(m+sd)},${Math.round(m+2*sd)}\n`);
   }
   res.end();
 });
