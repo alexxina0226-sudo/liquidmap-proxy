@@ -2193,6 +2193,12 @@ function updateAggressorCVD(symArg, tfArg, cndls){
 }
 window.updateAggressorCVD = updateAggressorCVD;
 
+// Umbrales RELATIVOS de dark pool por ticker (v1 · calibrado 22/08 con muestra real).
+// El % es del flujo de BLOQUES >$1M (casi siempre off-exchange) → baseline ALTO;
+// por eso el corte fijo viejo (30%) se prendía SIEMPRE = inútil. {y:amarillo, g:verde}.
+// _def = fallback pooled (tickers sin muestra + NVDA, cuya muestra fue toda parcial).
+// PROVISIONAL: refinar con un pull más limpio (menos ventanas parciales).
+const DP_BASELINE = { SPY:{y:81,g:88}, QQQ:{y:89,g:93}, AMD:{y:84,g:97}, AAPL:{y:87,g:93}, _def:{y:88,g:93} };
 // ── DARK POOL (paso 3): PRINTS >$1M + % OFF-EXCHANGE en los slots fl-prints / fl-dpool ──
 //  DISPLAY-ONLY. Pide /alpaca-prints (prints grandes deduplicados + tag off-exchange 'D')
 //  para una ventana reciente y llena los dos slots. Espeja updateAggressorCVD (misma lógica
@@ -2256,7 +2262,8 @@ function updatePrints(symArg, tfArg, cndls){
         const offN=(j.offExchangeNotional||0), offC=(j.offExchangeCount||0);
         const pct = contNotional>0 ? Math.round(offN/contNotional*100) : 0;
         if(offC>0){
-          elD.style.color = pct>=30?'var(--green)':(pct>=15?'var(--yellow)':'var(--text)');
+          const _dpb = (typeof DP_BASELINE!=='undefined' ? (DP_BASELINE[sym]||DP_BASELINE._def) : {y:88,g:93});
+          elD.style.color = pct>=_dpb.g?'var(--green)':(pct>=_dpb.y?'var(--yellow)':'var(--text)');
           elD.textContent = pct+'% · $'+_fmtK(offN);
         } else { elD.style.color='var(--muted)'; elD.textContent='0%'; }
         elD.title = "DARK POOL (proxy off-exchange, venue FINRA/TRF 'D')\n"
