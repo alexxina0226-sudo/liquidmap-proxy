@@ -662,11 +662,24 @@ app.get('/darkpool-log', async (req, res) => {
   const tickers = String(req.query.tickers || DEF).toUpperCase().split(',').map(s=>s.trim()).filter(Boolean).slice(0,40);
   const days = Math.min(30, Math.max(1, Number(req.query.days) || 6));
   const minNotional = Number(req.query.min) > 0 ? Number(req.query.min) : 1e6;
-  const SLOTS = [
-    { label:'open',  s:'13:30', e:'15:30' },   // 09:30-11:30 ET (EDT)
-    { label:'mid',   s:'16:00', e:'18:00' },   // 12:00-14:00 ET
-    { label:'close', s:'18:00', e:'20:00' },   // 14:00-16:00 ET
-  ];
+  // Ventanas: default = 3 slots de 2h (open/mid/close). Con ?win=45 → ventanas cortas
+  // que barren toda la RTH → para tickers PESADOS (NVDA/AAPL/TSLA...) donde 2h satura
+  // el tope de prints y trunca (partial). Menos prints por ventana = data limpia.
+  const winMin = Number(req.query.win) || 0;
+  let SLOTS;
+  if (winMin >= 15 && winMin <= 120) {
+    SLOTS = []; const pad=n=>String(n).padStart(2,'0');
+    for (let t = 13*60+30; t + winMin <= 20*60; t += winMin) {
+      const a=pad(Math.floor(t/60))+':'+pad(t%60), b=pad(Math.floor((t+winMin)/60))+':'+pad((t+winMin)%60);
+      SLOTS.push({ label:a.replace(':',''), s:a, e:b });
+    }
+  } else {
+    SLOTS = [
+      { label:'open',  s:'13:30', e:'15:30' },
+      { label:'mid',   s:'16:00', e:'18:00' },
+      { label:'close', s:'18:00', e:'20:00' },
+    ];
+  }
   const lastWeekdays = (n) => { const out=[]; const d=new Date(); while(out.length<n){ d.setUTCDate(d.getUTCDate()-1); const wd=d.getUTCDay(); if(wd!==0&&wd!==6) out.push(d.toISOString().slice(0,10)); } return out.reverse(); };
   const computeDP = (j) => {
     const auc=(j.auctionCount||0), aucN=(j.auctionNotional||0);
