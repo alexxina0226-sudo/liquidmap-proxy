@@ -647,6 +647,75 @@ app.get('/alpaca-prints', async (req, res) => {
   }
 });
 
+// ── /darkpool-log : el LOGGER de dark pool como LINK (sin terminal) ──────────
+// Muestrea % off-exchange REAL por ticker × días hábiles × slots (open/mid/close)
+// reusando fetchLargePrints y computando el % IGUAL que el mapa (updatePrints).
+// Devuelve un CSV descargable en STREAMING (para no cortar por timeout) con la
+// data cruda + un resumen por ticker (mediana/p80/p95/max). AISLADO: solo LEE
+// prints, no toca emisor/ledger/backtest. Ventana histórica → sin mercado abierto.
+// Uso:  /darkpool-log
+//       /darkpool-log?tickers=SPY,QQQ,NVDA&days=8&min=1000000
+app.get('/darkpool-log', async (req, res) => {
+  if (!printsLive) return res.status(503).send('prints_live.js no está en el repo todavía');
+  if (!ALPACA_KEY_ID || !ALPACA_SECRET) return res.status(500).send('ALPACA keys no configuradas');
+  const DEF = 'SPY,QQQ,NVDA,AMD,AAPL,MSFT,META,AMZN,TSLA,AVGO';
+  const tickers = String(req.query.tickers || DEF).toUpperCase().split(',').map(s=>s.trim()).filter(Boolean).slice(0,40);
+  const days = Math.min(30, Math.max(1, Number(req.query.days) || 6));
+  const minNotional = Number(req.query.min) > 0 ? Number(req.query.min) : 1e6;
+  const SLOTS = [
+    { label:'open',  s:'13:30', e:'15:30' },   // 09:30-11:30 ET (EDT)
+    { label:'mid',   s:'16:00', e:'18:00' },   // 12:00-14:00 ET
+    { label:'close', s:'18:00', e:'20:00' },   // 14:00-16:00 ET
+  ];
+  const lastWeekdays = (n) => { const out=[]; const d=new Date(); while(out.length<n){ d.setUTCDate(d.getUTCDate()-1); const wd=d.getUTCDay(); if(wd!==0&&wd!==6) out.push(d.toISOString().slice(0,10)); } return out.reverse(); };
+  const computeDP = (j) => {
+    const auc=(j.auctionCount||0), aucN=(j.auctionNotional||0);
+    const nCont=Math.max(0,(j.count||0)-auc), contNotional=Math.max(0,(j.totalNotional||0)-aucN);
+    const offN=(j.offExchangeNotional||0), offC=(j.offExchangeCount||0);
+    const pct=contNotional>0?Math.round(offN/contNotional*100):0;
+    const top=Array.isArray(j.top)?j.top:[]; const big=top.find(p=>p&&!p.auction);
+    return { nCont, contNotional, offN, offC, pct, biggestN:(big?big.notional:0), partial:!!j.partial };
+  };
+  const pctile = (a,p)=>{ if(!a.length) return ''; const b=[...a].sort((x,y)=>x-y); return b[Math.min(b.length-1,Math.floor(p/100*b.length))]; };
+  const sleep = ms => new Promise(r=>setTimeout(r,ms));
+  let aborted=false; req.on('close', ()=>{ aborted=true; });
+
+  const dias = lastWeekdays(days);
+  res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="darkpool_samples_${new Date().toISOString().slice(0,10)}.csv"`);
+  res.setHeader('Cache-Control', 'no-store');
+  res.write('sym,date,slot,startISO,endISO,offExchPct,offExchNotional,offExchCount,contCount,contNotional,biggestContNotional,partial\n');
+  const bySym = {};
+  for (const sym of tickers) {
+    if (aborted) break;
+    bySym[sym] = [];
+    for (const day of dias) {
+      if (aborted) break;
+      for (const slot of SLOTS) {
+        if (aborted) break;
+        const startISO = `${day}T${slot.s}:00Z`, endISO = `${day}T${slot.e}:00Z`;
+        try {
+          const r = await printsLive.fetchLargePrints(sym, startISO, endISO, { rth:true, minNotional, topN:20 });
+          const d = computeDP(r || {});
+          res.write(`${sym},${day},${slot.label},${startISO},${endISO},${d.pct},${Math.round(d.offN)},${d.offC},${d.nCont},${Math.round(d.contNotional)},${Math.round(d.biggestN)},${d.partial?1:0}\n`);
+          if (d.nCont > 0) bySym[sym].push(d.pct);
+        } catch (e) {
+          res.write(`${sym},${day},${slot.label},${startISO},${endISO},ERR,,,,,,\n`);
+        }
+        await sleep(100);
+      }
+    }
+  }
+  res.write('\n# RESUMEN,% off-exchange del flujo continuo (una fila por ticker)\n');
+  res.write('# sym,n,mediana,p80,p95,max\n');
+  for (const sym of tickers) {
+    const a = bySym[sym] || [];
+    if (!a.length) { res.write(`# ${sym},0,,,,\n`); continue; }
+    res.write(`# ${sym},${a.length},${pctile(a,50)},${pctile(a,80)},${pctile(a,95)},${Math.max(...a)}\n`);
+  }
+  res.end();
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // ASISTENTE-JUEZ · /asistente — Claude viviendo en el mapa (JUEZ/INTÉRPRETE)
 // Recibe el ESTADO del mapa (lo arma el cliente), inyecta la CONSTITUCIÓN v0.3
