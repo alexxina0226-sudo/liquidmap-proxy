@@ -2198,7 +2198,7 @@ window.updateAggressorCVD = updateAggressorCVD;
 // por eso el corte fijo viejo (30%) se prendía SIEMPRE = inútil. {y:amarillo, g:verde}.
 // _def = fallback pooled (tickers sin muestra + NVDA, cuya muestra fue toda parcial).
 // PROVISIONAL: refinar con un pull más limpio (menos ventanas parciales).
-const DP_BASELINE = { SPY:{y:81,g:88}, QQQ:{y:89,g:93}, AMD:{y:84,g:97}, AAPL:{y:87,g:93}, _def:{y:88,g:93} };
+const DP_BASELINE = { SPY:{y:83,g:90}, QQQ:{y:88,g:90}, AMZN:{y:92,g:94}, MSFT:{y:93,g:95}, AMD:{y:85,g:92}, META:{y:85,g:95}, AVGO:{y:88,g:90}, TSLA:{y:79,g:86}, PLTR:{y:87,g:93}, MU:{y:87,g:93}, GOOG:{y:91,g:99}, ORCL:{y:87,g:99}, _def:{y:88,g:93} };  /* v2 22/08: p75/p90 de muestra real, solo mid-liquidez (donde la métrica tiene rango); NVDA/AAPL re-pull con ?win; quiet names saturan 100% → _def */
 // ── DARK POOL (paso 3): PRINTS >$1M + % OFF-EXCHANGE en los slots fl-prints / fl-dpool ──
 //  DISPLAY-ONLY. Pide /alpaca-prints (prints grandes deduplicados + tag off-exchange 'D')
 //  para una ventana reciente y llena los dos slots. Espeja updateAggressorCVD (misma lógica
