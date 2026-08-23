@@ -793,6 +793,54 @@ app.get('/dp-bands', (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// LEDGER INTELIGENTE · OBSERVACIONES — mide el poder predictivo de las LECTURAS
+// (juez, dark pool, ballena, sticker) por FORWARD-RETURN direccional. El mapa y el
+// asistente POSTean a /obs-log; un job trae barras forward y sella el desenlace.
+// Store = mismo gist del ledger, archivo aparte obs_ledger.jsonl (JSONL de records).
+// AISLADO del ledger de trades y del emisor. FAIL-OPEN: si faltan módulos/env → OFF.
+//   ENV (reusa las del ledger): LEDGER_GH_TOKEN + LEDGER_GH_GIST
+// ══════════════════════════════════════════════════════════════════════════
+let obsStore = null, obsDriver = null, _obsMake = null, _obsResolve = null, _obsGetBars = null;
+try {
+  const { createLedgerStore } = require('./ledger_store');
+  const { githubGistDriver }  = require('./ledger_store_github');
+  const { makeObservation }   = require('./obs_ledger');
+  const { resolveObsPending } = require('./obs_resolver');
+  const _tok = process.env.LEDGER_GH_TOKEN || '';
+  const _gid = process.env.LEDGER_GH_GIST  || '';
+  if (_tok && _gid) {
+    obsDriver = githubGistDriver({ token:_tok, gistId:_gid, filename:'obs_ledger.jsonl', fetch, onError:e=>console.log('[obs] gist: '+e.message) });
+    obsStore  = createLedgerStore(obsDriver);
+    _obsMake  = makeObservation;
+    _obsResolve = resolveObsPending;
+    _obsGetBars = (sym, s, e, tf) => optLive.getUnderlyingBars(sym, s, e, tf);
+  } else {
+    console.log('🧠 Ledger inteligente OFF — faltan LEDGER_GH_TOKEN/GIST');
+  }
+} catch (e) { console.log('🧠 Ledger inteligente OFF — ' + e.message); }
+
+// POST /obs-log  { kind, sym, dir, ts?, px?, tf?, horizonBars?, strength?, tag?, ctx? } → { ok, id }
+// Lo llaman las fuentes (mapa/asistente) cuando disparan una lectura significativa.
+// La validación vive en makeObservation; upsert es idempotente por id.
+app.post('/obs-log', async (req, res) => {
+  try {
+    if (!obsStore || !_obsMake) return res.json({ ok:false, off:true });
+    const b = req.body || {};
+    const rec = _obsMake({
+      kind: b.kind, sym: String(b.sym || '').toUpperCase(),
+      ts: Number(b.ts) > 0 ? Number(b.ts) : Date.now(),
+      dir: b.dir, px: Number(b.px), tf: b.tf,
+      horizonBars: Number(b.horizonBars), strength: Number(b.strength),
+      tag: b.tag, ctx: b.ctx
+    });
+    if (!rec) return res.json({ ok:false, reason:'invalid' });
+    obsStore.upsert(rec);
+    try { await obsDriver.flush(); } catch(_){}
+    return res.json({ ok:true, id: rec.id });
+  } catch (e) { res.json({ ok:false, error:e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // ASISTENTE-JUEZ · /asistente — Claude viviendo en el mapa (JUEZ/INTÉRPRETE)
 // Recibe el ESTADO del mapa (lo arma el cliente), inyecta la CONSTITUCIÓN v0.3
 // + la ANTHROPIC_API_KEY (env, nunca al cliente, nunca logueada), llama a la
@@ -1047,6 +1095,16 @@ app.listen(PORT, () => {
   if (dpStore) dpStore.init()
     .then(() => console.log('🌑 Dark pool auto-cal listo (' + Object.keys(dpStore.raw().tickers).length + ' tickers)'))
     .catch(e => console.log('[dp] init: ' + e.message));
+  if (obsStore && obsDriver) {
+    obsDriver.init()
+      .then(() => console.log('🧠 Ledger inteligente listo (' + obsStore.load().length + ' obs)'))
+      .catch(e => console.log('[obs] init: ' + e.message));
+    if (_obsResolve && _obsGetBars) setInterval(() => {
+      _obsResolve(obsStore, _obsGetBars, {})
+        .then(r => { if (r && r.resolved) { console.log('🧠 obs: ' + r.resolved + ' resueltas'); return obsDriver.flush(); } })
+        .catch(() => {});
+    }, 20 * 60 * 1000);
+  }
 });
 
 // ── MONITORES (bots) ──────────────────────────────
