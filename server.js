@@ -732,6 +732,67 @@ app.get('/darkpool-log', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// DARK POOL · AUTO-CALIBRACIÓN — baseline propio por ticker (aprende en vivo)
+// El mapa postea a /dp-sample el % que YA obtiene en updatePrints; el server lo
+// acumula en el gist (mismo gist del ledger, archivo dp_baseline.json) y sirve
+// las bandas por /dp-bands. Cada ticker aprende su p75/p90 sobre ventana rodante
+// → colorea relativo a SU baseline, resuelve la watchlist cambiante sola.
+// AISLADO: solo lee/escribe su propio blob; NO toca emisor/ledger/backtest/mapa.
+// FAIL-OPEN: si faltan módulos o env → dp queda OFF y todo lo demás sigue igual.
+//   ENV (reusa las del ledger): LEDGER_GH_TOKEN + LEDGER_GH_GIST
+// ══════════════════════════════════════════════════════════════════════════
+let dpStore = null;
+try {
+  const { createDpStore, gistBlobDriver } = require('./dp_store');
+  const _tok = process.env.LEDGER_GH_TOKEN || '';
+  const _gid = process.env.LEDGER_GH_GIST  || '';
+  if (_tok && _gid) {
+    dpStore = createDpStore(gistBlobDriver({
+      token: _tok, gistId: _gid, filename: 'dp_baseline.json',
+      fetch, onError: e => console.log('[dp] gist: ' + e.message)
+    }));
+  } else {
+    console.log('🌑 Dark pool auto-cal OFF — faltan LEDGER_GH_TOKEN/GIST');
+  }
+} catch (e) { console.log('🌑 Dark pool auto-cal OFF — ' + e.message); }
+
+// SEED = bandas p75/p90 sembradas desde los CSVs (los mid-liquidez calibrados).
+// Se usan hasta que el ticker junte muestra propia (n>=25). _def = fallback.
+const DP_SEED = {
+  SPY:{y:83,g:90}, QQQ:{y:88,g:90}, AMZN:{y:92,g:94}, MSFT:{y:93,g:95},
+  AMD:{y:85,g:92}, META:{y:85,g:95}, AVGO:{y:88,g:90}, TSLA:{y:79,g:86},
+  PLTR:{y:87,g:93}, MU:{y:87,g:93}, GOOG:{y:91,g:99}, ORCL:{y:87,g:99},
+  AAPL:{y:96,g:99}, NVDA:{y:86,g:96}
+};
+const DP_DEF = { y:88, g:93 };
+
+// POST /dp-sample  { sym, pct, ts? } → { ok, accepted, reason }
+// Lo llama el mapa con el % que ya computó. Spacing anti-sesgo + validación viven
+// en el módulo puro; persiste al gist SOLO si la muestra fue aceptada.
+app.post('/dp-sample', async (req, res) => {
+  try {
+    if (!dpStore) return res.json({ ok:false, off:true });
+    const b = req.body || {};
+    const sym = String(b.sym || '').toUpperCase();
+    const pct = Number(b.pct);
+    const ts  = Number(b.ts) > 0 ? Number(b.ts) : Date.now();
+    const r = dpStore.sample(sym, ts, pct);
+    if (r.accepted) { try { await dpStore.flush(); } catch(_){} }
+    return res.json({ ok:true, ...r });
+  } catch (e) { res.json({ ok:false, error:e.message }); }
+});
+
+// GET /dp-bands → { ok, def, bands:{ SYM:{y,g,source,n} | {degenerate,source} } }
+// El mapa lo consume para colorear fl-dpool relativo al baseline propio del sym.
+// Un sym ausente en bands → el mapa cae a def. source = learned|seed|def.
+app.get('/dp-bands', (req, res) => {
+  try {
+    if (!dpStore) return res.json({ ok:false, off:true, def:DP_DEF, seed:DP_SEED });
+    return res.json({ ok:true, def:DP_DEF, bands: dpStore.allBands(DP_SEED, DP_DEF) });
+  } catch (e) { res.json({ ok:false, error:e.message, def:DP_DEF }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // ASISTENTE-JUEZ · /asistente — Claude viviendo en el mapa (JUEZ/INTÉRPRETE)
 // Recibe el ESTADO del mapa (lo arma el cliente), inyecta la CONSTITUCIÓN v0.3
 // + la ANTHROPIC_API_KEY (env, nunca al cliente, nunca logueada), llama a la
@@ -983,6 +1044,9 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`LiquidMap PRO running on port ${PORT}`);
   connectLiqWS();   // arranca el feed de liquidaciones (independiente de los bots)
+  if (dpStore) dpStore.init()
+    .then(() => console.log('🌑 Dark pool auto-cal listo (' + Object.keys(dpStore.raw().tickers).length + ' tickers)'))
+    .catch(e => console.log('[dp] init: ' + e.message));
 });
 
 // ── MONITORES (bots) ──────────────────────────────
