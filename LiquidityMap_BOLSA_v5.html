@@ -2199,6 +2199,30 @@ window.updateAggressorCVD = updateAggressorCVD;
 // _def = fallback pooled (tickers sin muestra + NVDA, cuya muestra fue toda parcial).
 // PROVISIONAL: refinar con un pull más limpio (menos ventanas parciales).
 const DP_BASELINE = { SPY:{y:83,g:90}, QQQ:{y:88,g:90}, AMZN:{y:92,g:94}, MSFT:{y:93,g:95}, AMD:{y:85,g:92}, META:{y:85,g:95}, AVGO:{y:88,g:90}, TSLA:{y:79,g:86}, PLTR:{y:87,g:93}, MU:{y:87,g:93}, GOOG:{y:91,g:99}, ORCL:{y:87,g:99}, AAPL:{y:96,g:99}, NVDA:{y:86,g:96}, _def:{y:88,g:93} };  /* v2 22/08: p75/p90 de muestra real, solo mid-liquidez (donde la métrica tiene rango); NVDA/AAPL re-pull con ?win; quiet names saturan 100% → _def */
+// AUTO-CALIBRACIÓN dark pool: el server aprende el baseline propio de cada ticker.
+// El mapa POSTea a /dp-sample el % que ya computa y consume /dp-bands para colorear
+// relativo al baseline aprendido (fallback: DP_BASELINE seed local → _def). Fail-open.
+const DPSAMPLE_URL = POLY_PROXY.replace('/alpaca', '/dp-sample');
+const DPBANDS_URL  = POLY_PROXY.replace('/alpaca', '/dp-bands');
+let DP_BANDS = null;   // { ok, def, bands:{ SYM:{y,g,source,n} | {degenerate} } } del server
+function refreshDpBands(){
+  try{ fetch(DPBANDS_URL).then(r=>r.json()).then(j=>{ if(j&&j.ok) DP_BANDS=j; }).catch(()=>{}); }catch(_){}
+}
+// banda para colorear: aprendido/seed del server → def del server → seed local → _def.
+// Devuelve {y,g}, o null si el server marcó el ticker "señal baja" (quiet name).
+function dpBandFor(sym){
+  if(DP_BANDS && DP_BANDS.bands){
+    const b = DP_BANDS.bands[sym];
+    if(b){
+      if(b.degenerate) return null;                 // quiet name → no colorear
+      if(b.y!=null && b.g!=null) return {y:b.y, g:b.g};
+    }
+    if(DP_BANDS.def) return DP_BANDS.def;            // def del server para symbols ausentes
+  }
+  return (typeof DP_BASELINE!=='undefined' ? (DP_BASELINE[sym]||DP_BASELINE._def) : {y:88,g:93}); // fallback local
+}
+refreshDpBands();                                    // ceba al cargar
+setInterval(refreshDpBands, 10*60*1000);             // refresca cada 10min (el baseline cambia lento)
 // ── DARK POOL (paso 3): PRINTS >$1M + % OFF-EXCHANGE en los slots fl-prints / fl-dpool ──
 //  DISPLAY-ONLY. Pide /alpaca-prints (prints grandes deduplicados + tag off-exchange 'D')
 //  para una ventana reciente y llena los dos slots. Espeja updateAggressorCVD (misma lógica
@@ -2262,8 +2286,11 @@ function updatePrints(symArg, tfArg, cndls){
         const offN=(j.offExchangeNotional||0), offC=(j.offExchangeCount||0);
         const pct = contNotional>0 ? Math.round(offN/contNotional*100) : 0;
         if(offC>0){
-          const _dpb = (typeof DP_BASELINE!=='undefined' ? (DP_BASELINE[sym]||DP_BASELINE._def) : {y:88,g:93});
-          elD.style.color = pct>=_dpb.g?'var(--green)':(pct>=_dpb.y?'var(--yellow)':'var(--text)');
+          // AUTO-CAL: aprende del % que acabamos de ver (el server filtra spacing/validez)
+          if(isFinite(pct)){ try{ fetch(DPSAMPLE_URL,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sym,pct})}).catch(()=>{}); }catch(_){} }
+          const _dpb = dpBandFor(sym);
+          if(_dpb){ elD.style.color = pct>=_dpb.g?'var(--green)':(pct>=_dpb.y?'var(--yellow)':'var(--text)'); }
+          else { elD.style.color='var(--text)'; }   // quiet name (señal baja) → neutro
           elD.textContent = pct+'% · $'+_fmtK(offN);
         } else { elD.style.color='var(--muted)'; elD.textContent='0%'; }
         elD.title = "DARK POOL (proxy off-exchange, venue FINRA/TRF 'D')\n"
