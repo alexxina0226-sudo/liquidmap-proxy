@@ -2204,6 +2204,8 @@ const DP_BASELINE = { SPY:{y:83,g:90}, QQQ:{y:88,g:90}, AMZN:{y:92,g:94}, MSFT:{
 // relativo al baseline aprendido (fallback: DP_BASELINE seed local → _def). Fail-open.
 const DPSAMPLE_URL = POLY_PROXY.replace('/alpaca', '/dp-sample');
 const DPBANDS_URL  = POLY_PROXY.replace('/alpaca', '/dp-bands');
+const OBSLOG_URL   = POLY_PROXY.replace('/alpaca', '/obs-log');   // LEDGER INTELIGENTE: observaciones (juez/darkpool/ballena/sticker)
+const OBS_DP_TF = '1H', OBS_DP_HORIZON = 6;                       // dark pool: medir forward-return en 1H, 6 barras (comparable entre eventos)
 let DP_BANDS = null;   // { ok, def, bands:{ SYM:{y,g,source,n} | {degenerate} } } del server
 function refreshDpBands(){
   try{ fetch(DPBANDS_URL).then(r=>r.json()).then(j=>{ if(j&&j.ok) DP_BANDS=j; }).catch(()=>{}); }catch(_){}
@@ -2292,6 +2294,20 @@ function updatePrints(symArg, tfArg, cndls){
           if(_dpb){ elD.style.color = pct>=_dpb.g?'var(--green)':(pct>=_dpb.y?'var(--yellow)':'var(--text)'); }
           else { elD.style.color='var(--text)'; }   // quiet name (señal baja) → neutro
           elD.textContent = pct+'% · $'+_fmtK(offN);
+          // LEDGER INTELIGENTE: dark pool ALTO (supera banda verde) = OBSERVACIÓN. El % es
+          // intensidad; la DIRECCIÓN la da el CVD de estas mismas velas (verde=compra→up).
+          // ts anclado a la hora → 1 obs por sym por hora (id idempotente colapsa duplicados).
+          if(_dpb && pct >= _dpb.g && cndls.length){
+            const _lb = cndls[cndls.length-1];
+            const _hourTs = Math.floor(Date.now()/3600000)*3600000;
+            let _cvdNet = 0; for(const b of cndls){ _cvdNet += (b.c >= b.o ? (b.v||0) : -(b.v||0)); }
+            const _dir = _cvdNet > 0 ? 'up' : _cvdNet < 0 ? 'down' : 'neutral';
+            if(_lb && isFinite(_lb.c)){
+              try{ fetch(OBSLOG_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+                body:JSON.stringify({ kind:'darkpool', sym, dir:_dir, ts:_hourTs, px:_lb.c, tf:OBS_DP_TF, horizonBars:OBS_DP_HORIZON, strength:pct })
+              }).catch(()=>{}); }catch(_){}
+            }
+          }
         } else { elD.style.color='var(--muted)'; elD.textContent='0%'; }
         elD.title = "DARK POOL (proxy off-exchange, venue FINRA/TRF 'D')\n"
           + offC+' prints off-exchange · $'+_fmtK(offN)+' ('+pct+'% del flujo continuo)\n'
