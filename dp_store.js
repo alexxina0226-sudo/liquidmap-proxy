@@ -93,7 +93,10 @@ function createDpStore(driver){
     if(driver.init) await driver.init();
     loaded = false; _ensure();
   }
-  function _persist(){ driver.saveBlob(JSON.stringify(state)); }
+  let _dirty = false;
+  // commit() escribe al gist UNA vez si hubo muestras nuevas (batch). Lo llama un
+  // job periódico → evita un PATCH por muestra (la fuga de revisiones del gist).
+  function commit(){ if(_dirty){ driver.saveBlob(JSON.stringify(state)); _dirty = false; return true; } return false; }
 
   // sample(sym,ts,pct) → {accepted,reason}. Persiste SOLO si accepted (no gasta escrituras en too-soon).
   function sample(sym, ts, pct, opts){
@@ -101,7 +104,7 @@ function createDpStore(driver){
     _ensure();
     const entry = state.tickers[sym] || { samples:[] };
     const r = dpb.addSample(entry, ts, pct, opts);
-    if(r.accepted){ state.tickers[sym] = r.entry; _persist(); }
+    if(r.accepted){ state.tickers[sym] = r.entry; _dirty = true; }  // en RAM ya; el commit periódico lo escribe en tanda
     return { accepted:r.accepted, reason:r.reason };
   }
   // bands(sym) → banda resuelta con procedencia (aprendido→seed→def)
@@ -119,10 +122,10 @@ function createDpStore(driver){
     }
     return out;
   }
-  function flush(){ return driver.flush ? driver.flush() : Promise.resolve(); }
+  function flush(){ commit(); return driver.flush ? driver.flush() : Promise.resolve(); }
   function raw(){ _ensure(); return state; }
 
-  return { init, sample, bands, allBands, flush, raw };
+  return { init, sample, bands, allBands, commit, flush, raw };
 }
 
 module.exports = { createDpStore, memoryBlobDriver, gistBlobDriver };
