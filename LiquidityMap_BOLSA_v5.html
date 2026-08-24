@@ -2206,7 +2206,7 @@ const DPSAMPLE_URL = POLY_PROXY.replace('/alpaca', '/dp-sample');
 const DPBANDS_URL  = POLY_PROXY.replace('/alpaca', '/dp-bands');
 const OBSLOG_URL   = POLY_PROXY.replace('/alpaca', '/obs-log');   // LEDGER INTELIGENTE: observaciones (juez/darkpool/ballena/sticker)
 const OBS_DP_TF = '1H', OBS_DP_HORIZON = 6;                       // dark pool: medir forward-return en 1H, 6 barras (comparable entre eventos)
-const OBS_WH_TF = '1H', OBS_WH_HORIZON = 6;                       // ballena: mismo TF/horizonte que dark pool → comparables entre fuentes
+const OBS_WH_TF = '1H', OBS_WH_HORIZON = 6, OBS_WH_MINRATIO = 4;  // ballena: TF/horizonte + umbral ×4 (= WHALE_TG_MIN, declarado más abajo)
 // LEDGER INTELIGENTE · fuente BALLENA: la ballena YA es direccional (BUY→up / SELL→down),
 // no necesita el CVD. strength = ratio ×N (magnitud). ts anclado a la hora (1 obs/sym/hora).
 function logWhaleObs(sym, wh, px){
@@ -2517,7 +2517,10 @@ function checkAlerts(p){
   // GEX flip alert: DESACTIVADO — GEX real requiere opciones (FASE 4).
   // Whale
   const wh = detectWhale(candles, 3.0);
-  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(520,0.18,'square',0.35); setTimeout(()=>playTone(700,0.22,'square',0.35),200); showWhaleAlert('🐋 BALLENA '+(wh.dir==='BUY'?'COMPRADORA 🟢':'VENDEDORA 🔴')+' — '+sym+' ×'+wh.ratio+' vol'); whaleV2[sym]={dir:wh.dir,ratio:wh.ratio,ts:Date.now()}; logWhaleObs(sym, wh, p); sendWhaleTelegram(wh, p, sym, (candles.length?candles[candles.length-1].t:Date.now())); lastWhaleAlert=Date.now(); }
+  if(wh && alertCfg.whale && Date.now()-lastWhaleAlert>60000){ playTone(520,0.18,'square',0.35); setTimeout(()=>playTone(700,0.22,'square',0.35),200); showWhaleAlert('🐋 BALLENA '+(wh.dir==='BUY'?'COMPRADORA 🟢':'VENDEDORA 🔴')+' — '+sym+' ×'+wh.ratio+' vol'); whaleV2[sym]={dir:wh.dir,ratio:wh.ratio,ts:Date.now()}; sendWhaleTelegram(wh, p, sym, (candles.length?candles[candles.length-1].t:Date.now())); lastWhaleAlert=Date.now(); }
+  // LEDGER: la ballena del activo se LOGUEA aparte del gate de alertas (antes vivía dentro
+  // del if de arriba → sin alertas ON nunca llegaba al ledger). ≥×4 = evento significativo.
+  if(wh && parseFloat(wh.ratio) >= OBS_WH_MINRATIO){ logWhaleObs(sym, wh, p); }
   // CHoCH/BOS
   if(struct.choch && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.3,'triangle'); showAlertPopup('🏗 '+struct.choch.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
   else if(struct.bos && alertCfg.struct && Date.now()-lastStructAlert>120000){ playTone(770,0.2,'triangle'); showAlertPopup('🏗 '+struct.bos.label); /* VIEW-ONLY: evento sin niveles, no a Telegram */ lastStructAlert=Date.now(); }
