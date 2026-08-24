@@ -889,7 +889,7 @@ app.post('/asistente', async (req, res) => {
         },
         body: JSON.stringify({
           model: ASISTENTE_MODEL,
-          max_tokens: 700,
+          max_tokens: 1500,   // era 700 → cortaba veredictos a la mitad (WMT). El juez da 1-2 párrafos.
           system: CONSTITUCION_JUEZ,
           messages: [{ role: 'user', content: userContent }],
         }),
@@ -904,7 +904,15 @@ app.post('/asistente', async (req, res) => {
     const data = await apiResp.json();
     const verdict = Array.isArray(data.content)
       ? data.content.filter(b => b.type === 'text').map(b => b.text).join('\n').trim() : '';
-    return res.json({ ok:true, verdict: verdict || '(el juez no devolvió texto)', model: data.model || ASISTENTE_MODEL, usage: data.usage || null });
+    const stop = data.stop_reason || '';
+    let out = verdict;
+    if (!out) {
+      // Sin texto: decir POR QUÉ en vez de un críptico "no devolvió texto".
+      out = (stop === 'max_tokens')
+        ? '(el juez se quedó sin espacio — subí el límite de tokens)'
+        : '(el juez no devolvió texto' + (stop ? (' · ' + stop) : '') + ')';
+    }
+    return res.json({ ok:true, verdict: out, model: data.model || ASISTENTE_MODEL, stop_reason: stop || null, usage: data.usage || null });
   } catch(e) {
     const msg = (e && e.name === 'AbortError') ? 'El juez tardó demasiado (timeout).' : ((e && e.message) || 'error');
     return res.json({ ok:false, error:'Juez no disponible: ' + msg });
