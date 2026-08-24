@@ -776,8 +776,7 @@ app.post('/dp-sample', async (req, res) => {
     const sym = String(b.sym || '').toUpperCase();
     const pct = Number(b.pct);
     const ts  = Number(b.ts) > 0 ? Number(b.ts) : Date.now();
-    const r = dpStore.sample(sym, ts, pct);
-    if (r.accepted) { try { await dpStore.flush(); } catch(_){} }
+    const r = dpStore.sample(sym, ts, pct);   // aplica en RAM; el job de commit escribe al gist en tanda (cada 5min)
     return res.json({ ok:true, ...r });
   } catch (e) { res.json({ ok:false, error:e.message }); }
 });
@@ -1092,9 +1091,13 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`LiquidMap PRO running on port ${PORT}`);
   connectLiqWS();   // arranca el feed de liquidaciones (independiente de los bots)
-  if (dpStore) dpStore.init()
-    .then(() => console.log('🌑 Dark pool auto-cal listo (' + Object.keys(dpStore.raw().tickers).length + ' tickers)'))
-    .catch(e => console.log('[dp] init: ' + e.message));
+  if (dpStore) {
+    dpStore.init()
+      .then(() => console.log('🌑 Dark pool auto-cal listo (' + Object.keys(dpStore.raw().tickers).length + ' tickers)'))
+      .catch(e => console.log('[dp] init: ' + e.message));
+    // Commit en tanda cada 5min: escribe al gist SOLO si hubo muestras nuevas → mata la fuga de revisiones.
+    setInterval(() => { try { if (dpStore.commit()) dpStore.flush().catch(()=>{}); } catch(_){} }, 5 * 60 * 1000);
+  }
   if (obsStore && obsDriver) {
     obsDriver.init()
       .then(() => console.log('🧠 Ledger inteligente listo (' + obsStore.load().length + ' obs)'))
