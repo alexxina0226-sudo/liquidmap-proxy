@@ -889,7 +889,7 @@ app.post('/asistente', async (req, res) => {
         },
         body: JSON.stringify({
           model: ASISTENTE_MODEL,
-          max_tokens: 1500,   // era 700 → cortaba veredictos a la mitad (WMT). El juez da 1-2 párrafos.
+          max_tokens: 2500,   // 700→1500→2500: red de seguridad. El freno REAL del largo es la constitución (veredicto breve, ~140 palabras). Si aún se corta con esto, revisar si el modelo mete thinking.
           system: CONSTITUCION_JUEZ,
           messages: [{ role: 'user', content: userContent }],
         }),
