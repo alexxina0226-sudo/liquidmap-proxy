@@ -912,6 +912,34 @@ app.post('/asistente', async (req, res) => {
         ? '(el juez se quedó sin espacio — subí el límite de tokens)'
         : '(el juez no devolvió texto' + (stop ? (' · ' + stop) : '') + ')';
     }
+    // LEDGER INTELIGENTE · 4ta fuente JUEZ: registrar el veredicto como observación.
+    // dir/conv salen del token que emite el juez en la 1ra línea; se mide su forward-return
+    // para medir su poder predictivo y que se autocalibre leyendo su propio track record.
+    // ts = momento EXACTO de la consulta (cada veredicto = una decisión propia, NO se ancla a la
+    // hora como las otras 3 fuentes). Se loguean TAMBIÉN los neutral ('esperá'): el resolver mide
+    // su MFE → cuántas veces frenó y se perdió el movimiento. Aditivo, fail-open.
+    try {
+      const mJuez = out.match(/⟦\s*JUEZ\s+dir\s*=\s*(up|down|neutral)\s+conv\s*=\s*(\d{1,3})\s*⟧/i);
+      if (mJuez) {
+        out = out.replace(mJuez[0], '').replace(/^\s+/, '');   // el humano no ve el token
+        const _sym = (state.meta && state.meta.sym) ? String(state.meta.sym).toUpperCase() : '';
+        const _px  = (state.meta) ? Number(state.meta.price) : NaN;
+        if (obsStore && _obsMake && _sym && isFinite(_px) && _px > 0) {
+          const _conv = Math.max(0, Math.min(100, parseInt(mJuez[2], 10)));
+          const rec = _obsMake({
+            kind: 'juez', sym: _sym, ts: Date.now(),
+            dir: mJuez[1].toLowerCase(), px: _px, tf: '1H', horizonBars: 6, strength: _conv,
+            ctx: {
+              grado:   (state.gobernador && state.gobernador.grado) || null,
+              clase:   (state.clase && state.clase.clase) || null,
+              titular: (state.titular && state.titular.signal) || null,
+              score:   (state.titular && state.titular.score) || null
+            }
+          });
+          if (rec) { obsStore.upsert(rec); try { await obsDriver.flush(); } catch(_){} }
+        }
+      }
+    } catch(_e) {}
     return res.json({ ok:true, verdict: out, model: data.model || ASISTENTE_MODEL, stop_reason: stop || null, usage: data.usage || null });
   } catch(e) {
     const msg = (e && e.name === 'AbortError') ? 'El juez tardó demasiado (timeout).' : ((e && e.message) || 'error');
