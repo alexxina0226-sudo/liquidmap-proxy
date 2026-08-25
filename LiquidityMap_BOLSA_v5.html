@@ -2207,6 +2207,28 @@ const DPBANDS_URL  = POLY_PROXY.replace('/alpaca', '/dp-bands');
 const OBSLOG_URL   = POLY_PROXY.replace('/alpaca', '/obs-log');   // LEDGER INTELIGENTE: observaciones (juez/darkpool/ballena/sticker)
 const OBS_DP_TF = '1H', OBS_DP_HORIZON = 6;                       // dark pool: medir forward-return en 1H, 6 barras (comparable entre eventos)
 const OBS_WH_TF = '1H', OBS_WH_HORIZON = 6, OBS_WH_MINRATIO = 4;  // ballena: TF/horizonte + umbral ×4 (= WHALE_TG_MIN, declarado más abajo)
+// LEDGER INTELIGENTE · ctx del momento: snapshot del flujo cuando CAE la obs, para después
+// cortar la dirección (ej: ballena SELL + CVD confirmando venta vs divergiendo) y RTH vs
+// after-hours. Degrada con gracia: CVD real solo si es el ticker activo (panel FLUJO); el
+// read del radar (cocción) si está; marketOpen SIEMPRE. Fail-open — nunca rompe el log.
+function obsCtx(sym){
+  const c = { marketOpen: (typeof getMktStatus==='function') ? (getMktStatus()==='open') : null };
+  try{
+    if(typeof _cvdAgg!=='undefined' && _cvdAgg && _cvdAgg.data && _cvdAgg.data.sym === sym){
+      const d = _cvdAgg.data, tot = (d.buyV||0)+(d.sellV||0);
+      c.cvdPctBuy = tot>0 ? Math.round((d.buyV/tot)*100) : null;
+      c.cvdSign  = d.cvd>0 ? 'buy' : d.cvd<0 ? 'sell' : 'flat';
+      c.cvdReal  = !!d.cvdReal;
+    }
+  }catch(_){}
+  try{
+    if(typeof coccionLast!=='undefined' && coccionLast && Array.isArray(coccionLast.cooking)){
+      const ck = coccionLast.cooking.find(x=>x && x.sym === sym);
+      if(ck){ c.radarDir = ck.dir||null; c.radarScore = (ck.score!=null?ck.score:null); c.radarConv = (ck.conviction!=null?ck.conviction:null); }
+    }
+  }catch(_){}
+  return c;
+}
 // LEDGER INTELIGENTE · fuente BALLENA: la ballena YA es direccional (BUY→up / SELL→down),
 // no necesita el CVD. strength = ratio ×N (magnitud). ts anclado a la hora (1 obs/sym/hora).
 function logWhaleObs(sym, wh, px){
@@ -2216,7 +2238,7 @@ function logWhaleObs(sym, wh, px){
     const _str = parseFloat(wh.ratio);
     const _hourTs = Math.floor(Date.now()/3600000)*3600000;
     fetch(OBSLOG_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ kind:'ballena', sym, dir:_dir, ts:_hourTs, px, tf:OBS_WH_TF, horizonBars:OBS_WH_HORIZON, strength: isFinite(_str)?_str:null })
+      body:JSON.stringify({ kind:'ballena', sym, dir:_dir, ts:_hourTs, px, tf:OBS_WH_TF, horizonBars:OBS_WH_HORIZON, strength: isFinite(_str)?_str:null, ctx: obsCtx(sym) })
     }).catch(()=>{});
   }catch(_){}
 }
@@ -2232,7 +2254,7 @@ function logStickerObs(sym, crit, px){
     const _str = parseFloat(crit.conviction);
     const _hourTs = Math.floor(Date.now()/3600000)*3600000;
     fetch(OBSLOG_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ kind:'sticker', sym, dir:_dir, ts:_hourTs, px, tf:OBS_ST_TF, horizonBars:OBS_ST_HORIZON, strength: isFinite(_str)?_str:null })
+      body:JSON.stringify({ kind:'sticker', sym, dir:_dir, ts:_hourTs, px, tf:OBS_ST_TF, horizonBars:OBS_ST_HORIZON, strength: isFinite(_str)?_str:null, ctx: obsCtx(sym) })
     }).catch(()=>{});
   }catch(_){}
 }
@@ -2334,7 +2356,7 @@ function updatePrints(symArg, tfArg, cndls){
             const _dir = _cvdNet > 0 ? 'up' : _cvdNet < 0 ? 'down' : 'neutral';
             if(_lb && isFinite(_lb.c)){
               try{ fetch(OBSLOG_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-                body:JSON.stringify({ kind:'darkpool', sym, dir:_dir, ts:_hourTs, px:_lb.c, tf:OBS_DP_TF, horizonBars:OBS_DP_HORIZON, strength:pct })
+                body:JSON.stringify({ kind:'darkpool', sym, dir:_dir, ts:_hourTs, px:_lb.c, tf:OBS_DP_TF, horizonBars:OBS_DP_HORIZON, strength:pct, ctx: Object.assign(obsCtx(sym), { darkPoolPct: pct }) })
               }).catch(()=>{}); }catch(_){}
             }
           }
