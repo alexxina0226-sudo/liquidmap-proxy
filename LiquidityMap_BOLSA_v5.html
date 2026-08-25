@@ -2227,8 +2227,39 @@ function obsCtx(sym){
       if(ck){ c.radarDir = ck.dir||null; c.radarScore = (ck.score!=null?ck.score:null); c.radarConv = (ck.conviction!=null?ck.conviction:null); }
     }
   }catch(_){}
+  try{
+    if(_multiTFCache && _multiTFCache.sym===sym && (Date.now()-_multiTFCache.ts)<180000 && _multiTFCache.data){
+      const m=_multiTFCache.data, g=l=>(m[l]&&m[l].dir)||null;
+      c.mtf = { h4:g('4H'), h1:g('1H'), m15:g('15m'), m5:g('5m'), align:_mtfAlign(m) };
+    }
+  }catch(_){}
   return c;
 }
+// LEDGER INTELIGENTE · multi-TF para el ctx: cache del ticker ACTIVO (buildMultiTF = 4 fetches,
+// NO se puede correr por-ticker en el scan). Lo refresca un timer barato (1 ticker) + al consultar
+// el juez. obsCtx lo lee sync si está fresco (<3min). Alineación 4H/1H vs 15m/5m = el pullback medible.
+let _multiTFCache = { sym:null, ts:0, data:null };
+function _mtfAlign(m){
+  if(!m) return null;
+  const norm=x=>x==='call'?'up':x==='put'?'down':x==='neutral'?'neutral':null;
+  const g=l=>norm(m[l]&&m[l].dir);
+  const h4=g('4H'),h1=g('1H'),m15=g('15m'),m5=g('5m');
+  const dirs=[h4,h1,m15,m5].filter(x=>x&&x!=='neutral');
+  if(dirs.length>=3 && dirs.every(x=>x==='up'))   return 'aligned_up';
+  if(dirs.length>=3 && dirs.every(x=>x==='down')) return 'aligned_down';
+  const htf=[h4,h1].filter(Boolean), ltf=[m15,m5].filter(Boolean);
+  const htfUp=htf.includes('up')&&!htf.includes('down'), htfDn=htf.includes('down')&&!htf.includes('up');
+  const ltfUp=ltf.includes('up')&&!ltf.includes('down'), ltfDn=ltf.includes('down')&&!ltf.includes('up');
+  if((htfUp&&ltfDn)||(htfDn&&ltfUp)) return 'conflict';   // 4H a un lado, LTF al otro = el pullback
+  return 'mixed';
+}
+async function _refreshMultiTFCache(){
+  try{ if(typeof sym==='undefined' || !sym) return;
+    const m = await buildMultiTF(sym);
+    if(m) _multiTFCache = { sym, ts:Date.now(), data:m };
+  }catch(_){}
+}
+try{ setInterval(_refreshMultiTFCache, 90000); }catch(_){}
 // LEDGER INTELIGENTE · fuente BALLENA: la ballena YA es direccional (BUY→up / SELL→down),
 // no necesita el CVD. strength = ratio ×N (magnitud). ts anclado a la hora (1 obs/sym/hora).
 function logWhaleObs(sym, wh, px){
@@ -3804,6 +3835,7 @@ async function askAssistant(userQuestion){
   try { state = buildAssistantState(userQuestion); }
   catch(e){ return { ok:false, error:'No pude armar el estado del mapa: '+e.message }; }
   try { if(state && !state.sinDatos) state.multiTF = await buildMultiTF(sym); } catch(e){}   // lectura multi-TF (HTF contexto + LTF gatillo), fail-open
+  try{ if(state && state.multiTF) _multiTFCache = { sym, ts:Date.now(), data:state.multiTF }; }catch(_){}   // alimenta el cache del ctx del ledger
   try {
     const r = await fetch(ASISTENTE_URL, { method:'POST', headers:{'Content-Type':'application/json'},
       body: JSON.stringify({ state, question: userQuestion || null }), cache:'no-store' });
