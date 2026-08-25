@@ -2220,6 +2220,22 @@ function logWhaleObs(sym, wh, px){
     }).catch(()=>{});
   }catch(_){}
 }
+const OBS_ST_TF = '1H', OBS_ST_HORIZON = 6;   // sticker: MISMO TF/horizonte que dark pool y ballena → comparable en el ledger
+// LEDGER INTELIGENTE · fuente STICKER (3ra): el criterio del sticker YA es direccional
+// (call→up / put→down). strength = conviction (0-100), para cortes. dir='neutral' no se loguea
+// (nada que medir). ts anclado a la hora → 1 obs/sym/hora (dedup por upsert, mismo patrón que la ballena).
+function logStickerObs(sym, crit, px){
+  try{
+    if(!crit || !sym || !isFinite(px)) return;
+    const _dir = crit.dir === 'call' ? 'up' : crit.dir === 'put' ? 'down' : 'neutral';
+    if(_dir === 'neutral') return;
+    const _str = parseFloat(crit.conviction);
+    const _hourTs = Math.floor(Date.now()/3600000)*3600000;
+    fetch(OBSLOG_URL,{method:'POST',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ kind:'sticker', sym, dir:_dir, ts:_hourTs, px, tf:OBS_ST_TF, horizonBars:OBS_ST_HORIZON, strength: isFinite(_str)?_str:null })
+    }).catch(()=>{});
+  }catch(_){}
+}
 let DP_BANDS = null;   // { ok, def, bands:{ SYM:{y,g,source,n} | {degenerate} } } del server
 function refreshDpBands(){
   try{ fetch(DPBANDS_URL).then(r=>r.json()).then(j=>{ if(j&&j.ok) DP_BANDS=j; }).catch(()=>{}); }catch(_){}
@@ -3645,6 +3661,7 @@ async function scanNextStickers(){
         if(bars && bars.length>=30){
           const crit = computeStickerCriterion(bars, curTf);
           stickerV2[s] = { dir:crit.dir, conviction:crit.conviction, cls:crit.cls, tf:curTf, ts:Date.now() };
+          if(crit && (crit.dir==='call' || crit.dir==='put')) logStickerObs(s, crit, bars[bars.length-1].c);   // LEDGER INTELIGENTE: 3ra fuente
           try{ const whx = detectWhale(bars, WHALE_TG_MIN); if(whx){ whaleV2[s]={dir:whx.dir,ratio:whx.ratio,ts:Date.now()}; logWhaleObs(s, whx, bars[bars.length-1].c); sendWhaleTelegram(whx, bars[bars.length-1].c, s, bars[bars.length-1].t); } }catch(e){}
         }
       }catch(e){}
