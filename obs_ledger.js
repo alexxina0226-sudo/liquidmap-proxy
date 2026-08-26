@@ -17,7 +17,9 @@
 
 const DEFAULTS = {
   defHorizonBars: 8,        // cuántas barras forward medir el desenlace (tunable por kind al cablear)
-  neutralBandPct: 0.20      // 'neutral' acierta si el precio se movió < 0.2% (se quedó quieto)
+  neutralBandPct: 0.20,     // 'neutral' acierta si el precio se movió < 0.2% (se quedó quieto)
+  pxSanityMaxDiv: 0.25,     // GUARD bad-print: si el px capturado diverge >25% del precio real de la 1ra barra forward → mismapping símbolo→precio → sanar base con el precio real
+  saneRetCapPct: 25         // red de seguridad en el agregado: |signedRetPct| > 25% = bad-print residual (ej. ya sellado) → se excluye del corte
 };
 function _opts(o){ return Object.assign({}, DEFAULTS, o || {}); }
 function _round(x, d){ const p = Math.pow(10, d||2); return x == null ? null : Math.round(x*p)/p; }
@@ -69,8 +71,16 @@ function resolveObservation(rec, forwardBars, opts){
   const full = bars.length >= H;
   if(!full && !o.force) return rec;                      // horizonte no cumplido → espera
 
-  const base = (rec.px && rec.px > 0) ? rec.px : bars[0].o;
+  // Precio REAL justo después del evento (barras por símbolo de Alpaca = fuente independiente del scan).
+  const refPx = (_num(bars[0].o) && bars[0].o > 0) ? bars[0].o : null;
+  let base = (rec.px && rec.px > 0) ? rec.px : refPx;
   if(!_num(base) || base <= 0) return rec;               // sin base sana → no puede medir
+  // GUARD bad-print: px capturado diverge absurdo del precio real → mismapping símbolo→precio.
+  // Sano la base con el precio real (el registro se salva medido bien, no envenenado).
+  let pxHealed = false, pxRaw = null;
+  if(refPx && rec.px && rec.px > 0 && Math.abs(rec.px / refPx - 1) > o.pxSanityMaxDiv){
+    pxRaw = rec.px; base = refPx; pxHealed = true;
+  }
   const endIdx = Math.min(H, bars.length) - 1;
   const endClose = bars[endIdx].c;
   const fwdRet = (endClose - base) / base;               // fracción
@@ -100,7 +110,9 @@ function resolveObservation(rec, forwardBars, opts){
     mfePct: _round(mfe * 100, 3),
     barsForward: endIdx + 1,
     full,
-    resolvedTs: bars[endIdx].t
+    resolvedTs: bars[endIdx].t,
+    pxHealed: pxHealed,          // true = la base capturada era un bad-print y se sanó con el precio real
+    pxRaw: pxRaw                 // el px mentiroso original (null si no hubo que sanar)
   });
 }
 
@@ -109,11 +121,17 @@ function resolveObservation(rec, forwardBars, opts){
  *  Solo cuenta RESUELTOS. keyFn default = por kind. hitRate y avgSignedRetPct son
  *  las dos palancas: ¿acierta seguido? ¿y cuánto rinde en su dirección?
  */
-function aggregateObs(list, keyFn){
-  const key = keyFn || (o => o.kind);
+function aggregateObs(list, keyFn, opts){
+  const o = _opts(opts);
+  const key = keyFn || (r => r.kind);
   const acc = {};
   for(const r of (list || [])){
     if(!r || r.status !== 'resolved') continue;
+    // Red de seguridad: un retorno absurdo = bad-print residual (ej. sellado antes del guard) → excluir.
+    if(_num(r.signedRetPct) && Math.abs(r.signedRetPct) > o.saneRetCapPct){
+      if(typeof o.onDrop === 'function') o.onDrop(r);
+      continue;
+    }
     const k = key(r);
     const a = acc[k] || (acc[k] = { n:0, hits:0, _sr:0, _mfe:0 });
     a.n++;
