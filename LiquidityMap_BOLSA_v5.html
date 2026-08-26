@@ -2244,6 +2244,8 @@ function _mtfAlign(m){
   const norm=x=>x==='call'?'up':x==='put'?'down':x==='neutral'?'neutral':null;
   const g=l=>norm(m[l]&&m[l].dir);
   const h4=g('4H'),h1=g('1H'),m15=g('15m'),m5=g('5m');
+  const present=[h4,h1,m15,m5].filter(x=>x!=null);
+  if(present.length<2) return 'unknown';   // multi-TF sin datos (fetch falló/stale) → NO es 'mixed', es DESCONOCIDO; el corte futuro conflict-vs-aligned lo excluye
   const dirs=[h4,h1,m15,m5].filter(x=>x&&x!=='neutral');
   if(dirs.length>=3 && dirs.every(x=>x==='up'))   return 'aligned_up';
   if(dirs.length>=3 && dirs.every(x=>x==='down')) return 'aligned_down';
