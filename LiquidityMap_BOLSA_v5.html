@@ -2264,14 +2264,37 @@ async function _refreshMultiTFCache(){
 try{ setInterval(_refreshMultiTFCache, 90000); }catch(_){}
 // LEDGER INTELIGENTE · fuente BALLENA: la ballena YA es direccional (BUY→up / SELL→down),
 // no necesita el CVD. strength = ratio ×N (magnitud). ts anclado a la hora (1 obs/sym/hora).
-function logWhaleObs(sym, wh, px){
+// ── INSTRUMENTACIÓN (27/08): dirección por AGRESOR real junto al color de vela ──
+// La ballena decide su dir por COLOR DE VELA (wh.dir = last.c>=last.o). Al dispararse, pedimos
+// el CVD por agresor (Lee-Ready, order-flow REAL) de ESE símbolo y lo logueamos AL LADO en
+// ctx.whAgg — SIN cambiar lo que la ballena reporta. Meta: acumular muestra color-vs-agresor
+// scan-wide (hoy el agresor solo existía para el ticker activo) para medir la discrepancia con
+// número antes de decidir el flip. Fail-open total: sin flujo real o error → no hay whAgg y la
+// ballena se comporta EXACTAMENTE igual que hoy. Evento raro (×4+ RVOL) → costo API acotado.
+function _aggDirFrom(cvd){ return cvd>0 ? 'buy' : cvd<0 ? 'sell' : 'flat'; }
+async function fetchWhaleAggressor(sym){
+  try{
+    if(!sym) return null;
+    const now = Date.now();
+    const startISO = new Date(now - CVD_AGG_WINDOW_MIN*60000).toISOString();
+    const endISO   = new Date(now).toISOString();
+    const r = await fetch(`${CVD_URL}?sym=${encodeURIComponent(sym)}&start=${encodeURIComponent(startISO)}&end=${encodeURIComponent(endISO)}`);
+    const j = await r.json();
+    if(!j || j.status!=='OK' || j.cvdReal!==true || (j.nTrades||0)===0) return null;   // sin flujo real → fail-open
+    const tot = (j.buyV||0)+(j.sellV||0);
+    return { dir:_aggDirFrom(j.cvd||0), pctBuy: tot>0 ? Math.round((j.buyV||0)/tot*100) : null, cvdReal:true, nTrades:j.nTrades||0 };
+  }catch(_){ return null; }
+}
+async function logWhaleObs(sym, wh, px){
   try{
     if(!wh || !sym || !isFinite(px)) return;
     const _dir = wh.dir === 'BUY' ? 'up' : wh.dir === 'SELL' ? 'down' : 'neutral';
     const _str = parseFloat(wh.ratio);
     const _hourTs = Math.floor(Date.now()/3600000)*3600000;
+    const _ctx = obsCtx(sym);
+    try{ const agg = await fetchWhaleAggressor(sym); if(agg) _ctx.whAgg = agg; }catch(_){}   // agresor real al lado (instrumentación, no cambia _dir)
     fetch(OBSLOG_URL,{method:'POST',headers:{'Content-Type':'application/json'},
-      body:JSON.stringify({ kind:'ballena', sym, dir:_dir, ts:_hourTs, px, tf:OBS_WH_TF, horizonBars:OBS_WH_HORIZON, strength: isFinite(_str)?_str:null, ctx: obsCtx(sym) })
+      body:JSON.stringify({ kind:'ballena', sym, dir:_dir, ts:_hourTs, px, tf:OBS_WH_TF, horizonBars:OBS_WH_HORIZON, strength: isFinite(_str)?_str:null, ctx:_ctx })
     }).catch(()=>{});
   }catch(_){}
 }
