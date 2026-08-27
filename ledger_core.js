@@ -90,11 +90,50 @@ function resolveOutcome(rec, bars, opts){
 
 // Agrega un conjunto de registros RESUELTOS en estadísticas por grupo.
 // keyFn: rec => clave de grupo (default 'ALL'). Solo cuenta status != ACTIVA.
+// ── IDEMPOTENCIA (patrón Idempotent Writer/Reader, Kafka/Confluent) ──────────
+// La CLAVE de una señal son los atributos que DEFINEN la oportunidad de trade
+// (sym·tf·dirección·setup·entry·SL), NO la hora de emisión wall-clock. Así una
+// misma señal PARADA re-emitida en velas sucesivas colapsa a una, mientras que un
+// setup nuevo (otro nivel/stop) queda distinto. Esto arregla los duplicados que
+// inflaban el ledger y el resumen semanal (misma señal contada 5-8×).
+function _rk(x){ return (typeof x==='number' && isFinite(x)) ? x.toFixed(2) : '·'; }
+function signalKey(rec){
+  if(!rec) return null;
+  const entry = rec.entry, sl = rec.sl;
+  if(entry == null || sl == null) return null;             // sin nivel medible → sin clave (cae al id)
+  const dir = rec.type || rec.direction || '·';
+  return [rec.sym||'·', rec.tf||'·', dir, rec.setup||'·', _rk(entry), _rk(sl)].join('|');
+}
+// Idempotent Reader: colapsa re-emisiones del mismo setup a UN registro representativo.
+// Preferencia: RESUELTO sobre ACTIVA (queremos el desenlace); entre iguales, ts más chico
+// (la emisión original). Registros sin signalKey (sin entry/SL) pasan tal cual.
+function _resolvedRank(r){ return (r && r.status && r.status !== 'ACTIVA') ? 1 : 0; }
+function _preferRep(a, b){
+  const ra = _resolvedRank(a), rb = _resolvedRank(b);
+  if(ra !== rb) return ra > rb ? a : b;
+  const ta = (a && a.ts != null) ? a.ts : Infinity, tb = (b && b.ts != null) ? b.ts : Infinity;
+  return ta <= tb ? a : b;
+}
+function dedupeSignals(records){
+  const seen = new Map();          // signalKey → representante
+  const passthrough = [];          // sin clave → intactos
+  for(const r of (records || [])){
+    if(!r) continue;
+    const k = signalKey(r);
+    if(k == null){ passthrough.push(r); continue; }
+    const cur = seen.get(k);
+    seen.set(k, cur ? _preferRep(cur, r) : r);
+  }
+  return passthrough.concat(Array.from(seen.values()));
+}
+
 // Devuelve { [clave]: {n, wins, losses, invalid, expired, ambiguo, hitRate, avgR, expectancyR, byTP} }.
+// DEDUPEA por señal antes de contar (Idempotent Reader): una señal parada re-emitida
+// N veces cuenta UNA, no N — si no, el hit-rate y la expectativa quedan sesgados.
 function aggregate(records, keyFn){
   keyFn = keyFn || (() => 'ALL');
   const out = {};
-  for(const r of (records || [])){
+  for(const r of dedupeSignals(records || [])){
     if(!r || r.status === 'ACTIVA') continue;
     const k = keyFn(r);
     const g = out[k] || (out[k] = { n:0, wins:0, losses:0, invalid:0, expired:0, ambiguo:0,
@@ -118,4 +157,4 @@ function aggregate(records, keyFn){
   return out;
 }
 
-module.exports = { makeRecord, resolveOutcome, aggregate };
+module.exports = { makeRecord, resolveOutcome, aggregate, signalKey, dedupeSignals };
