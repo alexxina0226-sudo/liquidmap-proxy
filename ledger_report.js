@@ -4,7 +4,7 @@
 // expectativa en R, cortes por setup / semáforo / horizonte) + un texto compacto
 // estilo Telegram. Es el "resumen semanal de las señales" que pidió Gonzalo.
 'use strict';
-const { aggregate } = require('./ledger_core.js');
+const { aggregate, dedupeSignals } = require('./ledger_core.js');
 // Juez por clase: require FAIL-OPEN. Si el módulo falta, el resumen sale sin la
 // línea por clase (comportamiento previo) — jamás rompe el /resumen que está vivo.
 let aggregateByClass = null;
@@ -21,8 +21,13 @@ function weekKeyUTC(ms){
 // weeklySummary(records) → { [wk]: { week, overall, byGrade, bySetup, byHorizon } }
 // Solo cuenta registros RESUELTOS (status != ACTIVA) y con ts.
 function weeklySummary(records){
+  // DEDUP del set completo ANTES de agrupar por semana (Idempotent Reader): una señal
+  // parada re-emitida N veces —incluso cruzando el borde de semana— cuenta UNA, con su
+  // representante (resuelto, emisión original). Sin esto el resumen se ve idéntico semana
+  // tras semana porque las mismas paradas se re-loguean. Cubre MFE/MAE y byClass también.
+  const deduped = dedupeSignals(records || []);
   const byWeek = {};
-  for(const r of (records || [])){
+  for(const r of deduped){
     if(!r || r.status === 'ACTIVA' || r.ts == null) continue;
     const wk = weekKeyUTC(r.ts);
     (byWeek[wk] = byWeek[wk] || []).push(r);
