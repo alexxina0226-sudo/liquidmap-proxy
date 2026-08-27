@@ -8,6 +8,7 @@
 //
 // Contrato de DRIVER (síncrono): { append(obj), loadAll()->[], replaceAll(arr) }
 'use strict';
+const { signalKey } = require('./ledger_core.js');   // clave idempotente estable (identidad del setup)
 
 // ── Driver en MEMORIA (tests / fallback efímero) ──────────────────────────
 function memoryDriver(initial){
@@ -74,13 +75,23 @@ function createLedgerStore(driver){
       if(hit) driver.replaceAll(next);
       return hit;
     },
-    // upsert(rec): si el id existe lo reemplaza, si no lo agrega. IDEMPOTENTE por id
-    // → re-ejecutar la captura de una misma señal no la duplica.
+    // upsert(rec): IDEMPOTENTE por CLAVE DE SEÑAL estable (sym·tf·dir·setup·entry·SL),
+    // no por id wall-clock (patrón Idempotent Writer). Una señal PARADA re-emitida en
+    // velas sucesivas NO se duplica: si ya hay una instancia ACTIVA del mismo setup, se
+    // conserva la original (mismos niveles) y se devuelve sin agregar. Un setup idéntico
+    // que reaparece DESPUÉS de resolverse SÍ puede registrarse como instancia nueva
+    // (máquina de estados: una sola instancia viva por identidad). Sin entry/SL (sin
+    // clave) cae al dedup EXACTO por id — comportamiento previo, backward-compatible.
     upsert(rec){
       const all = driver.loadAll();
-      const idx = all.findIndex(r => r && r.id === rec.id);
-      if(idx < 0){ driver.append(rec); return rec; }
-      all[idx] = rec; driver.replaceAll(all); return rec;
+      const k = signalKey(rec);
+      if(k != null){
+        const activeIdx = all.findIndex(r => r && r.status === 'ACTIVA' && signalKey(r) === k);
+        if(activeIdx >= 0) return all[activeIdx];         // ya hay instancia viva → idempotente, no duplica
+      }
+      const idIdx = all.findIndex(r => r && r.id === rec.id);
+      if(idIdx < 0){ driver.append(rec); return rec; }    // setup nuevo (o post-resolución) → se agrega
+      all[idIdx] = rec; driver.replaceAll(all); return rec; // mismo id exacto → reemplaza (viejo)
     },
     count(){ return driver.loadAll().length; }
   };
