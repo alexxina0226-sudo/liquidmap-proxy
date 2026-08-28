@@ -9,6 +9,8 @@
 //   • El primer break desde estado neutro ESTABLECE la tendencia (BOS init), no es CHoCH.
 //   • CHoCH+ (soportado) = CHoCH precedido de una señal temprana de giro
 //     (lower-high en tendencia alcista / higher-low en bajista).
+//     [FIX 27/08] El '+' se evalúa PUNTO-EN-EL-TIEMPO en el CHoCH con los 2 últimos
+//     swings, NO con un flag latcheado: un higher-high (o lower-low) posterior lo NIEGA.
 //   • Confirmación = 1 cierre de cuerpo más allá del swing (canónico; opcional 2+).
 //
 // swingLen es el largo del pivote: se calibra en producción (canónico swing ~50).
@@ -39,7 +41,6 @@ function detectStructure_v2(bars, opts){
   let trend = 0;                    // +1 alcista, -1 bajista, 0 neutro
   let lastSH = null, prevSH = null; // últimos dos swing highs (precio)
   let lastSL = null, prevSL = null; // últimos dos swing lows (precio)
-  let failedCont = false;           // señal temprana de giro presente (para CHoCH+)
   let brokenSH = false, brokenSL = false;
   let choch = null, bos = null;
   let confUp = 0, confDn = 0;
@@ -51,12 +52,8 @@ function detectStructure_v2(bars, opts){
       const p = pivots[pIdx++];
       if(p.t === 'H'){
         prevSH = lastSH; lastSH = p.price; brokenSH = false;
-        // en tendencia alcista, un lower-high (SH nuevo < SH previo) = señal temprana de giro
-        if(trend > 0 && prevSH !== null && lastSH < prevSH) failedCont = true;
       } else {
         prevSL = lastSL; lastSL = p.price; brokenSL = false;
-        // en tendencia bajista, un higher-low (SL nuevo > SL previo) = señal temprana de giro
-        if(trend < 0 && prevSL !== null && lastSL > prevSL) failedCont = true;
       }
     }
     const c = bars[b].c;
@@ -66,28 +63,32 @@ function detectStructure_v2(bars, opts){
     // ── ruptura ALCISTA del último swing high ──
     if(lastSH !== null && !brokenSH && confUp >= NC){
       if(trend < 0){                                   // contra tendencia = CHoCH
-        const plus = failedCont;
+        // MSS punto-en-el-tiempo: higher-low previo (lastSL>prevSL) = señal temprana de
+        // giro alcista. Un lower-low posterior lo NIEGA (se evalúa acá, no con flag latcheado).
+        const plus = (prevSL !== null && lastSL !== null && lastSL > prevSL);
         choch = { dir:'BULL', price:lastSH, plus, label:(plus?'CHoCH+ ':'CHoCH ')+'\u25B2 ALCISTA' };
         out.events.push({ b, type:'CHoCH', dir:'BULL', plus });
-        trend = 1; failedCont = false;
+        trend = 1;
       } else {                                          // a favor / init = BOS
         bos = { dir:'BULL', price:lastSH, label:'BOS \u25B2 ALCISTA' };
         out.events.push({ b, type:(trend===0?'BOS_init':'BOS'), dir:'BULL' });
-        trend = 1; failedCont = false;                  // continuación invalida señal temprana
+        trend = 1;
       }
       brokenSH = true;
     }
     // ── ruptura BAJISTA del último swing low ──
     if(lastSL !== null && !brokenSL && confDn >= NC){
       if(trend > 0){                                   // contra tendencia = CHoCH
-        const plus = failedCont;
+        // MSS punto-en-el-tiempo: lower-high previo (lastSH<prevSH) = señal temprana de
+        // giro bajista. Un higher-high posterior lo NIEGA (se evalúa acá, no con flag latcheado).
+        const plus = (prevSH !== null && lastSH !== null && lastSH < prevSH);
         choch = { dir:'BEAR', price:lastSL, plus, label:(plus?'CHoCH+ ':'CHoCH ')+'\u25BC BAJISTA' };
         out.events.push({ b, type:'CHoCH', dir:'BEAR', plus });
-        trend = -1; failedCont = false;
+        trend = -1;
       } else {
         bos = { dir:'BEAR', price:lastSL, label:'BOS \u25BC BAJISTA' };
         out.events.push({ b, type:(trend===0?'BOS_init':'BOS'), dir:'BEAR' });
-        trend = -1; failedCont = false;
+        trend = -1;
       }
       brokenSL = true;
     }
