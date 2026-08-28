@@ -31,22 +31,52 @@ function toISO(ms){ return new Date(ms).toISOString(); }
 // mfeR ≥ 0 (lo más lejos que fue a favor), maeR ≤ 0 (lo más lejos en contra). Ambos clampeados.
 // Mide "cuánto se movió a favor ANTES de resolverse" — clave para juzgar opciones/scalp, no solo TP/SL binario.
 // null si falta entry/sl, R=0, o no hay barras. Nunca tira (fail-open).
+// mediana robusta (para el guard bad-tick de abajo)
+function _median(arr){
+  const s = arr.filter(v => isFinite(v)).sort((a,b)=> a-b);
+  const n = s.length; if(!n) return NaN;
+  return n % 2 ? s[(n-1)/2] : (s[n/2-1] + s[n/2]) / 2;
+}
+
 function computeExcursion(rec, bars){
   if(!rec || rec.entry == null || rec.sl == null) return { mfeR: null, maeR: null };
   const R = Math.abs(rec.entry - rec.sl);
   if(!(R > 0) || !Array.isArray(bars) || !bars.length) return { mfeR: null, maeR: null };
   const isBuy = /BUY|LONG|COMPRA/i.test(String(rec.type || 'BUY'));
-  let mfe = 0, mae = 0;
+
+  // ── GUARD BAD-TICK (MAD robusto) ────────────────────────────────────────────
+  // Un wick espurio (bad print/split sin corregir, ej. WMT maeR −11.7) inflaba la
+  // excursión al tomar high/low CRUDOS. Blindaje (método pro, Olsen/Tick Data): banda
+  // robusta sobre los CLOSES = mediana ± K·MAD (σ robusto = 1.4826·MAD), con PISO R para
+  // no sobre-limpiar moves chicos. High/low fuera de banda se clampan al borde. Los closes
+  // son INMUNES al wick → un move REAL (los closes acompañan) ensancha la banda y NO se
+  // clampa. K=6 generoso (solo caza outliers groseros). Cuenta badTickClipped para trazar.
+  const closes = bars.map(b => b && Number(b.c)).filter(v => isFinite(v));
+  const K_MAD = (rec.badTickK != null ? rec.badTickK : 6);
+  let loB = -Infinity, hiB = Infinity;
+  if(closes.length >= 3){
+    const med   = _median(closes);
+    const mad   = _median(closes.map(c => Math.abs(c - med)));   // Median Absolute Deviation
+    const sigma = 1.4826 * mad;                                  // MAD → σ robusto (consistente normal)
+    const halfW = Math.max(K_MAD * sigma, R);                    // piso R: nunca más angosto que el riesgo
+    loB = med - halfW; hiB = med + halfW;
+  }
+
+  let mfe = 0, mae = 0, clipped = 0;
   for(const b of bars){
     if(!b) continue;
-    const hi = Number(b.h), lo = Number(b.l);
+    let hi = Number(b.h), lo = Number(b.l);
     if(!isFinite(hi) || !isFinite(lo)) continue;
+    if(hi > hiB){ hi = hiB; clipped++; }   // clamp del wick espurio a la banda robusta
+    if(lo < loB){ lo = loB; clipped++; }
     const fav = isBuy ? (hi - rec.entry) : (rec.entry - lo);   // mejor a favor
     const adv = isBuy ? (lo - rec.entry) : (rec.entry - hi);   // peor en contra (≤0)
     if(fav > mfe) mfe = fav;
     if(adv < mae) mae = adv;
   }
-  return { mfeR: +(mfe / R).toFixed(3), maeR: +(mae / R).toFixed(3) };
+  const res = { mfeR: +(mfe / R).toFixed(3), maeR: +(mae / R).toFixed(3) };
+  if(clipped > 0) res.badTickClipped = clipped;
+  return res;
 }
 
 // resolvePending(store, fetchBars, opts)
