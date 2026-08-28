@@ -56,7 +56,7 @@ function characterizeFinalist(input){
       else if(isFinite(gex.gammaFlip) && price < gex.gammaFlip){ gexAdj += 10; gexTag = 'bajo gamma flip (gamma negativo amplifica)'; }
     } else if(direction === 'down'){
       if(near(gex.putWall) && gex.putWall <= price){ gexAdj -= 15; gexTag = 'put wall cerca abajo (soporte)'; }
-      else if(isFinite(gex.gammaFlip) && price > gex.gammaFlip){ gexAdj += 10; gexTag = 'sobre gamma flip'; }
+      else if(isFinite(gex.gammaFlip) && price < gex.gammaFlip){ gexAdj += 10; gexTag = 'bajo gamma flip (gamma negativo amplifica)'; }
     }
   }
 
