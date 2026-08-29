@@ -840,6 +840,36 @@ app.post('/obs-log', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// TELEGRAM PROXY · /tg/notify — el mapa (cliente) manda alertas SIN ver el token.
+// El token del bot @liquidmapbolsa_bot vive SOLO acá (env TELEGRAM_TOKEN_BOLSA),
+// nunca baja al navegador (antes estaba hardcodeado en el HTML = filtrado). El mapa
+// postea { text } y el server hace el fan-out a los chat ids. Autenticado (requireApi):
+// solo una sesión válida del mapa puede postear. FAIL-OPEN: sin token → ok:false HTTP 200.
+//   ENV: TELEGRAM_TOKEN_BOLSA (obligatoria para enviar)
+//        TG_CHAT_IDS (opcional, coma-separado; default = ids actuales)
+// ══════════════════════════════════════════════════════════════════════════
+const TG_TOKEN_BOLSA = process.env.TELEGRAM_TOKEN_BOLSA || '';
+const TG_CHAT_IDS = (process.env.TG_CHAT_IDS || '1218461753,1373309702')
+  .split(',').map(s => s.trim()).filter(Boolean);
+if (!TG_TOKEN_BOLSA) console.warn('[tg-proxy] ⚠ TELEGRAM_TOKEN_BOLSA ausente → /tg/notify fail-open (no envía) hasta setearlo en Render');
+
+app.post('/tg/notify', requireApi, async (req, res) => {
+  try {
+    const text = (req.body && typeof req.body.text === 'string') ? req.body.text : '';
+    if (!text.trim()) return res.json({ ok:false, reason:'sin texto' });
+    if (!TG_TOKEN_BOLSA) return res.json({ ok:false, off:true });   // sin token → no-op
+    await Promise.all(TG_CHAT_IDS.map(id =>
+      fetch(`https://api.telegram.org/bot${TG_TOKEN_BOLSA}/sendMessage`, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify({ chat_id: id, text, parse_mode: 'HTML', disable_web_page_preview: true })
+      })
+    ));
+    return res.json({ ok:true });
+  } catch (e) { return res.json({ ok:false, error: e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // ASISTENTE-JUEZ · /asistente — Claude viviendo en el mapa (JUEZ/INTÉRPRETE)
 // Recibe el ESTADO del mapa (lo arma el cliente), inyecta la CONSTITUCIÓN v0.3
 // + la ANTHROPIC_API_KEY (env, nunca al cliente, nunca logueada), llama a la
