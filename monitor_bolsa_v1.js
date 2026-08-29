@@ -287,7 +287,10 @@ function passesQualityFilter(result) {
 }
 
 // ── CONFIG ──────────────────────────────────────────────────
-const TELEGRAM_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
+// Token del bot @liquidmapbolsa_bot desde ENV (nunca hardcodeado en el repo público).
+// Setear TELEGRAM_TOKEN_BOLSA en Render. Si falta → sendTelegram no envía (fail-open).
+const TELEGRAM_TOKEN_BOLSA = process.env.TELEGRAM_TOKEN_BOLSA || '';
+if (!TELEGRAM_TOKEN_BOLSA) console.warn('[bolsa] ⚠ TELEGRAM_TOKEN_BOLSA ausente en env → señales a Telegram DESACTIVADAS hasta setearlo en Render');
 const CHAT_IDS             = ['1218461753', '1373309702'];
 
 // ── ALPACA SIP (reemplaza Polygon/Massive — real-time, sin delay 15min) ───────
@@ -1411,6 +1414,7 @@ ${tpBlock}
 
 // ── ENVIAR TELEGRAM ──────────────────────────────────────────
 async function sendTelegram(text) {
+  if (!TELEGRAM_TOKEN_BOLSA) return;   // sin token → no-op (fail-open; ya se avisó al bootear)
   try {
     await Promise.all(CHAT_IDS.map(id =>
       fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN_BOLSA}/sendMessage`, {
