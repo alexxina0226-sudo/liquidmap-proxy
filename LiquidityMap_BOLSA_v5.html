@@ -656,10 +656,10 @@ function getATR(ticker, price, currentTF){
   return parseFloat(price) * pct * factor;
 }
 
-// ── TELEGRAM DIRECTO — LiquidMap BOLSA ────────────────────────
-// Bot: @liquidmapbolsa_bot — envío directo, sin webhook intermediario
-const TG_TOKEN_BOLSA = '8278713898:AAGGaBAhmUTDnqjBxyv3YVZAtYiwlsEA0J4';
-const TG_CHAT_IDS    = ['1218461753', '1373309702'];
+// ── TELEGRAM vía PROXY del server — LiquidMap BOLSA ───────────
+// Bot: @liquidmapbolsa_bot. El token YA NO vive acá (antes hardcodeado = filtrado al
+// navegador). Ahora el mapa postea { text } a /tg/notify y el SERVER (que tiene el token
+// en env TELEGRAM_TOKEN_BOLSA) hace el envío. La sesión del mapa (cookie) autentica la ruta.
 const COOLDOWN_MS    = 300000;
 if(!window._tgCool) window._tgCool = {};
 
@@ -715,13 +715,11 @@ ${arrow}
 ⚡ LiquidMap PRO · Bolsa v7`;
 
   try{
-    await Promise.all(TG_CHAT_IDS.map(id =>
-      fetch(`https://api.telegram.org/bot${TG_TOKEN_BOLSA}/sendMessage`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ chat_id: id, text, parse_mode: 'HTML', disable_web_page_preview: true })
-      })
-    ));
+    await fetch('/tg/notify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
   } catch(e){}
 }
 
@@ -2651,12 +2649,10 @@ async function sendWhaleTelegram(wh, priceVal, symX, candleTs){
     const dir = wh.dir==='BUY' ? '🟢 COMPRADORA (posible acumulación)' : '🔴 VENDEDORA (posible distribución)';
     const fmtP = v => v>=100 ? '$'+v.toFixed(2) : v>=1 ? '$'+v.toFixed(3) : '$'+v.toFixed(5);
     const text = `🐋🔴 <b>ALERTA BALLENA — LIQUIDMAP</b>\n\n🎯 <b>${t}</b> · ${tfLabel}\n${dir}\n📊 Volumen: <b>×${wh.ratio}</b> el promedio (20 velas)\n💰 Precio: <b>${fmtP(p)}</b>\n\n⚠️ Volumen institucional real detectado.\n⚡ LiquidMap PRO · Bolsa v7`;
-    await Promise.all(TG_CHAT_IDS.map(id =>
-      fetch(`https://api.telegram.org/bot${TG_TOKEN_BOLSA}/sendMessage`, {
-        method:'POST', headers:{'Content-Type':'application/json'},
-        body: JSON.stringify({ chat_id:id, text, parse_mode:'HTML', disable_web_page_preview:true })
-      })
-    ));
+    await fetch('/tg/notify', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ text })
+    });
   }catch(e){}
 }
 function toggleAlertModal(){ const m=document.getElementById('alert-modal'); m.classList.toggle('show'); if(m.classList.contains('show')) initAudio(); }
