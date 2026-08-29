@@ -26,7 +26,10 @@ try { const hs = require('./health_state.js'); hbBeat = hs.beat; hbSignal = hs.s
 catch (e) { console.warn('⚠️  health_state no disponible (latido off):', e.message); }
 
 // ── CONFIG ─────────────────────────────────────────────────
-const TELEGRAM_TOKEN = '8676337394:AAEVIwDY2xGwAmE7hMWcjjAMedjws_vjzSU';
+// Token del bot cripto desde ENV (nunca hardcodeado en el repo público).
+// Setear TELEGRAM_TOKEN en Render. Si falta → no se envía (fail-open).
+const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN || '';
+if (!TELEGRAM_TOKEN) console.warn('[cripto] ⚠ TELEGRAM_TOKEN ausente en env → alertas a Telegram DESACTIVADAS hasta setearlo en Render');
 const CHAT_IDS       = ['1218461753', '1373309702'];
 // PROXY: por defecto LOOPBACK local. El bot corre DENTRO de server.js (mismo proceso),
 // así que pegarle al /proxy por la URL PÚBLICA de Render salía a internet y volvía a entrar a
@@ -820,6 +823,7 @@ ${confList}${structL}${shLine}${whaleL}
 
 // ── ENVIAR TELEGRAM ──────────────────────────────────────────
 async function sendTelegram(text) {
+  if (!TELEGRAM_TOKEN) return;   // sin token → no-op (fail-open; ya se avisó al bootear)
   try {
     await Promise.all(CHAT_IDS.map(id =>
       fetch(`https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage`, {
