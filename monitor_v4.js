@@ -38,6 +38,15 @@ const CHAT_IDS       = ['1218461753', '1373309702'];
 // Override con PROXY_URL si alguna vez se corre el bot por separado (fuera de server.js).
 const PORT           = process.env.PORT || 3000;
 const PROXY          = process.env.PROXY_URL || `http://127.0.0.1:${PORT}/proxy`;
+// El /proxy del server exige sesión (guard de seguridad s78). Este monitor corre en el
+// MISMO proceso que server.js, así que se autentica con la MISMA cookie que un navegador
+// logueado: deriva el token de sesión de LM_PASSWORD (idéntico a como lo hace server.js).
+// Sin esto, los fetch al proxy volvían 401 → el monitor cripto se quedaba sin data.
+let PROXY_HEADERS = {};
+try {
+  const _AUTH = require('./auth');
+  PROXY_HEADERS = { Cookie: 'lm_sess=' + _AUTH.makeToken(process.env.LM_PASSWORD || 'trader2026') };
+} catch(_) { /* sin auth.js: los fetch van sin cookie (comportamiento previo) */ }
 
 // Tickers activos — agregar aquí cuando se quiera activar uno nuevo
 const CRYPTO_TICKERS = [
@@ -209,7 +218,7 @@ async function fetchCandles(symbol, interval, limit = 100) {
   // el ticker como antes) — no inventa data parcial.
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
-      const r   = await fetch(url, { timeout: 10000 });
+      const r   = await fetch(url, { headers: PROXY_HEADERS, timeout: 10000 });
       const raw = await r.json();
       if (!Array.isArray(raw)) return [];
       return raw.map(k => ({
@@ -232,7 +241,7 @@ async function fetchCandles(symbol, interval, limit = 100) {
 async function fetchFundingRate(symbol) {
   try {
     const url = `${PROXY}?path=/fapi/v1/fundingRate&symbol=${symbol}&limit=3`;
-    const r   = await fetch(url, { timeout: 6000 });
+    const r   = await fetch(url, { headers: PROXY_HEADERS, timeout: 6000 });
     const d   = await r.json();
     if (!Array.isArray(d) || !d.length) return { current: 0, trend: 'neutral' };
     const rates = d.map(x => parseFloat(x.fundingRate) * 100);
@@ -248,7 +257,7 @@ async function fetchFundingRate(symbol) {
 async function fetchOpenInterest(symbol) {
   try {
     const url = `${PROXY}?path=/fapi/v1/openInterest&symbol=${symbol}&futures=1`;
-    const r   = await fetch(url, { timeout: 6000 });
+    const r   = await fetch(url, { headers: PROXY_HEADERS, timeout: 6000 });
     const d   = await r.json();
     return d.openInterest ? parseFloat(d.openInterest) : 0;
   } catch { return 0; }
@@ -258,7 +267,7 @@ async function fetchOpenInterest(symbol) {
 async function fetchOIHistory(symbol) {
   try {
     const url = `${PROXY}?path=/futures/data/openInterestHist&symbol=${symbol}&period=4h&limit=10`;
-    const r   = await fetch(url, { timeout: 6000 });
+    const r   = await fetch(url, { headers: PROXY_HEADERS, timeout: 6000 });
     const d   = await r.json();
     if (!Array.isArray(d) || d.length < 2) return { trend: 'neutral', change: 0 };
     const latest = parseFloat(d[d.length - 1].sumOpenInterest);
@@ -273,7 +282,7 @@ async function fetchOIHistory(symbol) {
 async function fetchLSRatio(symbol) {
   try {
     const url = `${PROXY}?path=/futures/data/globalLongShortAccountRatio&symbol=${symbol}&period=4h&limit=5`;
-    const r   = await fetch(url, { timeout: 6000 });
+    const r   = await fetch(url, { headers: PROXY_HEADERS, timeout: 6000 });
     const d   = await r.json();
     if (!Array.isArray(d) || !d.length) return { ratio: 1, longs: 50, shorts: 50 };
     const latest = d[d.length - 1];
