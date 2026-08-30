@@ -890,32 +890,30 @@ function detectStructure(bars, opts){
 
   // 2) máquina de estados: clasifica cada ruptura como BOS (a favor) o CHoCH/CHoCH+ (en contra)
   let trend = 0, lastSH = null, prevSH = null, lastSL = null, prevSL = null;
-  let failedCont = false, brokenSH = false, brokenSL = false;
+  let brokenSH = false, brokenSL = false;
   let confUp = 0, confDn = 0, pIdx = 0, last = null;
 
   for(let b = 0; b < bars.length; b++){
     while(pIdx < piv.length && piv[pIdx].confAt <= b){
       const p = piv[pIdx++];
-      if(p.t === 'H'){ prevSH = lastSH; lastSH = p.price; brokenSH = false;
-        if(trend > 0 && prevSH !== null && lastSH < prevSH) failedCont = true; }
-      else { prevSL = lastSL; lastSL = p.price; brokenSL = false;
-        if(trend < 0 && prevSL !== null && lastSL > prevSL) failedCont = true; }
+      if(p.t === 'H'){ prevSH = lastSH; lastSH = p.price; brokenSH = false; }
+      else { prevSL = lastSL; lastSL = p.price; brokenSL = false; }
     }
     const c = bars[b].c;
     confUp = (lastSH !== null && c > lastSH) ? confUp + 1 : 0;
     confDn = (lastSL !== null && c < lastSL) ? confDn + 1 : 0;
 
     if(lastSH !== null && !brokenSH && confUp >= NC){
-      if(trend < 0){ const plus = failedCont;
+      if(trend < 0){ const plus = (prevSL !== null && lastSL !== null && lastSL > prevSL);
         last = { kind:'CHoCH', dir:'BULL', price:lastSH, label:(plus?'CHoCH+ ':'CHoCH ')+'▲ ALCISTA', plus };
       } else { last = { kind:'BOS', dir:'BULL', price:lastSH, label:'BOS ▲ ALCISTA' }; }
-      trend = 1; failedCont = false; brokenSH = true;
+      trend = 1; brokenSH = true;
     }
     if(lastSL !== null && !brokenSL && confDn >= NC){
-      if(trend > 0){ const plus = failedCont;
+      if(trend > 0){ const plus = (prevSH !== null && lastSH !== null && lastSH < prevSH);
         last = { kind:'CHoCH', dir:'BEAR', price:lastSL, label:(plus?'CHoCH+ ':'CHoCH ')+'▼ BAJISTA', plus };
       } else { last = { kind:'BOS', dir:'BEAR', price:lastSL, label:'BOS ▼ BAJISTA' }; }
-      trend = -1; failedCont = false; brokenSL = true;
+      trend = -1; brokenSL = true;
     }
   }
 
