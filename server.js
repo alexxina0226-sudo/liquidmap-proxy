@@ -39,7 +39,12 @@ function requirePage(req, res, next) { if (AUTH.isAuthed(req.headers.cookie, AUT
 function requireApi(req, res, next)  { if (AUTH.isAuthed(req.headers.cookie, AUTH_TOKEN)) return next(); return res.status(401).json({ ok: false, error: 'sesión requerida' }); }
 
 // guard de las rutas de DATOS por prefijo (health/status/login/favicon quedan abiertas)
-const API_PROTECT = ['/proxy', '/alpaca', '/diag', '/liquidations', '/deribit'];
+// Se suman a la lista original: /asistente (gasta la API key de Anthropic = costo real, era
+// PÚBLICA), /darkpool-log (quema cuota Alpaca), /obs-log · /dp-sample · /dp-bands (escriben/
+// leen los gists del ledger). El mapa las llama mismo-origen con la cookie → sigue andando;
+// un extraño sin sesión ahora recibe 401.
+const API_PROTECT = ['/proxy', '/alpaca', '/diag', '/liquidations', '/deribit',
+                     '/asistente', '/darkpool-log', '/obs-log', '/dp-sample', '/dp-bands'];
 app.use((req, res, next) => {
   if (API_PROTECT.some(p => req.path === p || req.path.startsWith(p))) return requireApi(req, res, next);
   next();
