@@ -737,14 +737,24 @@ function playTone(freq, dur, type='sine', vol=0.3){
   } catch(e){}
 }
 
-// ── KILL ZONE ─────────────────────────────────────────────────
-function getKillZone(){
-  const now = new Date();
-  const utcMin = now.getUTCHours() * 60 + now.getUTCMinutes();
-  if(utcMin >= 480 && utcMin < 570)  return { active:true, name:'🇬🇧 LONDON OPEN', weight:1.3 };
-  if(utcMin >= 780 && utcMin < 870)  return { active:true, name:'🔄 NY-LON OVERLAP', weight:1.4 };
-  if(utcMin >= 870 && utcMin < 960)  return { active:true, name:'🇺🇸 NY OPEN', weight:1.5 };
-  if(utcMin >= 930 && utcMin < 960)  return { active:true, name:'⚡ POWER HOUR', weight:1.2 };
+// ── KILL ZONE · equities RTH, hora de Nueva York (DST-correcto vía Intl) ───────
+// Ventanas ICT adaptadas a BOLSA (no forex): apertura NY, Silver Bullet AM, NY PM y
+// el power hour REAL de equities (última hora), + un CASTIGO al lunch (zona muerta,
+// win-rate ~azar). Se resuelve en minutos ET con el MISMO formatter que filterRTH
+// (_rthFmt, 570=9:30 / 960=16:00) → verano/invierno se corrige solo (los horarios de
+// sesión NY son fijos en hora local). Contrato:
+//   weight>1 → ventana de OPORTUNIDAD (active:true → prende badge y amplifica score)
+//   weight<1 → CASTIGO (active:false, no es oportunidad, pero ENCOGE el score)
+//   weight=1 → neutral (no-op). El param `now` es solo para testeo (default = ahora).
+function getKillZone(now){
+  const p = _rthFmt.formatToParts(now || new Date());
+  let hh = parseInt(p.find(x=>x.type==='hour').value,10); if(hh===24) hh=0;
+  const m = hh*60 + parseInt(p.find(x=>x.type==='minute').value,10);   // minutos ET
+  if(m >= 570 && m < 600) return { active:true,  name:'⚡ APERTURA NY',       weight:1.5 };  // 9:30–10:00 ET
+  if(m >= 600 && m < 660) return { active:true,  name:'🎯 SILVER BULLET AM',  weight:1.4 };  // 10:00–11:00 ET
+  if(m >= 690 && m < 810) return { active:false, name:'😴 LUNCH (bajo flujo)', weight:0.85 }; // 11:30–13:30 ET
+  if(m >= 810 && m < 900) return { active:true,  name:'🔄 NY PM',             weight:1.2 };  // 13:30–15:00 ET
+  if(m >= 900 && m < 960) return { active:true,  name:'🏁 POWER HOUR',        weight:1.4 };  // 15:00–16:00 ET
   return { active:false, name:'—', weight:1.0 };
 }
 
@@ -1329,9 +1339,11 @@ function computeNeuralScore(p){
     else                { addL('Value Area', 0, 0); }  // dentro del VA = neutral, sin sesgo
   }
 
-  // Kill Zone bonus
+  // Kill Zone: amplifica en ventanas de oportunidad (weight>1) y CASTIGA en el lunch
+  // (weight<1). Gate por weight≠1 (no por active) → el castigo del lunch, que va
+  // active:false para no prender el badge, igual encoge el score. |score|>1 = solo si hay lean.
   const kz = getKillZone();
-  if(kz.active && Math.abs(score) > 1) { score *= kz.weight; conf.push('🕐 ' + kz.name + ' ×' + kz.weight); }
+  if(kz.weight !== 1.0 && Math.abs(score) > 1) { score *= kz.weight; conf.push('🕐 ' + kz.name + ' ×' + kz.weight); }
 
   // Normalize 0-10
   const normalized = Math.round(Math.max(0, Math.min(10, ((score + rawMax) / (rawMax * 2)) * 10)));
@@ -3948,10 +3960,12 @@ window.consultarJuez = consultarJuez;
         <div class="lm-item"><div class="lm-icon">🔴</div><div class="lm-text"><strong>Score 0–4 (Rojo)</strong><span>Sin confluencia suficiente. NO operar. Esperar alineación. La paciencia es la mayor ventaja.</span></div></div>
       </div>
       <div class="lm-section">
-        <h3>🕐 Kill Zones (peso ×1.2–1.5)</h3>
-        <div class="lm-item"><div class="lm-icon">🇬🇧</div><div class="lm-text"><strong>London Open 8:00–9:30 UTC</strong><span>Institucionales europeos posicionan. Buena liquidez. Peso ×1.3.</span></div></div>
-        <div class="lm-item"><div class="lm-icon">🔄</div><div class="lm-text"><strong>NY-London Overlap 13:00–14:30 UTC</strong><span>Máxima liquidez global. Doble participación. Peso ×1.4. Las mejores señales suceden aquí.</span></div></div>
-        <div class="lm-item"><div class="lm-icon">🇺🇸</div><div class="lm-text"><strong>NY Open 14:30–16:00 UTC</strong><span>Power hour de apertura NY. Institucionales de EE.UU. posicionan. Peso ×1.5. La ventana más importante.</span></div></div>
+        <h3>🕐 Kill Zones · equities en hora de Nueva York (DST-correcto)</h3>
+        <div class="lm-item"><div class="lm-icon">⚡</div><div class="lm-text"><strong>Apertura NY 9:30–10:00 ET</strong><span>Máximo volumen y volatilidad del día. Se establece el rango. Peso ×1.5.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🎯</div><div class="lm-text"><strong>Silver Bullet AM 10:00–11:00 ET</strong><span>Tras asentarse la apertura, la ventana de mayor win-rate y setups más limpios. Peso ×1.4.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">😴</div><div class="lm-text"><strong>Lunch 11:30–13:30 ET</strong><span>Zona muerta: bajo flujo institucional, win-rate cercano al azar. CASTIGO ×0.85 (encoge el score). Los pros no operan acá.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🔄</div><div class="lm-text"><strong>NY PM 13:30–15:00 ET</strong><span>Sesión de la tarde. Menor follow-through que la mañana, pero forma setups. Peso ×1.2.</span></div></div>
+        <div class="lm-item"><div class="lm-icon">🏁</div><div class="lm-text"><strong>Power Hour 15:00–16:00 ET</strong><span>La última hora real de equities: MOC / rebalanceo institucional. Peso ×1.4.</span></div></div>
       </div>
       <div class="lm-section">
         <h3>⚡ GEX / Max Pain</h3>
