@@ -56,9 +56,13 @@ function classifySignal(features){
     return { clase: 'indefinido', dte: null, horizonBars: null, criterioExito: null, razon: 'features inválidos' };
   }
 
-  // ── SWING — cambio de tendencia + confirmación de flujo + HTF ──
-  if(structChange && hasRvol && rvol >= DIALS.SWING_RVOL && f.cvdAgrees && f.htfAligned && semOK){
-    return pack('swing', 'CHoCH/BOS fresco + RVOL elevado + CVD a favor + HTF alineado');
+  // ── SWING — cambio de tendencia + confirmación de flujo + tendencia a favor ──
+  // La confirmación de marco superior (htfAligned) es el IDEAL. Si el emisor no evalúa MTF
+  // (monitor 4H → htfAligned false honesto), se acepta la tendencia del PROPIO TF como proxy
+  // explícito (withTrend = ADX 4H a favor). No miente sobre el HTF: un swing 4H con estructura
+  // fresca + RVOL institucional + CVD + tendencia a favor es swing POR CRITERIO, no por fallback.
+  if(structChange && hasRvol && rvol >= DIALS.SWING_RVOL && f.cvdAgrees && (f.htfAligned || f.withTrend) && semOK){
+    return pack('swing', 'CHoCH/BOS fresco + RVOL elevado + CVD a favor + tendencia a favor (' + (f.htfAligned ? 'HTF' : '4H') + ')');
   }
   // ── DAY — expansión + estructura a favor + volumen presente ──
   if(f.regime === 'EXPANSIÓN' && f.withTrend && hasRvol && rvol >= DIALS.DAY_RVOL && semOK){
