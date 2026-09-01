@@ -70,7 +70,7 @@ function judgeByClass(record, clase){
   if(crit.modo === 'mfe_rapido'){
     const bar = Number(crit.mfeR) || 1.0;
     if((mfe != null && mfe >= bar) || rank >= 1)
-      return Object.assign({ veredicto: 'ganó',
+      return Object.assign({ veredicto: 'ganó', pleno: rank >= 1,
         motivo: (rank >= 1 ? 'tocó '+ (rec.hitTP) : 'MFE '+ mfe +'R ≥ '+ bar +'R') }, base);
     if(mfe != null && mfe >= PARCIAL_MIN_MFE_R)
       return Object.assign({ veredicto: 'parcial',
@@ -78,16 +78,22 @@ function judgeByClass(record, clase){
     return Object.assign({ veredicto: 'no', motivo: 'no avanzó a favor (MFE '+ (mfe==null?'s/d':mfe+'R') +')' }, base);
   }
 
-  // ── DAY / SWING — vara por tier de TP tocado (con parcial honesto por dirección) ──
-  if(rank >= full)
-    return Object.assign({ veredicto: 'ganó', motivo: 'alcanzó objetivo pleno ('+ tpName(full) +')' }, base);
-  if(rank >= entry)
-    return Object.assign({ veredicto: 'parcial', motivo: 'tocó '+ tpName(rank) +' (entró al tier, no al pleno '+ tpName(full) +')' }, base);
-  if(rank >= 1)
-    return Object.assign({ veredicto: 'parcial', motivo: 'tocó '+ tpName(rank) +' (por debajo del tier de la clase, pero la dirección pagó)' }, base);
+  // ── DAY / SWING — método pro (scaling out): tocar el PRIMER TP ya es GANADA ──
+  // El estándar de gestión con TP escalonado anota "win" apenas se toca TP1 (el nivel más
+  // probable, el que da la consistencia); TP2/TP3 son runners para el que corre lejos. El
+  // tier alto se preserva como CALIDAD — pleno = alcanzó el objetivo lejano (TP3 swing /
+  // TP2 day) — NO como umbral para "ganar". La vara vieja (ganar = tocar el pleno) hacía ver
+  // 0 ganadas cuando el hit-rate binario del resolver daba ~42% (misma señal, dos veredictos).
+  if(rank >= 1){
+    const pleno = rank >= full;
+    return Object.assign({ veredicto: 'ganó', pleno,
+      motivo: pleno ? ('ganada plena — alcanzó '+ tpName(rank))
+                    : ('ganada — tocó '+ tpName(rank) +' (pleno '+ tpName(full) +' no alcanzado)') }, base);
+  }
   if(mfe != null && mfe >= PARCIAL_MIN_MFE_R)
-    return Object.assign({ veredicto: 'parcial', motivo: 'sin TP pero MFE +'+ mfe +'R (≥'+ PARCIAL_MIN_MFE_R +'R a favor, no alcanzó tier)' }, base);
-  return Object.assign({ veredicto: 'no', motivo: 'no alcanzó ni el primer TP ni excursión favorable' }, base);
+    return Object.assign({ veredicto: 'parcial', pleno:false,
+      motivo: 'sin TP pero MFE +'+ mfe +'R (≥'+ PARCIAL_MIN_MFE_R +'R a favor, dirección pagó)' }, base);
+  return Object.assign({ veredicto: 'no', pleno:false, motivo: 'no tocó ningún TP ni tuvo excursión favorable' }, base);
 }
 
 function tpName(r){ return r >= 1 && r <= 3 ? 'TP'+r : '—'; }
@@ -101,10 +107,10 @@ function aggregateByClass(items){
     const clase = it.clase != null ? it.clase : rec.clase;
     const v = judgeByClass(rec, clase);
     const k = v.clase || 'indefinido';
-    const g = out[k] || (out[k] = { n:0, 'ganó':0, parcial:0, no:0, indef:0, pend:0,
+    const g = out[k] || (out[k] = { n:0, 'ganó':0, pleno:0, parcial:0, no:0, indef:0, pend:0,
                                     hitRateClase:null, avgMfeR:null, avgMaeR:null, _mfe:[], _mae:[] });
     g.n++;
-    if(v.veredicto === 'ganó') g['ganó']++;
+    if(v.veredicto === 'ganó'){ g['ganó']++; if(v.pleno) g.pleno++; }
     else if(v.veredicto === 'parcial') g.parcial++;
     else if(v.veredicto === 'no') g.no++;
     else if(v.veredicto === 'pendiente') g.pend++;
