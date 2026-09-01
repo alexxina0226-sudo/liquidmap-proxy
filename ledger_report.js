@@ -79,7 +79,8 @@ function _lineByClass(byClass){
     .sort((a, b) => (order[a] != null ? order[a] : 9) - (order[b] != null ? order[b] : 9))
     .map(k => {
       const g = byClass[k];
-      return `${k} ${g['ganó']}G/${g.parcial}P/${g.no}N (HR ${pct(g.hitRateClase)}, MFE ${rr(g.avgMfeR)}, n${g.n})`;
+      const pl = g.pleno ? ` (${g.pleno}pl)` : '';   // pl = ganadas PLENAS (alcanzaron el TP lejano)
+      return `${k} ${g['ganó']}G${pl}/${g.parcial}P/${g.no}N (HR ${pct(g.hitRateClase)}, MFE ${rr(g.avgMfeR)}, n${g.n})`;
     })
     .join(' · ');
 }
