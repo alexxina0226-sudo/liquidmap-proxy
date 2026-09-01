@@ -15,7 +15,7 @@
 //   cuando hay evidencia de horizonte corto; el resto quedan swing. Honesto y shippeable.
 'use strict';
 const { computeSemaforoBolsa, semaphoreLevel, computeRvol, computeRegime } = require('./signal_features.js');
-const { classifySignal } = require('./signal_class.js');
+const { classifySignal, DIALS } = require('./signal_class.js');
 
 function agrees(dir, sign){ // dir 'BUY'/'SELL' concuerda con sign (+1 alcista / -1 bajista)
   return (dir === 'BUY' && sign > 0) || (dir === 'SELL' && sign < 0);
@@ -51,15 +51,18 @@ function buildMonitorFeatures(result, bars, layers, state, opts){
 }
 
 // classifyEmission(result, bars, layers, state, opts) → { clase, horizonBars, razon, raw, features }
-//   clase: 'scalp'|'day'|'swing' — SWING es el fallback nativo del emisor 4H.
-//   horizonBars: para scalp/day sale de los diales del clasificador; para swing → null
-//                (el monitor mantiene su LEDGER_HORIZON_BARS).
+//   clase: 'scalp'|'day'|'swing'. El 4H es day-to-swing NATIVO → el DEFAULT es DAY (1-3 días);
+//          SWING queda para el upgrade con sello institucional (la rama por criterio). Así el
+//          corte por clase discrimina de verdad (day = flujo normal 4H, swing = convicción).
+//   horizonBars: swing → null (el monitor usa su LEDGER_HORIZON_BARS env, tuneable); scalp/day
+//                → su dial; default (no calificó ninguna clase) → dial de day.
 function classifyEmission(result, bars, layers, state, opts){
   const features = buildMonitorFeatures(result, bars, layers, state, opts);
   const cls = classifySignal(features);
-  const upgraded = (cls.clase === 'scalp' || cls.clase === 'day');
-  const clase = upgraded ? cls.clase : 'swing';
-  const horizonBars = upgraded ? cls.horizonBars : null;   // null → el monitor usa su default swing
+  const byCriterio = (cls.clase === 'scalp' || cls.clase === 'day' || cls.clase === 'swing');
+  const clase = byCriterio ? cls.clase : 'day';   // 'esperar'/'indefinido' → DAY (nativo 4H)
+  const horizonBars = (cls.clase === 'swing') ? null
+                    : (cls.horizonBars != null ? cls.horizonBars : DIALS.HORIZON_BARS.day);
   return { clase, horizonBars, razon: cls.razon, raw: cls.clase, features };
 }
 
