@@ -85,6 +85,45 @@ try { ({ fetchAggressorCVD } = require('./cvd_live.js')); } catch (_) {}
 try { ({ fetchLargePrints } = require('./prints_live.js')); } catch (_) {}
 try { ({ getOptionsMetrics } = require('./options_live.js')); } catch (_) {}
 
+// ── LEDGER DEL RADAR (mide el poder predictivo de cada cocción/aviso, forward return) ──
+//   Reusa los módulos PUROS del obs_ledger + su driver de gist. Escribe su PROPIO archivo
+//   'radar_ledger.jsonl' en el MISMO gist (d92ed46): el PATCH-por-archivo de GitHub deja
+//   intactos ledger_bolsa.jsonl / obs_ledger.jsonl (doc oficial), así el radar (otro servicio)
+//   no pisa lo que escribe el server. FAIL-OPEN TOTAL: si faltan módulos o env → OFF y el radar
+//   sigue idéntico. La captura JAMÁS rompe el barrido/aviso.
+let makeObservation = null, resolveObsPending = null, createLedgerStore = null, githubGistDriver = null;
+try { ({ makeObservation } = require('./obs_ledger.js')); } catch (_) {}
+try { ({ resolveObsPending } = require('./obs_resolver.js')); } catch (_) {}
+try { ({ createLedgerStore } = require('./ledger_store.js')); } catch (_) {}
+try { ({ githubGistDriver } = require('./ledger_store_github.js')); } catch (_) {}
+const RADAR_GH_TOKEN = process.env.LEDGER_GH_TOKEN || '';
+const RADAR_GH_GIST  = process.env.LEDGER_GH_GIST  || '';
+const RADAR_OBS_TF   = process.env.RADAR_OBS_TF || '15m';   // TF de las barras forward (tuneable)
+const RADAR_OBS_H    = +process.env.RADAR_OBS_H  || 6;      // barras forward para medir el desenlace
+let radarStore = null, radarDriver = null;
+if (makeObservation && createLedgerStore && githubGistDriver && RADAR_GH_TOKEN && RADAR_GH_GIST) {
+  try {
+    radarDriver = githubGistDriver({ token: RADAR_GH_TOKEN, gistId: RADAR_GH_GIST, filename: 'radar_ledger.jsonl',
+                                     onError: e => console.log('[RADAR] gist obs: ' + e.message) });
+    radarStore = createLedgerStore(radarDriver);
+    radarDriver.init().then(() => console.log('[RADAR] Ledger de radar listo (' + radarStore.load().length + ' obs)'))
+                      .catch(e => console.log('[RADAR] Ledger init: ' + e.message));
+  } catch (e) { console.log('[RADAR] Ledger OFF: ' + e.message); radarStore = null; }
+} else {
+  console.log('[RADAR] Ledger de radar OFF — faltan obs_ledger/store o LEDGER_GH_TOKEN/GIST');
+}
+// Registra una observación del radar (fail-open). dir acepta up/down/call/put.
+function radarObserve(sym, dir, px, rvol, capa, extra) {
+  if (!radarStore || !makeObservation) return;
+  try {
+    const d = (dir === 'up' || dir === 'call') ? 'up' : (dir === 'down' || dir === 'put') ? 'down' : 'neutral';
+    const obs = makeObservation({ kind: 'radar', sym, ts: Date.now(), dir: d,
+      px: (typeof px === 'number' ? px : null), strength: (typeof rvol === 'number' ? rvol : null),
+      horizonBars: RADAR_OBS_H, tf: RADAR_OBS_TF, ctx: Object.assign({ capa }, extra || {}) });
+    if (obs) { radarStore.append(obs); if (radarDriver) radarDriver.flush().catch(() => {}); }
+  } catch (_) {}
+}
+
 // Corre la capa CARA SOLO sobre un finalista que ya cocina. Fail-open total:
 // cualquier fetch que falle → null y la dirección queda "undetermined" (el aviso igual sale).
 async function characterizeCooking(sym, price){
@@ -368,6 +407,7 @@ async function runScan() {
             await sendTelegram(buildAlert(ev));
             s.lastAlertTs = Date.now(); s.lastDir = ev.dir; s.confirmedTs = Date.now();
             fired++;
+            radarObserve(sym, ev.dir, ev.last, ev.rvol, 'confirmado', { moveATR: ev.moveATR });
           }
           continue;   // ya confirmó → no mandamos pre-aviso del mismo ticker
         }
@@ -388,6 +428,7 @@ async function runScan() {
               await sendTelegram(buildCookAlert(ev, cook, dirRead));
               s.lastCookTs = Date.now();
               cookFired++;
+              radarObserve(sym, (dirRead && dirRead.direction) || ev.dir, ev.last, ev.rvol, 'coccion', { moveATR: ev.moveATR, conviction: dirRead && dirRead.conviction, read: dirRead && dirRead.read });
               continue;   // ya avisamos cocción → no duplicar con pre-aviso este barrido
             }
           }
@@ -412,6 +453,7 @@ async function runScan() {
             await sendTelegram(buildPreAlert(sym, lp, prevC, moveLiveATR, hasVol ? ev.rvol : null));
             s.lastPreTs = Date.now();
             preFired++;
+            radarObserve(sym, moveLiveATR >= 0 ? 'up' : 'down', lp, (hasVol ? ev.rvol : null), 'preaviso', { moveLiveATR: +moveLiveATR.toFixed(2) });
           }
         }
       }
@@ -768,3 +810,15 @@ http.createServer((req, res) => {
 
 runScan();
 setInterval(runScan, SCAN_INTERVAL);
+
+// ── RESOLVER del ledger del radar: sella las obs 'open' contra barras forward (cada 20 min) ──
+//   Reusa btFetchTfBars (barras Alpaca por rango) como fetchBars del resolver puro. Fail-open.
+if (radarStore && resolveObsPending) {
+  setInterval(() => {
+    resolveObsPending(radarStore, (sym, startISO, endISO, atf) => btFetchTfBars(sym, atf, startISO, endISO),
+                      { defHorizonBars: RADAR_OBS_H, onError: () => {} })
+      .then(r => { if (r && r.resolved) console.log('[RADAR] obs resueltas: ' + r.resolved);
+                   if (radarDriver) return radarDriver.flush(); })
+      .catch(() => {});
+  }, 20 * 60 * 1000);
+}
