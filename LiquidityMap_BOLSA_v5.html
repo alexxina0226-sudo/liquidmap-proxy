@@ -1305,9 +1305,10 @@ function computeNeuralScore(p){
   const chochDir = struct.choch ? (struct.choch.dir === 'BULL' ? 1 : -1) : 0;
   if(bosDir !== 0){
     score += 3 * bosDir; conf.push(bosDir>0?'🏗 BOS ALCISTA ✓':'🏗 BOS BAJISTA ✗'); addL('BOS', 3, bosDir);
-    if(chochDir !== 0){
-      score += 0.5 * chochDir; conf.push(chochDir>0?'⚡ CHoCH confirma alcista':'⚡ CHoCH confirma bajista'); addL('CHoCH', 0.5, chochDir);
-    } else { addL('CHoCH', 0, 0); }
+    // s63: detectStructure devuelve el evento MÁS RECIENTE (choch XOR bos) → con BOS presente,
+    // struct.choch es null SIEMPRE. La rama vieja "CHoCH confirma +0.5" era CÓDIGO MUERTO (nunca
+    // sumaba). Se elimina; el CHoCH aporta 0 acá (su peso real vive en la rama else-if de abajo).
+    addL('CHoCH', 0, 0);
   } else if(chochDir !== 0){
     // s60: CHoCH+ (giro soportado) pesa 2.0 — más que el CHoCH simple (1.5), debajo del BOS (3).
     const chPlus = !!(struct.choch && struct.choch.plus);
