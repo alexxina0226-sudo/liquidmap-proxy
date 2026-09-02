@@ -690,6 +690,20 @@ async function runBacktest(req, res) {
     <p><small>Aditivo · no toca el generador de señales · flagger de calibración, no gatillo de ejecución.</small></p>`);
 }
 
+const crypto = require('crypto');
+const BACKTEST_KEY = process.env.RADAR_BACKTEST_KEY || '';   // candado de /backtest (dispara fetches a Alpaca = quemable)
+// Comparación TIMING-SAFE robusta a largos distintos (método pro): hashear ambos lados a
+// 32 bytes fijos con SHA-256 y comparar los digests con timingSafeEqual → no filtra ni el
+// contenido ni el largo del token por el tiempo de respuesta. timingSafeEqual exige mismo
+// largo (tira si difieren); el hash lo garantiza y evita el leak de longitud.
+function backtestKeyOK(provided){
+  if(!BACKTEST_KEY) return true;   // env no configurada → sin candado (fail-open; se avisa por log al bootear)
+  const a = crypto.createHash('sha256').update(String(provided == null ? '' : provided), 'utf8').digest();
+  const b = crypto.createHash('sha256').update(String(BACKTEST_KEY), 'utf8').digest();
+  return crypto.timingSafeEqual(a, b);
+}
+if(!BACKTEST_KEY) console.log('⚠️  [RADAR] /backtest SIN candado — setear RADAR_BACKTEST_KEY (env del servicio radar) para blindarlo');
+
 const PORT = process.env.PORT || 10000;
 http.createServer((req, res) => {
   if (req.url === '/health') { res.writeHead(200); res.end('ok'); return; }
@@ -707,6 +721,14 @@ http.createServer((req, res) => {
   }
   // ── /backtest : geometría + selectividad + régimen (HTML) ──
   if (req.url === '/backtest' || req.url.startsWith('/backtest?')) {
+    // AUTH barata: /backtest dispara fetches a Alpaca (quemable si spamean la URL). Si
+    // RADAR_BACKTEST_KEY está seteada, exige ?key=<clave> válida ANTES de tocar Alpaca.
+    const _key = new URL(req.url, 'http://x').searchParams.get('key');
+    if (!backtestKeyOK(_key)) {
+      res.writeHead(401, { 'Content-Type': 'text/plain; charset=utf-8' });
+      res.end('401 — /backtest protegido. Agregá ?key=<tu clave> a la URL.');
+      return;
+    }
     runBacktest(req, res).catch(e => {
       res.writeHead(500, { 'Content-Type': 'text/html; charset=utf-8' });
       res.end(`<pre style="color:#ff6b6b;background:#0b0e14;padding:24px;font-family:system-ui;white-space:pre-wrap">Error /backtest: ${String(e && e.message || e).replace(/</g,'&lt;')}</pre>`);
