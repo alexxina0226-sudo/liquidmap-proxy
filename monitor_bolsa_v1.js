@@ -870,19 +870,23 @@ function detectStructure(candles) {
   if (!detectStructureV2) return null;              // sin módulo: capa apagada (honesto)
   if (!candles || candles.length < 30) return null;
   const r = detectStructureV2(candles, { swingLen: 5, confirm: 2 }); // mismos knobs que el mapa
-  if (r.choch) {
-    const plus = !!r.choch.plus;
+  // s63 XOR: el estado estructural vigente lo define el evento MÁS RECIENTE (mismo criterio
+  // que el mapa y estándar SMC), NO la precedencia-CHoCH. events[] es cronológico → el último
+  // manda. Estándar SMC: un CHoCH es el AVISO; un BOS posterior en la nueva dirección lo
+  // CONFIRMA (continuación) → quedarse pegado al CHoCH viejo sobre-reporta reversa.
+  const last = (r.events && r.events.length) ? r.events[r.events.length - 1] : null;
+  if (!last) return null;
+  if (last.type === 'CHoCH') {
+    const plus = !!last.plus;
     const name = plus ? 'CHoCH+' : 'CHoCH';
-    return r.choch.dir === 'BULL'
+    return last.dir === 'BULL'
       ? { type: 'CHOCH_BUY',  label: `⚡ ${name} ALCISTA`, priority: 10, plus }
       : { type: 'CHOCH_SELL', label: `⚡ ${name} BAJISTA`, priority: 10, plus };
   }
-  if (r.bos) {
-    return r.bos.dir === 'BULL'
-      ? { type: 'BOS_BUY',  label: '📈 BOS ALCISTA', priority: 7 }
-      : { type: 'BOS_SELL', label: '📉 BOS BAJISTA', priority: 7 };
-  }
-  return null;
+  // BOS o BOS_init (init = primer break desde trend 0, mismo trato que el mapa)
+  return last.dir === 'BULL'
+    ? { type: 'BOS_BUY',  label: '📈 BOS ALCISTA', priority: 7 }
+    : { type: 'BOS_SELL', label: '📉 BOS BAJISTA', priority: 7 };
 }
 
 // ════════════════════════════════════════════════════════════
