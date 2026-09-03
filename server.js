@@ -44,7 +44,7 @@ function requireApi(req, res, next)  { if (AUTH.isAuthed(req.headers.cookie, AUT
 // leen los gists del ledger). El mapa las llama mismo-origen con la cookie → sigue andando;
 // un extraño sin sesión ahora recibe 401.
 const API_PROTECT = ['/proxy', '/alpaca', '/diag', '/liquidations', '/deribit',
-                     '/asistente', '/darkpool-log', '/obs-log', '/dp-sample', '/dp-bands'];
+                     '/asistente', '/darkpool-log', '/obs-log', '/dp-sample', '/dp-bands', '/ledger-log'];
 app.use((req, res, next) => {
   if (API_PROTECT.some(p => req.path === p || req.path.startsWith(p))) return requireApi(req, res, next);
   next();
@@ -841,6 +841,48 @@ app.post('/obs-log', async (req, res) => {
     obsStore.upsert(rec);
     try { await obsDriver.flush(); } catch(_){}
     return res.json({ ok:true, id: rec.id });
+  } catch (e) { res.json({ ok:false, error:e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// LEDGER · LECTURA (pestaña 📒 del mapa) — Etapa 3. READ-ONLY del ledger de trades.
+// Sirve el estado agregado de ledger_bolsa.jsonl (mismo gist) para el panel del mapa:
+// scorecard global + juez por clase + cortes (setup/semáforo/horizonte) + BLOQUES POR
+// TICKER. Reusa las MISMAS agregaciones que el /resumen (ledger_view → ledger_core +
+// ledger_class_judge) → los números coinciden con el resumen semanal, no divergen.
+// Solo LEE (init/loadAll), NUNCA escribe → aislado del emisor/resolver/gist de escritura.
+// Cache corto (25s) para no golpear el gist si se reabre el panel. Display-only.
+// FAIL-OPEN: sin módulos/env → { ok:false, off:true } y el panel muestra "apagado".
+//   ENV (reusa las del ledger): LEDGER_GH_TOKEN + LEDGER_GH_GIST
+// ══════════════════════════════════════════════════════════════════════════
+let ledgerReadDriver = null, buildLedgerView = null;
+let _ledgerViewCache = null, _ledgerViewAt = 0;
+const LEDGER_VIEW_TTL = 25 * 1000;   // relee el gist como máximo cada 25s (panel manual → sobra)
+try {
+  const { githubGistDriver } = require('./ledger_store_github');
+  ({ buildLedgerView } = require('./ledger_view'));
+  const _tok = process.env.LEDGER_GH_TOKEN || '';
+  const _gid = process.env.LEDGER_GH_GIST  || '';
+  if (_tok && _gid && buildLedgerView) {
+    ledgerReadDriver = githubGistDriver({ token:_tok, gistId:_gid, filename:'ledger_bolsa.jsonl', fetch, onError:e=>console.log('[ledger-read] gist: '+e.message) });
+  } else {
+    console.log('📒 Ledger-lectura OFF — faltan LEDGER_GH_TOKEN/GIST o ledger_view');
+  }
+} catch (e) { console.log('📒 Ledger-lectura OFF — ' + e.message); }
+
+// GET /ledger-log → payload agregado para la pestaña 📒 (JSON). Read-only, cacheado 25s.
+// ?fresh=1 fuerza relectura del gist. Protegido por sesión (API_PROTECT).
+app.get('/ledger-log', async (req, res) => {
+  try {
+    if (!ledgerReadDriver || !buildLedgerView) return res.json({ ok:false, off:true });
+    const now = Date.now();
+    if (req.query.fresh === '1' || !_ledgerViewCache || (now - _ledgerViewAt) > LEDGER_VIEW_TTL) {
+      await ledgerReadDriver.init();                 // ceba/refresca el cache desde el gist (SOLO lectura)
+      _ledgerViewCache = buildLedgerView(ledgerReadDriver.loadAll());
+      _ledgerViewAt = now;
+    }
+    res.set('Cache-Control', 'no-store');
+    return res.json(_ledgerViewCache);
   } catch (e) { res.json({ ok:false, error:e.message }); }
 });
 
