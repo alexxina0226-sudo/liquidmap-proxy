@@ -4,7 +4,7 @@
 //  (b) anti-regresión: continuación bajista = BOS_SELL, NUNCA CHOCH_SELL (el bug viejo)
 //  (c) fallback honesto: sin módulo → null (capa apagada, no detector viejo)
 const fs = require('fs');
-const src = fs.readFileSync(__dirname + '/monitor_bolsa.js', 'utf8');
+const src = fs.readFileSync(__dirname + '/monitor_bolsa_v1.js', 'utf8');
 const mod = require(__dirname + '/detectStructure_v2.js');
 
 const i0 = src.indexOf('function detectStructure(');
