@@ -2,7 +2,7 @@
 //  bench_monitor_filtro.js — s80 · 30-jul-2026
 //  Banco del FILTRO DE CALIDAD del monitor (el bot solo emite señales de
 //  VERDAD buenas). Corre sobre el CÓDIGO REAL: extrae passesQualityFilter /
-//  govGradeForMonitor / buildGovSig de monitor_bolsa.js por llaves
+//  govGradeForMonitor / buildGovSig de monitor_bolsa_v1.js por llaves
 //  balanceadas y los ata al módulo canónico conviction_governor.js.
 //  No reimplementa nada.
 //
@@ -41,7 +41,7 @@ function grabConst(src, name) {
   return m[0];
 }
 
-const monSrc = fs.readFileSync(path.join(HERE, 'monitor_bolsa.js'), 'utf8');
+const monSrc = fs.readFileSync(path.join(HERE, 'monitor_bolsa_v1.js'), 'utf8');
 const govMod = require(path.join(HERE, 'conviction_governor.js'));
 
 // ── Montar el filtro REAL en un scope con el Governor canónico inyectado ──
