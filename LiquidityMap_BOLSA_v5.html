@@ -1688,16 +1688,16 @@ function filterRTH(bars){
 
 async function loadCandles(){
   if(!POLY_KEY){ console.warn('loadCandles: sin Polygon API key'); return; }
-  // 4H: se arma desde 15m (mismo feed fresco que el 1h) y se resamplea a sesión con borde 13:30
-  // (= TV, = el que usa el MTF). ANTES (ROOT #6) usaba 1H EN PUNTO + hour-bucket → la tarde arrancaba
-  // 13:00 (30' antes que TV) y corría los flips del arco/estructura/ST. El 15m tiene bar en 13:30 → limpio.
+  // ROOT #6: el 4H ya NO usa 15m (ese feed quedó pendiente de pago y su cobertura corta
+  // meses atrás → el 4H leía un régimen viejo). El 1H está fresco → el 4H pide 1H y
+  // resamplea a sesión (09:30/13:30, como TV). El 1H sigue su camino nativo.
   const is4H = (tf === '240');
   const is1H = (tf === '60');
-  // 4H: 90d de 15m → ~124 velas de sesión (el arco pide 110+; si el feed viene corto → arco fail-open).
+  // 4H: 120d de 1H → ~160 velas de sesión (el arco pide 110+).
   // 1H: 70d de 15m → se resamplea a horarias ANCLADAS A 9:30 (= TV). Las 1H nativas de
   // Alpaca vienen en punto (9:00,10:00,…) y filterRTH tiraba entera la de 9:00 = la HORA
   // DE APERTURA (más volumen del día) → el 1H perdía la apertura en POC/VWAP/ADX/ST/estructura.
-  const cfg = is4H ? {mult:15, span:'minute', days:90}
+  const cfg = is4H ? {mult:1,  span:'hour',   days:120}
             : is1H ? {mult:15, span:'minute', days:70}
             :        tfToPolygon(tf);
   const fmt = d => new Date(d).toISOString().slice(0,10);
@@ -1729,11 +1729,8 @@ async function loadCandles(){
       if(quote.l) last.l = Math.min(last.l, quote.l);
     }
     if(is4H){
-      // FIX borde 13:30 (arco/estructura/ST/CVD = TV): el 4H se arma desde 15m (mismo feed que el 1h)
-      // con resampleSession4H (corte por minuto <810 = 13:30, = el que ya usa el MTF). El path viejo
-      // usaba 1H EN PUNTO + resampleSession4Hh (corte por HORA → la tarde arrancaba 13:00, 30' antes que TV).
-      candles = resampleSession4H(raw, false);   // 15m → 4H de sesión, borde 13:30 correcto
-      vpBars  = resampleSessionHourly(raw);      // 15m → 1H 9:30-anchored para VWAP/POC (= el 1h)
+      vpBars  = raw;                             // 1H crudos = fuente de VWAP/POC de sesión (vía sessionBars)
+      candles = resampleSession4Hh(raw, false);  // 4H ancladas a sesión DESDE 1H → chart / ST / estructura = TV (y fresco)
     } else if(is1H){
       candles = resampleSessionHourly(raw);      // 1H ancladas a 9:30 DESDE 15m = TV (incluye la vela de apertura)
       if(candles.length > 300) candles = candles.slice(-300);
