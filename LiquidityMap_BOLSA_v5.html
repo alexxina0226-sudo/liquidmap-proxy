@@ -1688,16 +1688,16 @@ function filterRTH(bars){
 
 async function loadCandles(){
   if(!POLY_KEY){ console.warn('loadCandles: sin Polygon API key'); return; }
-  // ROOT #6: el 4H ya NO usa 15m (ese feed quedó pendiente de pago y su cobertura corta
-  // meses atrás → el 4H leía un régimen viejo). El 1H está fresco → el 4H pide 1H y
-  // resamplea a sesión (09:30/13:30, como TV). El 1H sigue su camino nativo.
+  // 4H: se arma desde 15m con borde 13:30 (= TV, = el monitor). Si el feed de 15m viene corto,
+  // cae a 1H en punto/borde 13:00 (visible, 30' vs TV) para que el arco NUNCA desaparezca. ANTES
+  // (ROOT #6) usaba SIEMPRE 1H en punto → borde 13:00 fijo (30' antes que TV en arco/estructura/ST).
   const is4H = (tf === '240');
   const is1H = (tf === '60');
-  // 4H: 120d de 1H → ~160 velas de sesión (el arco pide 110+).
+  // 4H: 120d de 15m (receta 15mXL del monitor) → si alcanza 110+ velas 4H, arco fiel; si no, fallback 1H.
   // 1H: 70d de 15m → se resamplea a horarias ANCLADAS A 9:30 (= TV). Las 1H nativas de
   // Alpaca vienen en punto (9:00,10:00,…) y filterRTH tiraba entera la de 9:00 = la HORA
   // DE APERTURA (más volumen del día) → el 1H perdía la apertura en POC/VWAP/ADX/ST/estructura.
-  const cfg = is4H ? {mult:1,  span:'hour',   days:120}
+  const cfg = is4H ? {mult:15, span:'minute', days:120}
             : is1H ? {mult:15, span:'minute', days:70}
             :        tfToPolygon(tf);
   const fmt = d => new Date(d).toISOString().slice(0,10);
@@ -1729,8 +1729,35 @@ async function loadCandles(){
       if(quote.l) last.l = Math.min(last.l, quote.l);
     }
     if(is4H){
-      vpBars  = raw;                             // 1H crudos = fuente de VWAP/POC de sesión (vía sessionBars)
-      candles = resampleSession4Hh(raw, false);  // 4H ancladas a sesión DESDE 1H → chart / ST / estructura = TV (y fresco)
+      // ARCO FIEL + NUNCA DESAPARECE. Primero el 4H de sesión desde 15m con borde 13:30 (= TV,
+      // = el monitor). Si el feed de 15m viene corto (<110 velas 4H → el arco no converge), caemos
+      // al camino viejo (1H en punto → borde 13:00): NO es fiel (30' vs TV) pero SE VE. Siempre el
+      // mejor disponible; nunca cambiamos un arco visible por uno ausente.
+      const c4h = resampleSession4H(raw, false);   // fiel: 15m → 4H de sesión, borde 13:30
+      if(c4h.length >= 110){
+        candles = c4h;
+        vpBars  = resampleSessionHourly(raw);      // 15m → 1H 9:30-anchored para VWAP/POC
+      } else {
+        // 15m corto → fallback VISIBLE: 1H en punto + resampleSession4Hh (borde 13:00)
+        let raw1h = null;
+        try {
+          const fromH = fmt(Date.now() - 120*86400000), toH = fmt(Date.now());
+          const urlH = `${POLY_PROXY}?path=${encodeURIComponent(`/v2/aggs/ticker/${sym}/range/1/hour/${fromH}/${toH}`)}&adjusted=true&sort=asc&limit=50000`;
+          const rH = await fetch(urlH); const dH = await rH.json();
+          if(dH.results && dH.results.length){
+            raw1h = dH.results.map(b => ({ t:Math.floor(b.t/1000), o:b.o, h:b.h, l:b.l, c:b.c, v:b.v||0 })).sort((a,b)=>a.t-b.t);
+          }
+        } catch(e){ console.warn('fallback 1H falló', e); }
+        if(raw1h && raw1h.length){
+          if(quote.c && !DATA_STALE){ const L = raw1h[raw1h.length-1]; L.c = quote.c; if(quote.h) L.h = Math.max(L.h, quote.h); if(quote.l) L.l = Math.min(L.l, quote.l); }
+          candles = resampleSession4Hh(raw1h, false);   // VISIBLE (borde 13:00, 30' vs TV)
+          vpBars  = raw1h;
+          console.warn(`[4H] 15m corto (${c4h.length} velas) → fallback 1H/13:00 visible`);
+        } else {
+          candles = c4h;                                 // ni el fallback llegó → lo que haya (arco fail-open)
+          vpBars  = resampleSessionHourly(raw);
+        }
+      }
     } else if(is1H){
       candles = resampleSessionHourly(raw);      // 1H ancladas a 9:30 DESDE 15m = TV (incluye la vela de apertura)
       if(candles.length > 300) candles = candles.slice(-300);
