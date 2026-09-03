@@ -2,7 +2,7 @@
 //  bench_governor_monitor.js — s63 · 23-jul-2026
 //  Banco del trasplante del GOBERNADOR DE CONVICCIÓN al monitor.
 //  Corre sobre el CÓDIGO REAL: extrae buildGovSig/govGradeForMonitor de
-//  monitor_bolsa.js por llaves balanceadas y los ata al módulo canónico
+//  monitor_bolsa_v1.js por llaves balanceadas y los ata al módulo canónico
 //  conviction_governor.js. No reimplementa nada.
 //
 //  Caso madre: WMT 4H del 23/07 09:03 — score 10/10 con ADX 13.2 lateral.
@@ -38,7 +38,7 @@ function grabConst(src, name) {
   return m[0];
 }
 
-const monSrc = fs.readFileSync(path.join(HERE, 'monitor_bolsa.js'), 'utf8');
+const monSrc = fs.readFileSync(path.join(HERE, 'monitor_bolsa_v1.js'), 'utf8');
 const govMod = require(path.join(HERE, 'conviction_governor.js'));
 
 // ── TEST 12 · FUENTE ÚNICA: el módulo es el bloque del mapa, byte a byte ──
