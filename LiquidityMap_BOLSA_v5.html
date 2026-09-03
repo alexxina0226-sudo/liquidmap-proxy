@@ -229,6 +229,39 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .cook-read{color:#8aa;font-size:10px;line-height:1.4;margin-top:2px;}
 .cook-empty{padding:18px 14px;color:#8aa;font-size:11px;text-align:center;}
 .cook-foot{padding:8px 14px;color:#667;font-size:9px;border-top:1px solid #3a2410;position:sticky;bottom:0;background:#0c1220;}
+/* ── 📒 REGISTRO (lectura del ledger — Etapa 3) ── */
+#ledger-panel{position:fixed;top:64px;right:14px;width:min(384px,calc(100vw - 28px));max-height:80vh;overflow-y:auto;z-index:9999;background:#0b0f1e;border:1px solid #2a1c46;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6);font-family:'Space Mono',monospace;}
+@media(max-width:600px){#ledger-panel{left:50%;right:auto;transform:translateX(-50%);width:calc(100vw - 20px);}}
+.led-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #2a1c46;color:#b44dff;font-weight:700;font-size:12px;letter-spacing:.5px;position:sticky;top:0;background:#0b0f1e;z-index:2;}
+.led-x{background:none;border:none;color:#8aa;cursor:pointer;font-size:13px;padding:0 2px;}
+#led-sub{font-weight:400;color:#8a6ab5;font-size:10px;}
+.led-body{padding:10px 12px;color:#cdd6e4;font-size:11px;}
+.led-empty{padding:20px 14px;color:#8aa;font-size:11px;text-align:center;line-height:1.6;}
+.led-mut{color:#7a8aa5;}.led-g{color:#00ff9d;}.led-r{color:#ff2d6b;}.led-y{color:#ffe86b;}.led-c{color:#7fe9ff;}
+.led-score{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px;}
+.led-kpi{background:#0c1220;border:1px solid #1a2338;border-radius:6px;padding:8px 6px;text-align:center;}
+.led-kpi .v{font-size:16px;font-weight:700;line-height:1.1;}
+.led-kpi .l{font-size:8px;color:#7a8aa5;margin-top:3px;letter-spacing:.5px;}
+.led-kpi.wide{grid-column:1 / -1;display:flex;justify-content:space-around;align-items:center;gap:6px;font-size:10px;}
+.led-class{background:#0c1220;border:1px solid #1a2338;border-radius:6px;padding:7px 9px;margin-bottom:8px;font-size:10px;line-height:1.7;}
+.led-class .ct{color:#b44dff;font-weight:700;font-size:9px;letter-spacing:.5px;margin-bottom:2px;}
+.led-cut{font-size:9.5px;line-height:1.6;color:#aab6cc;}
+.led-cut b{color:#7a8aa5;font-weight:400;}
+.led-sec{color:#b44dff;font-weight:700;font-size:9px;letter-spacing:.5px;margin:10px 2px 5px;}
+.led-tk{background:#0c1220;border:1px solid #1a2338;border-radius:6px;margin-bottom:6px;overflow:hidden;}
+.led-tk-h{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;cursor:pointer;background:#0e1526;gap:6px;}
+.led-tk-h:hover{background:#121a2e;}
+.led-tk-sym{font-weight:700;color:#e8f4ff;font-size:12px;}
+.led-caret{display:inline-block;color:#6a7a95;font-size:8px;transition:transform .12s;}
+.led-tk.open .led-caret{transform:rotate(90deg);}
+.led-tk-st{font-size:9px;color:#8aa;white-space:nowrap;text-align:right;}
+.led-tk-sigs{display:none;}
+.led-tk.open .led-tk-sigs{display:block;}
+.led-sig{padding:6px 10px;border-top:1px solid #141a28;font-size:9.5px;line-height:1.45;}
+.led-sig-r1{display:flex;justify-content:space-between;align-items:center;gap:6px;}
+.led-pill{font-size:8px;padding:1px 6px;border-radius:3px;font-weight:700;white-space:nowrap;}
+.led-lv{color:#8a9ab5;font-size:9px;margin-top:2px;}
+.led-foot{padding:8px 14px;color:#667;font-size:9px;border-top:1px solid #2a1c46;position:sticky;bottom:0;background:#0b0f1e;}
 #coccion-badge{background:#ff8a00;color:#000;border-radius:10px;padding:0 5px;font-size:9px;font-weight:700;margin-left:4px;}
 #coccion-badge:empty{display:none;}
 .lm-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}
@@ -351,6 +384,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <button onclick="toggleCoccion()" id="coccion-btn" style="background:rgba(255,138,0,.10);border:1px solid rgba(255,138,0,.4);color:#ff8a00;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">🔥 EN COCCIÓN<span id="coccion-badge"></span></button>
     <button onclick="toggleLegend()" style="background:rgba(0,229,255,.08);border:1px solid var(--border);color:var(--accent);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">📖 GUÍA</button>
     <button onclick="toggleJuez()" id="juez-btn" title="El juez lee el estado del mapa y da su veredicto" style="background:rgba(0,255,157,.10);border:1px solid rgba(0,255,157,.4);color:var(--green);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">⚖ JUEZ</button>
+    <button onclick="toggleLedger()" id="ledger-btn" title="Lectura del ledger: hit-rate, expectativa y señales por ticker" style="background:rgba(180,77,255,.10);border:1px solid rgba(180,77,255,.4);color:#b44dff;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">📒 REGISTRO</button>
   </div>
 </div>
 
@@ -3670,6 +3704,107 @@ function toggleCoccion(){
 function pickCoccion(sy){ toggleCoccion(); try{ selectSym(sy); }catch(e){} }
 setTimeout(fetchCoccion, 3000); setInterval(fetchCoccion, 60000);
 
+// ── PESTAÑA 📒 REGISTRO — lectura del ledger (Etapa 3, consume /ledger-log del server) ──
+// Panel de MEDICIÓN: hit-rate + expectativa + juez por clase + bloques por ticker.
+// Mismo-origen (POLY_PROXY → /ledger-log) → la cookie de sesión viaja sola (API_PROTECT).
+// Display-only, fail-open: solo LEE; jamás toca score/emisor/ledger. Los números salen de
+// las MISMAS agregaciones que el /resumen (server: ledger_view) → imposible que diverjan.
+const LEDGER_URL = POLY_PROXY.replace('/alpaca', '/ledger-log');
+let ledgerOpen = false, ledgerLast = null, ledgerBusy = false;
+const _pctL   = x => (x==null) ? '—' : Math.round(x*100)+'%';
+const _rrL    = x => (x==null) ? '—' : ((x>=0?'+':'')+x.toFixed(2)+'R');
+const _rClsL  = x => (x==null) ? 'led-mut' : (x>=0 ? 'led-g' : 'led-r');
+const _fmtPxL = x => (x==null) ? '—' : (Math.abs(x)>=1000 ? x.toFixed(0) : x.toFixed(2));
+function _statusPillL(st){
+  const M = {
+    CUMPLIDA:['ganada','background:rgba(0,255,157,.14);color:#5affc0'],
+    FALLIDA:['fallida','background:rgba(255,45,107,.14);color:#ff789e'],
+    EXPIRADA:['expiró','background:rgba(255,224,0,.12);color:#ffe86b'],
+    INVALIDADA:['invalidada','background:rgba(122,138,165,.15);color:#aab6cc'],
+    AMBIGUO:['ambigua','background:rgba(122,138,165,.15);color:#aab6cc'],
+    ACTIVA:['en curso','background:rgba(0,229,255,.12);color:#7fe9ff']
+  };
+  const e = M[st] || ['—','background:rgba(122,138,165,.15);color:#aab6cc'];
+  return '<span class="led-pill" style="'+e[1]+'">'+e[0]+'</span>';
+}
+function _cutLineL(label, arr){
+  if(!arr || !arr.length) return '';
+  const parts = arr.map(x => x.k+' '+_pctL(x.hitRate)+' (<span class="'+_rClsL(x.expectancyR)+'">'+_rrL(x.expectancyR)+'</span>, n'+x.n+')').join(' · ');
+  return '<div class="led-cut"><b>'+label+':</b> '+parts+'</div>';
+}
+async function fetchLedger(fresh){
+  if(ledgerBusy) return; ledgerBusy = true;
+  const sub = document.getElementById('led-sub'); if(sub && fresh) sub.textContent = '· cargando…';
+  try{
+    const r = await fetch(LEDGER_URL + (fresh ? '?fresh=1' : ''), { cache:'no-store' });
+    ledgerLast = await r.json();
+  }catch(e){ ledgerLast = { ok:false, error:'red' }; }
+  ledgerBusy = false;
+  if(ledgerOpen) renderLedger(ledgerLast);
+}
+function renderLedger(d){
+  const body = document.getElementById('led-body'), sub = document.getElementById('led-sub');
+  if(!body) return;
+  if(!d || d.ok === false){
+    const msg = (d && d.off) ? 'Ledger apagado (sin credenciales del gist en el server).'
+              : (d && d.error === 'red') ? 'Sin conexión. Tocá ↻ para reintentar.'
+              : 'No se pudo leer el ledger.';
+    body.innerHTML = '<div class="led-empty">'+msg+'</div>'; if(sub) sub.textContent=''; return;
+  }
+  const o = d.overall || {}, c = d.counts || {};
+  if(sub) sub.textContent = '· '+(c.unique||0)+' señales · '+(c.resolved||0)+' resueltas';
+  if(!o.n){
+    body.innerHTML = '<div class="led-empty">Sin señales resueltas todavía.<br>El ledger graba en vivo — volvé cuando resuelvan outcomes.</div>';
+    return;
+  }
+  let h = '';
+  // scorecard global
+  h += '<div class="led-score">'
+     + '<div class="led-kpi"><div class="v '+_rClsL(o.hitRate==null?null:o.hitRate-0.5)+'">'+_pctL(o.hitRate)+'</div><div class="l">HIT-RATE</div></div>'
+     + '<div class="led-kpi"><div class="v '+_rClsL(o.expectancyR)+'">'+_rrL(o.expectancyR)+'</div><div class="l">EXPECTATIVA</div></div>'
+     + '<div class="led-kpi"><div class="v led-c">'+o.wins+'/'+(o.wins+o.losses)+'</div><div class="l">ACIERTOS</div></div>'
+     + '<div class="led-kpi wide"><span><span class="led-g">MFE</span> '+_rrL(o.avgMfeR)+'</span><span><span class="led-r">MAE</span> '+_rrL(o.avgMaeR)+'</span><span class="led-mut">'+o.n+' resueltas'+(o.expired?' · '+o.expired+' exp':'')+'</span></div>'
+     + '</div>';
+  // juez por clase (misma vara que el /resumen)
+  if(d.byClass && d.byClass.length){
+    h += '<div class="led-class"><div class="ct">⚖ JUEZ POR CLASE</div>'
+       + d.byClass.map(cl => {
+           const pl = cl.pleno ? ' <span class="led-mut">('+cl.pleno+'pl)</span>' : '';
+           return cl.clase+': <span class="led-g">'+cl.gano+'G</span>'+pl+'/<span class="led-y">'+cl.parcial+'P</span>/<span class="led-r">'+cl.no+'N</span> <span class="led-mut">(HR '+_pctL(cl.hitRateClase)+', MFE '+_rrL(cl.avgMfeR)+', n'+cl.n+')</span>';
+         }).join('<br>')
+       + '</div>';
+  }
+  // cortes por setup / semáforo / horizonte
+  const cuts = _cutLineL('Setup', d.bySetup) + _cutLineL('Semáforo', d.byGrade) + _cutLineL('Horizonte', d.byHorizon);
+  if(cuts) h += '<div class="led-class">'+cuts+'</div>';
+  // bloques por ticker (colapsables)
+  h += '<div class="led-sec">BLOQUES POR TICKER</div>';
+  h += (d.tickers||[]).map(t => {
+    const st = 'n'+t.n+' · '+_pctL(t.hitRate)+' · <span class="'+_rClsL(t.expectancyR)+'">'+_rrL(t.expectancyR)+'</span>'+(t.active?' · <span class="led-c">'+t.active+' en curso</span>':'');
+    const sigs = (t.signals||[]).map(s => {
+      const dir = s.type==='BUY' ? '🟢' : '🔴';
+      const setup = (s.setup||'—') + (s.horizon ? (' · '+s.horizon) : '');
+      const rtxt = (s.status==='ACTIVA') ? ('MFE '+_rrL(s.mfeR)) : ('<span class="'+_rClsL(s.rMultiple)+'">'+_rrL(s.rMultiple)+'</span>');
+      const tps = (s.tp||[]).filter(x => x!=null).map(_fmtPxL).join('/');
+      const lv = 'E '+_fmtPxL(s.entry)+' · SL '+_fmtPxL(s.sl)+(tps ? (' · TP '+tps) : '');
+      return '<div class="led-sig"><div class="led-sig-r1"><span>'+dir+' '+setup+'</span>'+_statusPillL(s.status)+'</div>'
+           + '<div class="led-lv">'+lv+' <span class="led-mut">· '+rtxt+(s.barsToResolve ? (' · '+s.barsToResolve+'b') : '')+'</span></div></div>';
+    }).join('');
+    return '<div class="led-tk"><div class="led-tk-h" onclick="this.parentNode.classList.toggle(\'open\')"><span class="led-tk-sym"><span class="led-caret">▶</span> '+t.sym+'</span><span class="led-tk-st">'+st+'</span></div><div class="led-tk-sigs">'+sigs+'</div></div>';
+  }).join('');
+  body.innerHTML = h;
+}
+function toggleLedger(){
+  const pnl = document.getElementById('ledger-panel'); if(!pnl) return;
+  ledgerOpen = (pnl.style.display==='none' || !pnl.style.display);
+  pnl.style.display = ledgerOpen ? 'block' : 'none';
+  if(ledgerOpen){
+    if(ledgerLast) renderLedger(ledgerLast);
+    else document.getElementById('led-body').innerHTML = '<div class="led-empty">Cargando…</div>';
+    fetchLedger(true);
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    STICKER v2 — el criterio del JUEZ (3 ejes LITE) pintado en la watchlist.
    Compute LOCAL, CERO API: baja pocas barras por ticker vía /alpaca (escalonado,
@@ -3951,6 +4086,13 @@ window.consultarJuez = consultarJuez;
   <div class="cook-head"><span>🔥 EN COCCIÓN <span id="cook-sub" style="font-weight:400;color:#8aa;font-size:10px;"></span></span><button class="cook-x" onclick="toggleCoccion()">✕</button></div>
   <div id="coccion-list"><div class="cook-empty">Cargando…</div></div>
   <div class="cook-foot">Anticipación · el radar barre ~113 tickers · clic = cargar en el mapa</div>
+</div>
+
+<!-- PANEL 📒 REGISTRO (lectura del ledger · consume /ledger-log del server principal) -->
+<div id="ledger-panel" style="display:none;">
+  <div class="led-head"><span>📒 REGISTRO <span id="led-sub"></span></span><span><button class="led-x" onclick="fetchLedger(true)" title="Refrescar">↻</button><button class="led-x" onclick="toggleLedger()">✕</button></span></div>
+  <div id="led-body" class="led-body"><div class="led-empty">Cargando…</div></div>
+  <div class="led-foot">Medición del ledger · lectura de las señales emitidas · display-only</div>
 </div>
 
 <!-- LEGEND MODAL -->
