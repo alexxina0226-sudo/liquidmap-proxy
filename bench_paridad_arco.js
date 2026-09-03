@@ -8,7 +8,7 @@
 // la fase y los flips de meseta se movían.
 'use strict';
 const fs = require('fs');
-const html = fs.readFileSync('./bolsa.html','utf8');
+const html = fs.readFileSync('./LiquidityMap_BOLSA_v5.html','utf8');
 function extract(name){
   const i = html.indexOf('function ' + name);
   if(i < 0) throw new Error('no encontré ' + name);
