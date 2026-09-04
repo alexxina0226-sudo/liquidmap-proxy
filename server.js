@@ -44,7 +44,7 @@ function requireApi(req, res, next)  { if (AUTH.isAuthed(req.headers.cookie, AUT
 // leen los gists del ledger). El mapa las llama mismo-origen con la cookie → sigue andando;
 // un extraño sin sesión ahora recibe 401.
 const API_PROTECT = ['/proxy', '/alpaca', '/diag', '/liquidations', '/deribit',
-                     '/asistente', '/darkpool-log', '/obs-log', '/dp-sample', '/dp-bands', '/ledger-log'];
+                     '/asistente', '/darkpool-log', '/obs-log', '/dp-sample', '/dp-bands', '/ledger-log', '/obs-read'];
 app.use((req, res, next) => {
   if (API_PROTECT.some(p => req.path === p || req.path.startsWith(p))) return requireApi(req, res, next);
   next();
@@ -883,6 +883,27 @@ app.get('/ledger-log', async (req, res) => {
     }
     res.set('Cache-Control', 'no-store');
     return res.json(_ledgerViewCache);
+  } catch (e) { res.json({ ok:false, error:e.message }); }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// LEDGER INTELIGENTE · LECTURA (pestaña 🧠 del mapa) — mide el poder predictivo de las
+// LECTURAS (ballena/dark pool/juez/sticker) por forward-return direccional. Lee obsStore
+// (ya vivo en proceso: cebado al bootear + refrescado por el job resolver) y arma el
+// payload con obs_view → scorecard + por tipo + por tipo×dirección + bloques por ticker.
+// Solo LEE el store en RAM (obsStore.load()) → NO re-pega al gist, NO escribe. Display-only.
+// FAIL-OPEN: sin store/módulo → { ok:false, off:true } y el panel muestra "apagado".
+// ══════════════════════════════════════════════════════════════════════════
+let buildObsView = null;
+try { ({ buildObsView } = require('./obs_view')); }
+catch (e) { console.log('🧠 Obs-lectura OFF — ' + e.message); }
+
+// GET /obs-read → payload agregado del ledger inteligente (JSON). Read-only. Protegido por sesión.
+app.get('/obs-read', async (req, res) => {
+  try {
+    if (!obsStore || !buildObsView) return res.json({ ok:false, off:true });
+    res.set('Cache-Control', 'no-store');
+    return res.json(buildObsView(obsStore.load()));
   } catch (e) { res.json({ ok:false, error:e.message }); }
 });
 
