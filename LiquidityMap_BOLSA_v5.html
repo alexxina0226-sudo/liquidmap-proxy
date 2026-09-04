@@ -262,6 +262,35 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
 .led-pill{font-size:8px;padding:1px 6px;border-radius:3px;font-weight:700;white-space:nowrap;}
 .led-lv{color:#8a9ab5;font-size:9px;margin-top:2px;}
 .led-foot{padding:8px 14px;color:#667;font-size:9px;border-top:1px solid #2a1c46;position:sticky;bottom:0;background:#0b0f1e;}
+/* ── 🧠 LECTURAS (lectura del ledger inteligente — obs) ── */
+#obs-panel{position:fixed;top:64px;right:14px;width:min(384px,calc(100vw - 28px));max-height:80vh;overflow-y:auto;z-index:9999;background:#04140f;border:1px solid #0d3b30;border-radius:8px;box-shadow:0 8px 40px rgba(0,0,0,.6);font-family:'Space Mono',monospace;}
+@media(max-width:600px){#obs-panel{left:50%;right:auto;transform:translateX(-50%);width:calc(100vw - 20px);}}
+.obs-head{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;border-bottom:1px solid #0d3b30;color:#00ffcc;font-weight:700;font-size:12px;letter-spacing:.5px;position:sticky;top:0;background:#04140f;z-index:2;}
+.obs-x{background:none;border:none;color:#8aa;cursor:pointer;font-size:13px;padding:0 2px;}
+#obs-sub{font-weight:400;color:#4f9e8c;font-size:10px;}
+.obs-body{padding:10px 12px;color:#cdd6e4;font-size:11px;}
+.obs-empty{padding:20px 14px;color:#8aa;font-size:11px;text-align:center;line-height:1.6;}
+.obs-mut{color:#7a8aa5;}.obs-g{color:#00ff9d;}.obs-r{color:#ff2d6b;}.obs-c{color:#00ffcc;}
+.obs-score{display:grid;grid-template-columns:1fr 1fr 1fr;gap:6px;margin-bottom:8px;}
+.obs-kpi{background:#08201a;border:1px solid #123a30;border-radius:6px;padding:8px 6px;text-align:center;}
+.obs-kpi .v{font-size:16px;font-weight:700;line-height:1.1;}
+.obs-kpi .l{font-size:8px;color:#5f8f82;margin-top:3px;letter-spacing:.5px;}
+.obs-card{background:#08201a;border:1px solid #123a30;border-radius:6px;padding:7px 9px;margin-bottom:8px;}
+.obs-ct{color:#00ffcc;font-weight:700;font-size:9px;letter-spacing:.5px;margin-bottom:4px;}
+.obs-krow{display:flex;justify-content:space-between;align-items:center;font-size:10px;line-height:1.7;padding:1px 0;gap:8px;}
+.obs-kname{color:#cdd6e4;}
+.obs-sec{color:#00ffcc;font-weight:700;font-size:9px;letter-spacing:.5px;margin:10px 2px 5px;}
+.obs-tk{background:#08201a;border:1px solid #123a30;border-radius:6px;margin-bottom:6px;overflow:hidden;}
+.obs-tk-h{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;cursor:pointer;background:#0a2620;gap:6px;}
+.obs-tk-h:hover{background:#0e332a;}
+.obs-tk-sym{font-weight:700;color:#e8f4ff;font-size:12px;}
+.obs-caret{display:inline-block;color:#5a8a7c;font-size:8px;transition:transform .12s;}
+.obs-tk.open .obs-caret{transform:rotate(90deg);}
+.obs-tk-st{font-size:9px;color:#8aa;white-space:nowrap;text-align:right;}
+.obs-tk-body{display:none;padding:4px 10px 8px;}
+.obs-tk.open .obs-tk-body{display:block;}
+.obs-sig{font-size:9.5px;line-height:1.5;padding:2px 0;display:flex;justify-content:space-between;gap:8px;border-top:1px solid #0d2a22;}
+.obs-foot{padding:8px 14px;color:#667;font-size:9px;border-top:1px solid #0d3b30;position:sticky;bottom:0;background:#04140f;}
 #coccion-badge{background:#ff8a00;color:#000;border-radius:10px;padding:0 5px;font-size:9px;font-weight:700;margin-left:4px;}
 #coccion-badge:empty{display:none;}
 .lm-item{display:flex;align-items:flex-start;gap:8px;margin-bottom:6px;}
@@ -385,6 +414,7 @@ body{background:var(--bg);color:var(--text);font-family:'DM Sans',sans-serif;fon
     <button onclick="toggleLegend()" style="background:rgba(0,229,255,.08);border:1px solid var(--border);color:var(--accent);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">📖 GUÍA</button>
     <button onclick="toggleJuez()" id="juez-btn" title="El juez lee el estado del mapa y da su veredicto" style="background:rgba(0,255,157,.10);border:1px solid rgba(0,255,157,.4);color:var(--green);border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">⚖ JUEZ</button>
     <button onclick="toggleLedger()" id="ledger-btn" title="Lectura del ledger: hit-rate, expectativa y señales por ticker" style="background:rgba(180,77,255,.10);border:1px solid rgba(180,77,255,.4);color:#b44dff;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">📒 REGISTRO</button>
+    <button onclick="toggleObs()" id="obs-btn" title="Lecturas: ¿aciertan ballena/dark pool/juez? (forward-return direccional)" style="background:rgba(0,255,204,.10);border:1px solid rgba(0,255,204,.4);color:#00ffcc;border-radius:3px;padding:2px 8px;cursor:pointer;font-size:9px;font-family:'Space Mono',monospace;">🧠 LECTURAS</button>
   </div>
 </div>
 
@@ -3805,6 +3835,87 @@ function toggleLedger(){
   }
 }
 
+// ── PESTAÑA 🧠 LECTURAS — ledger inteligente (Etapa 3b, consume /obs-read del server) ──
+// Mide si las LECTURAS (ballena/dark pool/juez/sticker) aciertan por FORWARD-RETURN
+// direccional. Responde el caso SNOW: ¿ballena compradora → precio sube? Mismo-origen,
+// display-only, fail-open. Números salen de aggregateObs (server: obs_view) → no divergen.
+const OBS_URL = POLY_PROXY.replace('/alpaca', '/obs-read');
+let obsOpen = false, obsLast = null, obsBusy = false;
+const _kindLbl  = k => ({ ballena:'🐋 ballena', darkpool:'🌑 dark pool', juez:'⚖ juez', sticker:'🏷 sticker' }[k] || k);
+const _dirArrow = d => d==='up' ? '▲' : d==='down' ? '▼' : '◆';
+const _hrClsO   = hr => (hr==null) ? 'obs-mut' : (hr>=0.5 ? 'obs-g' : 'obs-r');
+const _retClsO  = x => (x==null) ? 'obs-mut' : (x>=0 ? 'obs-g' : 'obs-r');
+const _retO     = x => (x==null) ? '—' : ((x>=0?'+':'')+x.toFixed(2)+'%');
+const _hrO      = x => (x==null) ? '—' : Math.round(x*100)+'%';
+function _obsKRow(label, hitRate, avgRet, n){
+  return '<div class="obs-krow"><span class="obs-kname">'+label+'</span><span><span class="'+_hrClsO(hitRate)+'">'+_hrO(hitRate)+'</span> <span class="obs-mut">('+_retO(avgRet)+', n'+n+')</span></span></div>';
+}
+async function fetchObs(fresh){
+  if(obsBusy) return; obsBusy = true;
+  const sub = document.getElementById('obs-sub'); if(sub && fresh) sub.textContent = '· cargando…';
+  try{ const r = await fetch(OBS_URL, { cache:'no-store' }); obsLast = await r.json(); }
+  catch(e){ obsLast = { ok:false, error:'red' }; }
+  obsBusy = false;
+  if(obsOpen) renderObs(obsLast);
+}
+function renderObs(d){
+  const body = document.getElementById('obs-body'), sub = document.getElementById('obs-sub');
+  if(!body) return;
+  if(!d || d.ok === false){
+    const msg = (d && d.off) ? 'Ledger inteligente apagado en el server.'
+              : (d && d.error === 'red') ? 'Sin conexión. Tocá ↻ para reintentar.'
+              : 'No se pudieron leer las lecturas.';
+    body.innerHTML = '<div class="obs-empty">'+msg+'</div>'; if(sub) sub.textContent=''; return;
+  }
+  const o = d.overall || {}, c = d.counts || {};
+  if(sub) sub.textContent = '· '+(c.resolved||0)+' resueltas · '+(c.open||0)+' abiertas';
+  if(!o.n){
+    body.innerHTML = '<div class="obs-empty">Sin lecturas resueltas todavía.<br>El sistema graba en vivo — volvé cuando sellen desenlaces.</div>';
+    return;
+  }
+  let h = '';
+  // scorecard global
+  h += '<div class="obs-score">'
+     + '<div class="obs-kpi"><div class="v '+_hrClsO(o.hitRate)+'">'+_hrO(o.hitRate)+'</div><div class="l">ACIERTO DIR</div></div>'
+     + '<div class="obs-kpi"><div class="v '+_retClsO(o.avgSignedRetPct)+'">'+_retO(o.avgSignedRetPct)+'</div><div class="l">RET FIRMADO</div></div>'
+     + '<div class="obs-kpi"><div class="v obs-c">'+o.hits+'/'+o.n+'</div><div class="l">ACIERTOS</div></div>'
+     + '</div>';
+  // por tipo de lectura
+  if(d.byKind && d.byKind.length){
+    h += '<div class="obs-card"><div class="obs-ct">POR TIPO DE LECTURA</div>'
+       + d.byKind.map(r => _obsKRow(_kindLbl(r.k), r.hitRate, r.avgSignedRetPct, r.n)).join('')
+       + '</div>';
+  }
+  // por tipo × dirección (el corte que responde SNOW)
+  if(d.byKindDir && d.byKindDir.length){
+    h += '<div class="obs-card"><div class="obs-ct">POR TIPO × DIRECCIÓN</div>'
+       + d.byKindDir.map(r => _obsKRow(_kindLbl(r.kind)+' '+_dirArrow(r.dir), r.hitRate, r.avgSignedRetPct, r.n)).join('')
+       + '</div>';
+  }
+  // bloques por ticker (colapsables)
+  h += '<div class="obs-sec">BLOQUES POR TICKER</div>';
+  h += (d.tickers||[]).map(t => {
+    const st = 'n'+t.n+' · <span class="'+_hrClsO(t.hitRate)+'">'+_hrO(t.hitRate)+'</span> · <span class="'+_retClsO(t.avgSignedRetPct)+'">'+_retO(t.avgSignedRetPct)+'</span>'+(t.open?' · <span class="obs-c">'+t.open+' abiertas</span>':'');
+    const kinds = (t.kinds||[]).map(k => _obsKRow(_kindLbl(k.k), k.hitRate, k.avgSignedRetPct, k.n)).join('');
+    const recent = (t.recent||[]).map(s => {
+      const hit = s.dirHit ? '<span class="obs-g">✓</span>' : '<span class="obs-r">✗</span>';
+      return '<div class="obs-sig"><span>'+_kindLbl(s.kind)+' '+_dirArrow(s.dir)+'</span><span>'+hit+' <span class="'+_retClsO(s.signedRetPct)+'">'+_retO(s.signedRetPct)+'</span></span></div>';
+    }).join('');
+    return '<div class="obs-tk"><div class="obs-tk-h" onclick="this.parentNode.classList.toggle(\'open\')"><span class="obs-tk-sym"><span class="obs-caret">▶</span> '+t.sym+'</span><span class="obs-tk-st">'+st+'</span></div><div class="obs-tk-body">'+kinds+(recent ? ('<div style="margin-top:5px;">'+recent+'</div>') : '')+'</div></div>';
+  }).join('');
+  body.innerHTML = h;
+}
+function toggleObs(){
+  const pnl = document.getElementById('obs-panel'); if(!pnl) return;
+  obsOpen = (pnl.style.display==='none' || !pnl.style.display);
+  pnl.style.display = obsOpen ? 'block' : 'none';
+  if(obsOpen){
+    if(obsLast) renderObs(obsLast);
+    else document.getElementById('obs-body').innerHTML = '<div class="obs-empty">Cargando…</div>';
+    fetchObs(true);
+  }
+}
+
 /* ══════════════════════════════════════════════════════════════════════════
    STICKER v2 — el criterio del JUEZ (3 ejes LITE) pintado en la watchlist.
    Compute LOCAL, CERO API: baja pocas barras por ticker vía /alpaca (escalonado,
@@ -4093,6 +4204,13 @@ window.consultarJuez = consultarJuez;
   <div class="led-head"><span>📒 REGISTRO <span id="led-sub"></span></span><span><button class="led-x" onclick="fetchLedger(true)" title="Refrescar">↻</button><button class="led-x" onclick="toggleLedger()">✕</button></span></div>
   <div id="led-body" class="led-body"><div class="led-empty">Cargando…</div></div>
   <div class="led-foot">Medición del ledger · lectura de las señales emitidas · display-only</div>
+</div>
+
+<!-- PANEL 🧠 LECTURAS (ledger inteligente · consume /obs-read del server principal) -->
+<div id="obs-panel" style="display:none;">
+  <div class="obs-head"><span>🧠 LECTURAS <span id="obs-sub"></span></span><span><button class="obs-x" onclick="fetchObs(true)" title="Refrescar">↻</button><button class="obs-x" onclick="toggleObs()">✕</button></span></div>
+  <div id="obs-body" class="obs-body"><div class="obs-empty">Cargando…</div></div>
+  <div class="obs-foot">¿Aciertan las lecturas? · forward-return direccional · display-only</div>
 </div>
 
 <!-- LEGEND MODAL -->
