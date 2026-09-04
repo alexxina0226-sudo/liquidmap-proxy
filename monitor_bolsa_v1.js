@@ -1618,12 +1618,29 @@ async function scanTicker(ticker, session) {
       try {
         if (classifyEmission) cls = classifyEmission(result, candles4H, buildGovSig(result).layers, { isNewStruct });
       } catch (e) { console.log(`[${ticker}] clasificador: ${e.message} — swing por defecto`); }
+      // ── AUTOPSIA DEL SCORE (instrumentación): censo por capa desde las señales crudas.
+      // Por cada capa canónica: dirección NETA (suma de pesos con signo, igual que arma el
+      // score) + peso neto. Puro REGISTRO — no altera score/grade/setup/envío. FAIL-OPEN → null.
+      let layerCensus = null;
+      try {
+        const acc = {};
+        for (const sg of (result.signals || [])) {
+          if (sg == null || sg.layer == null) continue;
+          const d = sg.dir === 'BUY' ? 1 : sg.dir === 'SELL' ? -1 : 0;
+          acc[sg.layer] = (acc[sg.layer] || 0) + d * (sg.weight || 0);
+        }
+        layerCensus = MON_LAYERS.map(n => {
+          const w = acc[n] || 0;
+          return { n, d: w > 0 ? 1 : w < 0 ? -1 : 0, w: +Math.abs(w).toFixed(2) };
+        });
+      } catch (_) { layerCensus = null; }
       captureSignal(ledgerStore, {
         ts: s.lastSignalTs, sym: ticker, tf: '4H', direction: result.direction,
         score: result.score, grade: L.grade, setup: structSig, horizon: cls.clase,
         entry: L.entry != null ? L.entry : price, sl: L.sl,
         tp1: L.tp1, tp2: L.tp2, tp3: L.tp3,
-        horizonBars: cls.horizonBars != null ? cls.horizonBars : LEDGER_HORIZON_BARS, cvdSource: cvdScoreSource
+        horizonBars: cls.horizonBars != null ? cls.horizonBars : LEDGER_HORIZON_BARS, cvdSource: cvdScoreSource,
+        layers: layerCensus
       }, { onError: e => console.log(`[${ticker}] ledger cap: ${e.message}`) });
       if (ledgerDriver) ledgerDriver.flush().catch(() => {});   // asegura el write-through al gist
     }
