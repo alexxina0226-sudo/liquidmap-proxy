@@ -32,6 +32,7 @@ function makeRecord(signal){
     cvdSource: s.cvdSource != null ? s.cvdSource : null, // real/est (trazabilidad)
     entry: num(s.entry), tp: tp.map(num), sl: num(s.sl),
     horizonBars: s.horizonBars != null ? s.horizonBars : null,
+    layers: Array.isArray(s.layers) ? s.layers : null,  // censo por capa {n,d,w} (autopsia del score); null en registros viejos
     status: 'ACTIVA'
   };
 }
