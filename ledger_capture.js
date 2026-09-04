@@ -9,7 +9,7 @@ const { makeRecord } = require('./ledger_core.js');
 
 // captureSignal(store, ctx, opts) → registro guardado | null
 // ctx: { ts, sym, tf, direction, score, grade, setup, horizon,
-//        entry, tp1, tp2, tp3, sl, horizonBars, cvdSource }
+//        entry, tp1, tp2, tp3, sl, horizonBars, cvdSource, layers }
 // opts: { horizonBars?(default si el ctx no lo trae), onError?(err) }
 function captureSignal(store, ctx, opts){
   opts = opts || {};
@@ -22,7 +22,8 @@ function captureSignal(store, ctx, opts){
       entry: ctx.entry, tp1: ctx.tp1, tp2: ctx.tp2, tp3: ctx.tp3, sl: ctx.sl,
       horizonBars: ctx.horizonBars != null ? ctx.horizonBars
                  : (opts.horizonBars != null ? opts.horizonBars : null),
-      cvdSource: ctx.cvdSource != null ? ctx.cvdSource : null
+      cvdSource: ctx.cvdSource != null ? ctx.cvdSource : null,
+      layers: ctx.layers != null ? ctx.layers : null       // censo por capa (autopsia del score)
     });
     return store.upsert(rec);            // idempotente por id (sym|tf|ts) → no duplica
   } catch(e){
