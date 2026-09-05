@@ -1640,7 +1640,10 @@ async function scanTicker(ticker, session) {
         entry: L.entry != null ? L.entry : price, sl: L.sl,
         tp1: L.tp1, tp2: L.tp2, tp3: L.tp3,
         horizonBars: cls.horizonBars != null ? cls.horizonBars : LEDGER_HORIZON_BARS, cvdSource: cvdScoreSource,
-        layers: layerCensus
+        layers: layerCensus,
+        gate: (rg && typeof rg === 'object')       // veredicto del gate: emitida (pass) vs silenciada, + dir/eff/ER
+          ? { pass: !!rg.pass, dir: rg.dir, eff: rg.eff, er: (typeof rg.er === 'number') ? +rg.er.toFixed(3) : null }
+          : null
       }, { onError: e => console.log(`[${ticker}] ledger cap: ${e.message}`) });
       if (ledgerDriver) ledgerDriver.flush().catch(() => {});   // asegura el write-through al gist
     }
