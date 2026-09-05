@@ -33,6 +33,7 @@ function makeRecord(signal){
     entry: num(s.entry), tp: tp.map(num), sl: num(s.sl),
     horizonBars: s.horizonBars != null ? s.horizonBars : null,
     layers: Array.isArray(s.layers) ? s.layers : null,  // censo por capa {n,d,w} (autopsia del score); null en registros viejos
+    gate: (s.gate && typeof s.gate === 'object') ? s.gate : null,  // veredicto del gate de régimen {pass,dir,eff,er}; null en viejos
     status: 'ACTIVA'
   };
 }
