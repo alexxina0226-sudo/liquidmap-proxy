@@ -28,12 +28,14 @@ catch (e) { console.warn('⚠️  health_state no disponible (latido off):', e.m
 // ── LEDGER CRIPTO (cuaderno · etapa 1: CAPTURA). TODO FAIL-OPEN: si falta un módulo o
 // una env, el bot emite EXACTAMENTE igual; el ledger nunca estorba. Gist APARTE del de
 // bolsa (ledger_crypto.jsonl). Reusa el token de bolsa si no hay uno propio.
-let cryptoLedgerStore = null, cryptoLedgerDriver = null, captureSignalC = null;
+let cryptoLedgerStore = null, cryptoLedgerDriver = null, captureSignalC = null, resolvePendingC = null;
 const CRYPTO_HORIZON_BARS = +process.env.CRYPTO_HORIZON_BARS || 30;   // horizonte 4H en barras (knob)
+const CRYPTO_RESOLVE_MS   = +process.env.CRYPTO_RESOLVE_MS   || 20 * 60 * 1000;   // cada 20min sella desenlaces
 try {
   const { createLedgerStore } = require('./ledger_store.js');
   const { githubGistDriver }  = require('./ledger_store_github.js');
-  captureSignalC = require('./ledger_capture.js').captureSignal;
+  captureSignalC  = require('./ledger_capture.js').captureSignal;
+  resolvePendingC = require('./ledger_resolver.js').resolvePending;   // cerebro de resolución (reusado de bolsa)
   const _tok = process.env.CRYPTO_LEDGER_GH_TOKEN || process.env.LEDGER_GH_TOKEN || '';
   const _gid = process.env.CRYPTO_LEDGER_GH_GIST || '';
   if (_tok && _gid) {
@@ -257,6 +259,27 @@ async function fetchCandles(symbol, interval, limit = 100) {
     } catch (e) {
       if (attempt === 2) throw e;                          // tras 2 intentos, propaga (como antes)
       await new Promise(res => setTimeout(res, 500));      // backoff corto antes del reintento
+    }
+  }
+  return [];
+}
+
+// Velas de Bybit por VENTANA para el RESOLVER cripto (forma {t:ISO,o,h,l,c} que espera resolveOutcome).
+// startTime/endTime en ms (estilo Binance; el proxy traduce a Bybit). 2 intentos como fetchCandles.
+async function fetchCryptoBars(sym, startISO, endISO, interval) {
+  const startMs = Date.parse(startISO), endMs = Date.parse(endISO);
+  const span = Math.max(0, (isFinite(endMs) ? endMs : Date.now()) - (isFinite(startMs) ? startMs : 0));
+  const need = Math.min(1000, Math.ceil(span / 14400000) + 5);   // 4h = 14.4M ms; +colchón
+  const url = `${PROXY}?path=/api/v3/klines&symbol=${sym}&interval=${interval || '4h'}&startTime=${startMs}&endTime=${endMs}&limit=${need}`;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const r   = await fetch(url, { headers: PROXY_HEADERS, timeout: 10000 });
+      const raw = await r.json();
+      if (!Array.isArray(raw)) return [];
+      return raw.map(k => ({ t: new Date(+k[0]).toISOString(), o: +k[1], h: +k[2], l: +k[3], c: +k[4] }));
+    } catch (e) {
+      if (attempt === 2) throw e;
+      await new Promise(res => setTimeout(res, 500));
     }
   }
   return [];
@@ -1156,3 +1179,24 @@ setInterval(() => hbBeat('crypto'), 60 * 1000);  // latido de proceso cada 60s (
 
 runScan();
 setInterval(runScan, SCAN_INTERVAL);
+
+// ── RESOLVER CRIPTO — sella los desenlaces del ledger con velas de Bybit (reusa el cerebro
+// resolvePending de bolsa + fetchCryptoBars). FAIL-OPEN; escribe al gist solo si selló algo.
+async function runCryptoResolve() {
+  if (!cryptoLedgerStore || !resolvePendingC) return;
+  try {
+    const res = await resolvePendingC(cryptoLedgerStore, fetchCryptoBars, {
+      tfToAlpaca: () => '4h',          // intervalo que el resolver le pasa a fetchCryptoBars
+      barMs: () => 14400000,          // 4h en ms (cap de horizonte)
+      onError: (rec, e) => console.log(`[cripto-resolve] ${rec && rec.sym}: ${e.message}`)
+    });
+    if (res.resolved > 0) {
+      if (cryptoLedgerDriver) await cryptoLedgerDriver.flush().catch(() => {});
+      console.log(`📒 Cripto resolver: ${res.resolved} selladas · ${res.active} activas · ${res.errors} err`);
+    }
+  } catch (e) { console.log('[cripto-resolve] ' + e.message); }
+}
+if (cryptoLedgerStore && resolvePendingC) {
+  setTimeout(runCryptoResolve, 60 * 1000);            // 1er pase 1min tras el boot
+  setInterval(runCryptoResolve, CRYPTO_RESOLVE_MS);   // y cada 20min
+}
