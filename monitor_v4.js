@@ -25,6 +25,31 @@ let hbBeat = () => {}, hbSignal = () => {};
 try { const hs = require('./health_state.js'); hbBeat = hs.beat; hbSignal = hs.signal; }
 catch (e) { console.warn('⚠️  health_state no disponible (latido off):', e.message); }
 
+// ── LEDGER CRIPTO (cuaderno · etapa 1: CAPTURA). TODO FAIL-OPEN: si falta un módulo o
+// una env, el bot emite EXACTAMENTE igual; el ledger nunca estorba. Gist APARTE del de
+// bolsa (ledger_crypto.jsonl). Reusa el token de bolsa si no hay uno propio.
+let cryptoLedgerStore = null, cryptoLedgerDriver = null, captureSignalC = null;
+const CRYPTO_HORIZON_BARS = +process.env.CRYPTO_HORIZON_BARS || 30;   // horizonte 4H en barras (knob)
+try {
+  const { createLedgerStore } = require('./ledger_store.js');
+  const { githubGistDriver }  = require('./ledger_store_github.js');
+  captureSignalC = require('./ledger_capture.js').captureSignal;
+  const _tok = process.env.CRYPTO_LEDGER_GH_TOKEN || process.env.LEDGER_GH_TOKEN || '';
+  const _gid = process.env.CRYPTO_LEDGER_GH_GIST || '';
+  if (_tok && _gid) {
+    cryptoLedgerDriver = githubGistDriver({
+      token: _tok, gistId: _gid, filename: 'ledger_crypto.jsonl',
+      onError: e => console.log('📒 cripto ledger gist: ' + e.message)
+    });
+    cryptoLedgerStore = createLedgerStore(cryptoLedgerDriver);
+    cryptoLedgerDriver.init()
+      .then(n => console.log(`📒 Ledger CRIPTO listo (${n} registros)`))
+      .catch(e => console.log('📒 cripto ledger init: ' + e.message));   // fail-open
+  } else {
+    console.log('📒 Ledger CRIPTO OFF — falta env CRYPTO_LEDGER_GH_GIST (+ token propio o el de bolsa).');
+  }
+} catch (e) { console.log('📒 Ledger CRIPTO desactivado (módulos ausentes): ' + e.message); }
+
 // ── CONFIG ─────────────────────────────────────────────────
 // Token del bot cripto desde ENV (nunca hardcodeado en el repo público).
 // Setear TELEGRAM_TOKEN en Render. Si falta → no se envía (fail-open).
@@ -783,15 +808,30 @@ function evaluateAllLayers({
 }
 
 // ── CONSTRUIR MENSAJE INSTITUCIONAL ─────────────────────────
+// Niveles cripto — FUENTE ÚNICA (Telegram y ledger nunca difieren). entry=precio,
+// SL 1.5×ATR, TP 2/3/5×ATR. R = |entry-sl| = 1.5×ATR → TP1 ≈ 1.33R, TP2 = 2R, TP3 ≈ 3.33R.
+function computeCryptoLevels(price, dir, atr) {
+  if ((dir !== 'BUY' && dir !== 'SELL') || !price || !atr || atr <= 0) return null;
+  const isBuy = dir === 'BUY';
+  return {
+    entry: price,
+    sl:  isBuy ? price - atr * 1.5 : price + atr * 1.5,
+    tp1: isBuy ? price + atr * 2   : price - atr * 2,
+    tp2: isBuy ? price + atr * 3   : price - atr * 3,
+    tp3: isBuy ? price + atr * 5   : price - atr * 5,
+  };
+}
+
 function buildMessage(ticker, price, result, fr, oiHistory, lsRatio, session, killZone, dynATR) {
   const isBuy = result.direction === 'BUY';
   const atr   = dynATR || getATR(ticker, price);
 
-  // SL/TP basados en ATR + estructura
-  const sl  = isBuy ? price - atr * 1.5 : price + atr * 1.5;
-  const tp1 = isBuy ? price + atr * 2   : price - atr * 2;
-  const tp2 = isBuy ? price + atr * 3   : price - atr * 3;
-  const tp3 = isBuy ? price + atr * 5   : price - atr * 5;
+  // SL/TP basados en ATR + estructura (fuente única → idénticos al ledger)
+  const _lv = computeCryptoLevels(price, result.direction, atr) || { sl:null, tp1:null, tp2:null, tp3:null };
+  const sl  = _lv.sl;
+  const tp1 = _lv.tp1;
+  const tp2 = _lv.tp2;
+  const tp3 = _lv.tp3;
 
   const arrow   = isBuy ? '▲ BUY — COMPRA 🟢' : '▼ SELL — VENTA 🔴';
   const quality = result.score >= 8 ? '🔥 MÁXIMA CALIDAD'
@@ -1059,6 +1099,26 @@ async function scanTicker(ticker) {
     s.lastCVDDir    = result.cvd4H.bullish ? 'positive' : result.cvd4H.bearish ? 'negative' : 'neutral';
     s.lastOITrend   = oiHistory?.trend || 'neutral';
     s.lastProcessedCandle4H = candle4HId;
+
+    // ── LEDGER CRIPTO: captura de la señal emitida (FAIL-OPEN, jamás rompe el envío) ──
+    if (cryptoLedgerStore && captureSignalC) {
+      try {
+        const _atrC = dynATR || getATR(ticker, price);
+        const _lv   = computeCryptoLevels(price, result.direction, _atrC);   // MISMA fuente que el mensaje
+        if (_lv) {
+          captureSignalC(cryptoLedgerStore, {
+            ts: s.lastSignalTs, sym: ticker, tf: '4H', direction: result.direction,
+            score: result.score, grade: null,
+            setup: result.struct4H ? result.struct4H.type : null,   // CHOCH_BUY/BOS_SELL/... (huella del gatillo)
+            horizon: null,
+            entry: _lv.entry, sl: _lv.sl, tp1: _lv.tp1, tp2: _lv.tp2, tp3: _lv.tp3,
+            horizonBars: CRYPTO_HORIZON_BARS,
+            cvdSource: (result.cvd4H && result.cvd4H.source) || null
+          }, { onError: e => console.log(`[${ticker}] cripto ledger cap: ${e.message}`) });
+          if (cryptoLedgerDriver) cryptoLedgerDriver.flush().catch(() => {});   // write-through al gist
+        }
+      } catch (e) { console.log(`[${ticker}] cripto ledger: ${e.message}`); }
+    }
 
   } catch(e) {
     console.error(`[${ticker}] Error:`, e.message);
